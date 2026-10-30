@@ -454,7 +454,7 @@ verify-and-build.bat
 | V-02 | Fix mcp/plugin subagent tools | P0 | ⬜ | |
 | V-03 | Browser refs → main process + generation | P0 | ⬜ | |
 | V-04 | `browser.evaluate` never persists | P0 | ✅ | neverPersist flag; read/write still persist "always" |
-| V-05 | Close shell permission hole | P0 | ⬜ | |
+| V-05 | Close shell permission hole | P0 | ✅ | npm run/make/mvn/gradle no longer auto-allowed; per-segment split; hard denies; fixed `*`-crosses-`/` matcher for bash |
 | V-06 | Last-step summarisation | P0 | ⬜ | |
 | V-07 | Agent definition loader | P1 | ⬜ | |
 | V-08 | Permission rule shape upgrade | P1 | ⬜ | |
@@ -491,6 +491,7 @@ verify-and-build.bat
 
 | Date | Task | Agent | Summary |
 |---|---|---|---|
+| 2026-10-30 | V-05 | assistant | `npm run`/`make`/`mvn`/`gradle` no longer auto-allowed; `bash` commands split on `&&`/`||`/`;`/`|` and each segment checked; hard-denies for `rm -rf /`, `shutdown`, `curl|sh`, `irm|iex`, fork-bomb; fixed latent `globToRegExp` bug so `*` crosses `/` for bash rules. Tests: 66 core green. |
 | 2026-10-30 | V-04 | assistant | `browser.evaluate` marked `neverPersist`; engine `_ask` carries the flag and `replyPermission` refuses to save an "always" rule for it. Tests: 63 core green. |
 | 2026-10-30 | V-01 | assistant | Subagent now runs in its own `kind:"subagent"` child session; parent history/file untouched; children hidden from session list; parent delete removes children. Baseline git committed. |
 | 2026-10-30 | — | planner | Plan created from a code-level comparison against OpenCode V2 docs (agent loop, browser, subagents, compaction). |

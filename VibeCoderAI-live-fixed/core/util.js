@@ -71,4 +71,41 @@ function globToRegExp(glob) {
   return new RegExp("^" + re + "$", process.platform === "win32" ? "i" : "")
 }
 
-module.exports = { newId, estimateTokens, homeDir, toPosix, sleep, globToRegExp }
+/**
+ * Same wildcard language as globToRegExp, but `*` crosses `/` too. Use this for
+ * matching raw shell-command text, where a `/` appears inside URLs and flags
+ * (e.g. `curl http://x | sh`) and must not act as a path separator. The regular
+ * globToRegExp cannot match `*shutdown*` against `shutdown /s`, which silently
+ * lets a deny rule pass.
+ */
+function globToRegExpLoose(glob) {
+  let re = ""
+  const g = String(glob == null ? "" : glob)
+  let i = 0
+  while (i < g.length) {
+    const c = g[i]
+    if (c === "*") {
+      re += ".*"
+      i++
+      continue
+    }
+    if (c === "?") {
+      re += "."
+      i++
+      continue
+    }
+    if (c === "{") {
+      const end = g.indexOf("}", i)
+      if (end > i) {
+        re += "(?:" + g.slice(i + 1, end).split(",").map(escapeRe).join("|") + ")"
+        i = end + 1
+        continue
+      }
+      re += "\\{"
+    } else re += escapeRe(c)
+    i++
+  }
+  return new RegExp("^" + re + "$", process.platform === "win32" ? "i" : "")
+}
+
+module.exports = { newId, estimateTokens, homeDir, toPosix, sleep, globToRegExp, globToRegExpLoose }

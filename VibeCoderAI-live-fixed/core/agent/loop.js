@@ -84,6 +84,57 @@ const TOOL_ALIASES = {
 }
 const resolveTool = (name) => tools.byName(name) || tools.byName(TOOL_ALIASES[String(name || "").toLowerCase()])
 
+/**
+ * V-05: split a shell command on its top-level separators (&&, ||, ;, |) while
+ * ignoring quoted spans, so each sub-command is checked against the permission
+ * rules on its own. This stops `echo ok && rm -rf /` from hiding behind the
+ * harmless first segment.
+ */
+function splitCommand(cmd) {
+  const out = []
+  let cur = ""
+  let q = null
+  let i = 0
+  const s = String(cmd || "")
+  while (i < s.length) {
+    const ch = s[i]
+    if (q) {
+      cur += ch
+      if (ch === q && s[i - 1] !== "\\") q = null
+      i++
+      continue
+    }
+    if (ch === "'" || ch === '"') {
+      q = ch
+      cur += ch
+      i++
+      continue
+    }
+    if (ch === "\\") {
+      cur += ch + (s[i + 1] || "")
+      i += 2
+      continue
+    }
+    const two = s.slice(i, i + 2)
+    if (two === "&&" || two === "||") {
+      if (cur.trim()) out.push(cur.trim())
+      cur = ""
+      i += 2
+      continue
+    }
+    if (ch === ";" || ch === "|") {
+      if (cur.trim()) out.push(cur.trim())
+      cur = ""
+      i++
+      continue
+    }
+    cur += ch
+    i++
+  }
+  if (cur.trim()) out.push(cur.trim())
+  return out.length ? out : [s.trim()]
+}
+
 async function runLoop({ session, store, profile, apiKey, emit, signal, askPermission, agentName, extraSystem, maxSteps = 100, extraTools = () => [], waitExtraTools = null, isOrphan = () => false, engine = null }) {
   const recent = []
   let emptyRetries = 0 // consecutive empty model replies (retried before we call it an error)
@@ -267,7 +318,19 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
             throw new Error(`Permission denied: ${p} is outside the workspace. Do not retry; ask the user.`)
         }
         const perm = tool.perm(c.args, ctx)
-        if (!(await askPermission(perm))) throw new Error("The user denied permission for this action. Do not retry the same action; ask how to proceed.")
+        // V-05: for shell commands, split on top-level separators and check each
+        // sub-command separately, so a dangerous tail can't hide behind a benign
+        // head (e.g. `echo ok && rm -rf /`). Deny rules are matched per segment.
+        let granted = false
+        if (perm.tool === "bash" && typeof perm.subject === "string") {
+          for (const sub of splitCommand(perm.subject)) {
+            granted = await askPermission({ tool: "bash", subject: sub })
+            if (!granted) break
+          }
+        } else {
+          granted = await askPermission(perm)
+        }
+        if (!granted) throw new Error("The user denied permission for this action. Do not retry the same action; ask how to proceed.")
         const toolValue = await abortable(Promise.resolve().then(() => tool.run(c.args, ctx)), signal)
         if (toolValue && toolValue.__vibeStructuredToolResult === "browser-screenshot") {
           out = tools.clip(String(toolValue.text || "Browser screenshot captured."))
@@ -310,4 +373,4 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
   emit({ type: "done", reason: "max_steps" })
 }
 
-module.exports = { runLoop, repairHistory, abortable }
+module.exports = { runLoop, repairHistory, abortable, splitCommand }

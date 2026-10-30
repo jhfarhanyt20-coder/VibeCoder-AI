@@ -54,7 +54,8 @@ async function main() {
     getURL() { return this.loadedURL || "https://example.test/" },
     getTitle() { return "Live Mock Page" },
     async executeJavaScript(script) {
-      if (script.includes("__vibeElementRefs")) return [{ level: 0, role: "button", name: "Submit", value: "", ref: "e1", tag: "button" }]
+      if (script.includes(".click();")) return { clicked: "e1", tag: "button", generation: 1 }
+      if (script.includes("data-vibe-ref")) return [{ level: 0, role: "button", name: "Submit", value: "", ref: "e1", tag: "button" }]
       if (script.includes("document.title")) return "Mock Page"
       return { executed: true }
     },
@@ -104,6 +105,12 @@ async function main() {
   const snapshot = await browserManager.snapshot(browserTab.id)
   assert.match(snapshot, /Submit.*@e1/)
   assert.ok(browserCommands.includes("createTab") && browserCommands.includes("activateTab"))
+  // V-03: a stale generation must fail fast with a guided error, before any click.
+  let staleErr = ""
+  try { await browserManager.click(browserTab.id, "e1", 999) } catch (e) { staleErr = e.message }
+  assert.ok(/older snapshot/.test(staleErr), "stale generation yields a guided error: " + staleErr)
+  const okClick = await browserManager.click(browserTab.id, "e1", undefined)
+  assert.ok(okClick && okClick.clicked, "omitting generation still clicks the latest ref")
   await browserManager.closeTab(browserTab.id)
   console.log("PASS in-app browser bridge: agent tab creation/activation uses the visible renderer dock and operates the registered guest page")
 

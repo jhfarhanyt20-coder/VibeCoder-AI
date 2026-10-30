@@ -199,19 +199,20 @@ class BrowserManager {
   async snapshot(tabID, options = {}) {
     const { tab, contents } = await this._getTab(tabID)
     const depth = Math.max(1, Math.min(16, Number(options.depth) || 8))
+    // V-03: each snapshot is a new generation. The model must pass back the
+    // generation it saw; a stale ref is rejected before we ever touch the page.
+    tab.generation = (tab.generation || 0) + 1
     const nodes = await contents.executeJavaScript(`(() => {
-      window.__vibeElementRefs = Object.create(null);
-      window.__vibeNextRef = 1;
       const nodes = [];
       const selectors = 'a,button,input,textarea,select,[role="button"],[role="link"],[role="textbox"],[tabindex],[contenteditable="true"]';
       for (const el of document.querySelectorAll('[data-vibe-ref]')) el.removeAttribute('data-vibe-ref');
+      window.__vibeNextRef = 1;
       for (const el of document.querySelectorAll(selectors)) {
         if (!(el instanceof HTMLElement)) continue;
         const style = getComputedStyle(el);
         if (style.display === 'none' || style.visibility === 'hidden' || el.hidden || el.getAttribute('aria-hidden') === 'true') continue;
         const ref = 'e' + (window.__vibeNextRef++);
         el.setAttribute('data-vibe-ref', ref);
-        window.__vibeElementRefs[ref] = el;
       }
       const seen = new Set();
       function walk(node, level) {
@@ -238,26 +239,36 @@ class BrowserManager {
     return lines.join("\n")
   }
 
-  async click(tabID, ref) {
+  async click(tabID, ref, generation) {
     const { tab, contents } = await this._getTab(tabID)
+    const curGen = tab.generation || 0
     if (!tab.refs.has(String(ref))) throw new Error(`Element ref ${ref} not found. Call browser.snapshot first.`)
+    const gen = Number.isFinite(Number(generation)) ? Number(generation) : curGen
+    if (gen !== curGen) {
+      throw new Error(`Element ref ${ref} is from an older snapshot (generation ${gen}, current ${curGen}). Call browser.snapshot again.`)
+    }
     const safeRef = JSON.stringify(String(ref))
     return contents.executeJavaScript(`(() => {
-      const el = window.__vibeElementRefs && window.__vibeElementRefs[${safeRef}];
+      const el = document.querySelector('[data-vibe-ref=' + ${safeRef} + ']');
       if (!el || !el.isConnected) throw new Error('Element ref is stale; take a new snapshot');
       el.scrollIntoView({ block: 'center', inline: 'center' });
       el.click();
-      return { clicked: ${safeRef}, tag: el.tagName.toLowerCase() };
+      return { clicked: ${safeRef}, tag: el.tagName.toLowerCase(), generation: ${curGen} };
     })()`)
   }
 
-  async fill(tabID, ref, text) {
+  async fill(tabID, ref, text, generation) {
     const { tab, contents } = await this._getTab(tabID)
+    const curGen = tab.generation || 0
     if (!tab.refs.has(String(ref))) throw new Error(`Element ref ${ref} not found. Call browser.snapshot first.`)
+    const gen = Number.isFinite(Number(generation)) ? Number(generation) : curGen
+    if (gen !== curGen) {
+      throw new Error(`Element ref ${ref} is from an older snapshot (generation ${gen}, current ${curGen}). Call browser.snapshot again.`)
+    }
     const safeRef = JSON.stringify(String(ref))
     const safeText = JSON.stringify(String(text ?? ""))
     return contents.executeJavaScript(`(() => {
-      const el = window.__vibeElementRefs && window.__vibeElementRefs[${safeRef}];
+      const el = document.querySelector('[data-vibe-ref=' + ${safeRef} + ']');
       if (!el || !el.isConnected) throw new Error('Element ref is stale; take a new snapshot');
       if (el.matches('input,textarea,select')) {
         const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : el.tagName === 'SELECT' ? HTMLSelectElement.prototype : HTMLInputElement.prototype;

@@ -90,14 +90,15 @@ function createBrowserTools() {
     },
     snapshot: {
       name: "browser.snapshot",
-      description: "Get an accessibility/DOM snapshot of the visible in-app browser tab with element refs. Use before clicking or filling.",
+      description: "Get an accessibility/DOM snapshot of the visible in-app browser tab with element refs. Use before clicking or filling. The snapshot returns a Generation number: pass the SAME generation back to browser.click / browser.fill so a stale ref is detected.",
       parameters: { type: "object", properties: { tabID: { type: "string", description: "Optional; defaults to the active visible browser tab." }, depth: { type: "integer" } }, required: [] },
       perm: () => ({ tool: "browser", subject: "snapshot" }),
       paths: () => [],
       async run(a, c) {
         const res = await (c.engine || c.vibe)?.browserSnapshot?.({ tabID: a.tabID, depth: a.depth || 8 })
         if (!res?.ok) throw new Error(res?.error || "Failed to snapshot")
-        return `Page: ${res.data.title || "(untitled)"}\nURL: ${res.data.url || "(unknown)"}\n\n${clip(res.data.snapshot || "Empty")}`
+        const gen = res.data.generation != null ? `\nGeneration: ${res.data.generation} (${res.data.refCount || 0} elements)` : ""
+        return `Page: ${res.data.title || "(untitled)"}\nURL: ${res.data.url || "(unknown)"}${gen}\n\n${clip(res.data.snapshot || "Empty")}`
       },
     },
     screenshot: {
@@ -136,24 +137,24 @@ function createBrowserTools() {
     },
     click: {
       name: "browser.click",
-      description: "Click an element in the visible in-app browser using a ref from the latest snapshot.",
-      parameters: { type: "object", properties: { tabID: { type: "string", description: "Optional; defaults to the active visible browser tab." }, ref: { type: "string" } }, required: ["ref"] },
+      description: "Click an element in the visible in-app browser using a ref from the latest snapshot. Pass the snapshot's Generation to catch stale refs.",
+      parameters: { type: "object", properties: { tabID: { type: "string", description: "Optional; defaults to the active visible browser tab." }, ref: { type: "string" }, generation: { type: "integer", description: "The Generation from the latest browser.snapshot; omit to allow any." } }, required: ["ref"] },
       perm: () => ({ tool: "browser", subject: "click" }),
       paths: () => [],
       async run(a, c) {
-        const res = await (c.engine || c.vibe)?.browserClick?.({ tabID: a.tabID, ref: a.ref })
+        const res = await (c.engine || c.vibe)?.browserClick?.({ tabID: a.tabID, ref: a.ref, generation: a.generation })
         if (!res?.ok) throw new Error(res?.error || "Failed to click")
         return `Clicked ${a.ref}`
       },
     },
     fill: {
       name: "browser.fill",
-      description: "Fill an input in the visible in-app browser using a ref from the latest snapshot.",
-      parameters: { type: "object", properties: { tabID: { type: "string", description: "Optional; defaults to the active visible browser tab." }, ref: { type: "string" }, text: { type: "string" } }, required: ["ref", "text"] },
+      description: "Fill an input in the visible in-app browser using a ref from the latest snapshot. Pass the snapshot's Generation to catch stale refs.",
+      parameters: { type: "object", properties: { tabID: { type: "string", description: "Optional; defaults to the active visible browser tab." }, ref: { type: "string" }, text: { type: "string" }, generation: { type: "integer", description: "The Generation from the latest browser.snapshot; omit to allow any." } }, required: ["ref", "text"] },
       perm: () => ({ tool: "browser", subject: "fill" }),
       paths: () => [],
       async run(a, c) {
-        const res = await (c.engine || c.vibe)?.browserFill?.({ tabID: a.tabID, ref: a.ref, text: a.text })
+        const res = await (c.engine || c.vibe)?.browserFill?.({ tabID: a.tabID, ref: a.ref, text: a.text, generation: a.generation })
         if (!res?.ok) throw new Error(res?.error || "Failed to fill")
         return `Filled ${a.ref}`
       },

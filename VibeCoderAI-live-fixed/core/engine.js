@@ -556,19 +556,22 @@ class Engine {
   async browserSnapshot({ tabID, depth = 8 } = {}) {
     const bm = this._browserManager()
     if (!bm) return this._noBrowser()
-    try { const snapshot = await bm.snapshot(tabID, { depth }); return { ok: true, data: { snapshot } } }
-    catch (e) { return { ok: false, error: String(e?.message || e) } }
+    try {
+      const snapshot = await bm.snapshot(tabID, { depth })
+      const tab = bm.tabs && (tabID ? bm.tabs.get(String(tabID)) : [...(bm.tabs || new Map()).values()].find((t) => t.active))
+      return { ok: true, data: { snapshot, generation: tab?.generation || 0, refCount: (tab?.refs && tab.refs.size) || 0 } }
+    } catch (e) { return { ok: false, error: String(e?.message || e) } }
   }
-  async browserClick({ tabID, ref } = {}) {
+  async browserClick({ tabID, ref, generation } = {}) {
     const bm = this._browserManager()
     if (!bm) return this._noBrowser()
-    try { const result = await bm.click(tabID, ref); return { ok: true, data: { result } } }
+    try { const result = await bm.click(tabID, ref, generation); return { ok: true, data: { result } } }
     catch (e) { return { ok: false, error: String(e?.message || e) } }
   }
-  async browserFill({ tabID, ref, text } = {}) {
+  async browserFill({ tabID, ref, text, generation } = {}) {
     const bm = this._browserManager()
     if (!bm) return this._noBrowser()
-    try { const result = await bm.fill(tabID, ref, text); return { ok: true, data: { result } } }
+    try { const result = await bm.fill(tabID, ref, text, generation); return { ok: true, data: { result } } }
     catch (e) { return { ok: false, error: String(e?.message || e) } }
   }
   async browserPress({ tabID, key } = {}) {

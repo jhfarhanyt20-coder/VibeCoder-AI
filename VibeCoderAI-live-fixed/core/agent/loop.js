@@ -185,6 +185,7 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
 
   let consecutiveGuardHits = 0 // identical-call guard trips; 2 = the model is stuck
   let stuck = false
+  let finalized = false // V-06: true when the final step produced a closing summary
   for (let step = 0; step < maxSteps; step++) {
     if (signal.aborted) return emit({ type: "done", reason: "interrupted" })
     // a still-connecting MCP server must not make its tools "Unknown" this step
@@ -198,13 +199,21 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
 
     if (compaction.needsCompaction({ system, messages: session.messages, toolSpecs, lastInput: session.usage.lastInput, profile })) await doCompact("auto")
 
+    // V-06: on the final step we drop the tools and ask the model to write a
+    // closing summary in plain text, instead of ending with a silent max_steps.
+    const finalStep = step === maxSteps - 1
+    const reqSystem = finalStep
+      ? system + "\n\n# Final step\nYou are at the last step of this run. Do not call any tools. Write a concise closing summary of what you changed, what you verified, and what is still pending."
+      : system
+    const reqTools = finalStep ? [] : toolSpecs
+
     let text = ""
     const calls = []
     let finish = "stop"
     let sawReasoning = false
     let stepUsage = null // last usage event of THIS request -> stored on the message
     try {
-      for await (const ev of llm.stream(profile, { apiKey, system, messages: session.messages, tools: toolSpecs, signal })) {
+      for await (const ev of llm.stream(profile, { apiKey, system: reqSystem, messages: session.messages, tools: reqTools, signal })) {
         if (ev.type === "text") {
           text += ev.delta
           emit({ type: "text.delta", delta: ev.delta })
@@ -270,7 +279,10 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
     const modelTag = { providerID: String(profile.id).split("/")[0], id: profile.model }
     session.messages.push({ role: "assistant", parts, ...(stepUsage ? { usage: stepUsage, model: modelTag } : {}) })
     store.save(session)
-    if (!calls.length) return emit({ type: "done", reason: finish })
+    if (!calls.length) {
+      if (finalStep) finalized = true
+      return emit({ type: "done", reason: finish, ...(finalStep ? { summarized: true } : {}) })
+    }
 
     const results = []
     for (const c of calls) {
@@ -370,7 +382,7 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
     session.messages.push({ role: "user", parts: results })
     store.save(session)
   }
-  emit({ type: "done", reason: "max_steps" })
+  emit({ type: "done", reason: "max_steps", ...(finalized ? { summarized: true } : {}) })
 }
 
 module.exports = { runLoop, repairHistory, abortable, splitCommand }

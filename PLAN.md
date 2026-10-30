@@ -455,7 +455,7 @@ verify-and-build.bat
 | V-03 | Browser refs → main process + generation | P0 | ⬜ | |
 | V-04 | `browser.evaluate` never persists | P0 | ✅ | neverPersist flag; read/write still persist "always" |
 | V-05 | Close shell permission hole | P0 | ✅ | npm run/make/mvn/gradle no longer auto-allowed; per-segment split; hard denies; fixed `*`-crosses-`/` matcher for bash |
-| V-06 | Last-step summarisation | P0 | ⬜ | |
+| V-06 | Last-step summarisation | P0 | ✅ | final step drops tools, asks for closing summary, done.summarized |
 | V-07 | Agent definition loader | P1 | ⬜ | |
 | V-08 | Permission rule shape upgrade | P1 | ⬜ | |
 | V-09 | `browser.wait` + navigate readiness | P1 | ⬜ | |
@@ -491,6 +491,7 @@ verify-and-build.bat
 
 | Date | Task | Agent | Summary |
 |---|---|---|---|
+| 2026-10-30 | V-06 | assistant | On the final step the loop drops tools and asks the model for a closing summary in text; `done` gains `summarized:true`. Tests: 69 core green. |
 | 2026-10-30 | V-02 | assistant | `mcp`/`plugin` subagent types now receive tools from the engine's full catalog (prefix filter `selectTools`); before, they started with zero tools. Plugin-type subagent runs a real plugin tool in a test. Tests: 68 core green. |
 | 2026-10-30 | V-05 | assistant | `npm run`/`make`/`mvn`/`gradle` no longer auto-allowed; `bash` commands split on `&&`/`||`/`;`/`|` and each segment checked; hard-denies for `rm -rf /`, `shutdown`, `curl|sh`, `irm|iex`, fork-bomb; fixed latent `globToRegExp` bug so `*` crosses `/` for bash rules. Tests: 66 core green. |
 | 2026-10-30 | V-04 | assistant | `browser.evaluate` marked `neverPersist`; engine `_ask` carries the flag and `replyPermission` refuses to save an "always" rule for it. Tests: 63 core green. |

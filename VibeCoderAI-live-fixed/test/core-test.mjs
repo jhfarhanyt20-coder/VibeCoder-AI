@@ -1396,6 +1396,33 @@ test("V-02: a plugin-type subagent can actually call a plugin tool", async () =>
   }
 })
 
+test("V-06: the final step drops tools and asks for a closing summary", async () => {
+  const m = await mock(({ body }) => {
+    const hasTools = Array.isArray(body.tools) && body.tools.length > 0
+    return hasTools
+      ? { chunks: [...chat.tool("c6", "bash", { command: "echo hi" }), ...chat.end(2, 1, "tool_calls")] }
+      : { chunks: [...chat.text("closing summary produced"), ...chat.end()] }
+  })
+  const home = tmp()
+  const dir = tmp()
+  const vibe = createVibe({ home, permission: "allow" })
+  await vibe.profiles.upsert({ id: "mock", format: "openai-chat", baseURL: `http://127.0.0.1:${m.port}/v1`, model: "m", noAuth: true, contextLimit: 128000 })
+  const s = await vibe.session.create({ dir, profile: "mock" })
+  let doneEv = null
+  for await (const ev of vibe.session.prompt(s.id, "do a task", { maxSteps: 3 })) {
+    if (ev.type === "done") doneEv = ev
+  }
+  assert.ok(doneEv && doneEv.summarized === true, "done is marked summarized")
+  const msgs = vibe.engine.getSession(s.id).messages
+  const last = msgs[msgs.length - 1]
+  assert.equal(last.role, "assistant")
+  assert.equal(last.parts[0].text, "closing summary produced", "the last assistant message is the closing summary")
+  const finalReq = m.requests[m.requests.length - 1].body
+  const finalTools = Array.isArray(finalReq.tools) ? finalReq.tools.length : 0
+  assert.equal(finalTools, 0, "the final request is sent with no tools")
+  m.close()
+})
+
 // ---------- runner ----------
 let failed = 0
 for (const [name, fn] of tests) {

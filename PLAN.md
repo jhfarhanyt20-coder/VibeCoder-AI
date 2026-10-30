@@ -451,7 +451,7 @@ verify-and-build.bat
 | ID | Task | Phase | Status | Notes |
 |---|---|---|---|---|
 | V-01 | Isolate subagent history | P0 | ✅ | own child session, parent untouched, cleanup on delete |
-| V-02 | Fix mcp/plugin subagent tools | P0 | ⬜ | |
+| V-02 | Fix mcp/plugin subagent tools | P0 | ✅ | engine catalog + prefix filter; plugin-type subagent runs a real plugin tool |
 | V-03 | Browser refs → main process + generation | P0 | ⬜ | |
 | V-04 | `browser.evaluate` never persists | P0 | ✅ | neverPersist flag; read/write still persist "always" |
 | V-05 | Close shell permission hole | P0 | ✅ | npm run/make/mvn/gradle no longer auto-allowed; per-segment split; hard denies; fixed `*`-crosses-`/` matcher for bash |
@@ -491,6 +491,7 @@ verify-and-build.bat
 
 | Date | Task | Agent | Summary |
 |---|---|---|---|
+| 2026-10-30 | V-02 | assistant | `mcp`/`plugin` subagent types now receive tools from the engine's full catalog (prefix filter `selectTools`); before, they started with zero tools. Plugin-type subagent runs a real plugin tool in a test. Tests: 68 core green. |
 | 2026-10-30 | V-05 | assistant | `npm run`/`make`/`mvn`/`gradle` no longer auto-allowed; `bash` commands split on `&&`/`||`/`;`/`|` and each segment checked; hard-denies for `rm -rf /`, `shutdown`, `curl|sh`, `irm|iex`, fork-bomb; fixed latent `globToRegExp` bug so `*` crosses `/` for bash rules. Tests: 66 core green. |
 | 2026-10-30 | V-04 | assistant | `browser.evaluate` marked `neverPersist`; engine `_ask` carries the flag and `replyPermission` refuses to save an "always" rule for it. Tests: 63 core green. |
 | 2026-10-30 | V-01 | assistant | Subagent now runs in its own `kind:"subagent"` child session; parent history/file untouched; children hidden from session list; parent delete removes children. Baseline git committed. |

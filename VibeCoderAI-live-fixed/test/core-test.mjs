@@ -1341,6 +1341,61 @@ test("V-05: compound bash command is split and a denied tail blocks the whole ca
   m.close()
 })
 
+test("V-02: selectTools gives mcp/plugin subagent types their prefixed tools", () => {
+  const { selectTools } = require("../core/subagents")
+  const catalog = [
+    { name: "read" },
+    { name: "bash" },
+    { name: "mcp__server__echo" },
+    { name: "mcp__server__ls" },
+    { name: "plugin__tools__hello" },
+  ]
+  assert.deepEqual(selectTools("mcp", catalog).map((t) => t.name), ["mcp__server__echo", "mcp__server__ls"])
+  assert.deepEqual(selectTools("plugin", catalog).map((t) => t.name), ["plugin__tools__hello"])
+  // general is still the built-in allowlist (no mcp/plugin/subagent tools)
+  assert.deepEqual(selectTools("general", catalog).map((t) => t.name), ["read", "bash"])
+})
+
+test("V-02: a plugin-type subagent can actually call a plugin tool", async () => {
+  const plugHome = tmp()
+  fs.mkdirSync(path.join(plugHome, "plugins"), { recursive: true })
+  fs.writeFileSync(
+    path.join(plugHome, "plugins", "echo.js"),
+    `module.exports = [{
+      name: "echo",
+      description: "echo a word",
+      parameters: { type: "object", properties: { word: { type: "string" } }, required: ["word"] },
+      perm: () => ({ tool: "plugin", subject: "plugin__echo__echo" }),
+      paths: () => ([]),
+      async run(a) { return a.word || "hi" }
+    }]`,
+  )
+  const oldHome = process.env.VIBE_HOME
+  process.env.VIBE_HOME = plugHome
+  try {
+    const m = await mock(({ n }) => n === 0
+      ? { chunks: [...chat.tool("p1", "plugin__echo__echo", { word: "v02" }), ...chat.end(2, 1, "tool_calls")] }
+      : { chunks: [...chat.text("echoed"), ...chat.end()] })
+    const dir = tmp()
+    const vibe = createVibe({ home: plugHome, permission: "allow" })
+    await vibe.profiles.upsert({ id: "mock", format: "openai-chat", baseURL: `http://127.0.0.1:${m.port}/v1`, model: "m", noAuth: true, contextLimit: 128000 })
+    const s = await vibe.session.create({ dir, profile: "mock" })
+    const c = await vibe.subagents.create({ sessionId: s.id, type: "plugin", task: "call the echo plugin" })
+    for (let i = 0; i < 200; i++) {
+      const st = await vibe.subagents.status(c.id)
+      if (st && st.status !== "running") break
+      await new Promise((r) => setTimeout(r, 50))
+    }
+    const res = await vibe.subagents.result(c.id)
+    assert.equal((await vibe.subagents.status(c.id)).status, "done")
+    assert.equal(res.result, "echoed", "plugin tool ran inside the plugin-type subagent")
+    m.close()
+  } finally {
+    if (oldHome === undefined) delete process.env.VIBE_HOME
+    else process.env.VIBE_HOME = oldHome
+  }
+})
+
 // ---------- runner ----------
 let failed = 0
 for (const [name, fn] of tests) {

@@ -65,6 +65,20 @@ const PROFILES = {
   },
 }
 
+/**
+ * V-02: pick which tools a subagent of `type` may use from the full engine
+ * catalog (built-ins + MCP + plugins). `mcp` and `plugin` are PREFIX types:
+ * they receive every tool whose name starts with mcp__ / plugin__ (a plain
+ * name lookup could never match them, because tools.ALL has no such tools).
+ */
+function selectTools(type, list) {
+  const all = Array.isArray(list) ? list : []
+  if (type === "mcp") return all.filter((t) => t.name.startsWith("mcp__"))
+  if (type === "plugin") return all.filter((t) => t.name.startsWith("plugin__"))
+  const allowed = new Set(PROFILES[type] ? PROFILES[type].tools : [])
+  return all.filter((t) => allowed.has(t.name))
+}
+
 class SubAgentManager {
   constructor(engine) {
     this.engine = engine
@@ -192,10 +206,19 @@ class SubAgentManager {
         throw new Error(`Subagent model profile is missing a valid format (profile: ${typeof profile === "string" ? profile : "object"})`)
       }
       const apiKey = profiles.getKey(profileObj, this.engine.home)
-      const allBuiltIn = () => [...tools.ALL]
-      const allowed = new Set(PROFILES[agent.type].tools)
-      const extraTools = () =>
-        allBuiltIn().filter((t) => allowed.has(t.name))
+      // V-02: the toolset comes from the engine's full catalog (built-ins + MCP
+      // + plugins). tools.ALL alone has no mcp__ / plugin__ tools, so those
+      // subagent types used to start with an empty toolset.
+      const extraTools = () => {
+        const builtin = [...tools.ALL]
+        let ext = []
+        try {
+          if (this.engine.extraTools) ext = this.engine.extraTools(session.dir)
+        } catch {}
+        const seen = new Map()
+        for (const t of [...builtin, ...ext]) if (t && t.name) seen.set(t.name, t)
+        return selectTools(agent.type, [...seen.values()])
+      }
       const system = buildSystem({
         agentName: agent.name,
         cwd: session.dir,
@@ -244,4 +267,4 @@ class SubAgentManager {
   }
 }
 
-module.exports = { SubAgentManager, PROFILES }
+module.exports = { SubAgentManager, PROFILES, selectTools }

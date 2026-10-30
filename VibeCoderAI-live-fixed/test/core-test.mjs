@@ -1275,6 +1275,25 @@ test("V-01: a subagent runs in its own session and never touches the parent hist
   m.close()
 })
 
+test("V-04: browser.evaluate never persists an always-allow rule", async () => {
+  const home = tmp()
+  const vibe = createVibe({ home, permission: "ask" })
+  const s = vibe.engine.store.create({ dir: tmp(), profile: "mock" })
+  const always = async (perm) => {
+    const p = vibe.engine._ask(s, new AbortController().signal, () => {})(perm)
+    const id = [...vibe.engine.pending.keys()].pop()
+    vibe.permission.reply(id, "always")
+    return p
+  }
+  await always({ tool: "browser", subject: "evaluate", neverPersist: true })
+  assert.equal(vibe.engine.getSession(s.id).rules.length, 0, "evaluate must not persist an always rule")
+  await always({ tool: "browser", subject: "evaluate", neverPersist: true })
+  assert.equal(vibe.engine.getSession(s.id).rules.length, 0, "second always still does not persist")
+  // a normal tool still persists
+  await always({ tool: "write", subject: "C:/x/file.txt" })
+  assert.equal(vibe.engine.getSession(s.id).rules.length, 1, "write always still persists")
+})
+
 // ---------- runner ----------
 let failed = 0
 for (const [name, fn] of tests) {

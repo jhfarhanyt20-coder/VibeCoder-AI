@@ -192,7 +192,10 @@ class Engine {
    * a new "always" approval is still stored on `session` (the run that asked).
    */
   _ask(session, signal, emit, inherits = null) {
-    return ({ tool, subject }) => {
+    return (perm) => {
+      const tool = String(perm?.tool ?? "")
+      const subject = perm?.subject == null ? "" : perm.subject
+      const neverPersist = !!perm?.neverPersist
       const action = decide([...this.rules, ...(inherits?.rules || []), ...session.rules], tool, subject)
       if (action === "allow") return true
       if (action === "deny") return false
@@ -201,7 +204,7 @@ class Engine {
       if (signal.aborted) return false // the run was stopped: never wait for an answer nobody can give
       const permissionId = newId("perm")
       return new Promise((resolve) => {
-        this.pending.set(permissionId, { resolve, session, inherits, tool, subject })
+        this.pending.set(permissionId, { resolve, session, inherits, tool, subject, neverPersist })
         signal.addEventListener("abort", () => this.replyPermission(permissionId, "deny"), { once: true })
         emit({ type: "permission.ask", permissionId, tool, subject })
       })
@@ -212,7 +215,9 @@ class Engine {
     const p = this.pending.get(permissionId)
     if (!p) return false
     this.pending.delete(permissionId)
-    if (decision === "always") {
+    if (decision === "always" && !p.neverPersist) {
+      // V-04: tools that declare neverPersist (e.g. browser.evaluate runs
+      // arbitrary JS in the user's page) never save an "always" allow rule.
       const exact = !["edit", "write"].includes(p.tool)
       p.session.rules.push({ tool: p.tool, pattern: exact ? p.subject : "*", exact, action: "allow" })
       this.store.save(p.session)

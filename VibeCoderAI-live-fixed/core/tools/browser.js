@@ -126,7 +126,7 @@ function createBrowserTools() {
       name: "browser.evaluate",
       description: "Execute JavaScript in the selected visible in-app browser tab. Use only for the requested browser task.",
       parameters: { type: "object", properties: { tabID: { type: "string", description: "Optional; defaults to the active visible browser tab." }, script: { type: "string" } }, required: ["script"] },
-      perm: () => ({ tool: "browser", subject: "evaluate" }),
+      perm: () => ({ tool: "browser", subject: "evaluate", neverPersist: true }),
       paths: () => [],
       async run(a, c) {
         const res = await (c.engine || c.vibe)?.browserEvaluate?.({ tabID: a.tabID, script: a.script })

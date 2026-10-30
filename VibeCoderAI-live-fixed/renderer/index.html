@@ -1,0 +1,1104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" />
+  <title>VibeCoder AI</title>
+  <script src="theme.js"></script>
+  <link rel="stylesheet" href="theme.css" />
+</head>
+<body>
+  <div class="shell">
+    <!-- ============ SIDEBAR ============ -->
+    <aside class="sidebar">
+      <div class="side-top">
+        <button class="side-item" id="btn-new-task">
+          <span class="ic">✦</span>
+          <span class="lbl">New Task</span>
+          <span class="kbd">＋</span>
+        </button>
+
+        <button class="side-item" id="btn-marketplace" title="Install MCP servers, plugins and skills">
+          <span class="ic">🛍</span>
+          <span class="lbl">Marketplace</span>
+        </button>
+
+        <div class="side-section">
+          <span class="side-section-title">Workspace</span>
+          <span class="side-section-tools">
+            <button class="mini-icon" id="btn-add-workspace" title="Add workspace">＋</button>
+            <button class="mini-icon" title="Filter">▽</button>
+            <button class="mini-icon" title="Search">⌕</button>
+            <button class="mini-icon" id="btn-clear-workspaces" title="Clear all">🗑</button>
+          </span>
+        </div>
+
+        <ul class="workspace-list" id="workspace-list"></ul>
+
+        <div class="side-project" id="project-block" hidden>
+          <div class="project-name" id="workspace-name"></div>
+          <ul class="session-list" id="session-list"></ul>
+          <button class="show-more" id="show-more" hidden>Show more</button>
+        </div>
+      </div>
+
+      <div class="side-bottom">
+        <div class="menu-wrap side-conn-wrap">
+          <button class="user-chip" id="btn-connect">
+            <span class="avatar">◉</span>
+            <span id="connect-label">Connect</span>
+          </button>
+          <div class="drop-menu connect-menu" id="connect-menu" hidden>
+            <div class="drop-title">OpenCode account</div>
+            <div class="conn-state" id="conn-state">Checking…</div>
+            <button class="drop-item" id="conn-connect">Connect / Login</button>
+            <button class="drop-item danger" id="conn-logout">Logout (delete saved key)</button>
+          </div>
+        </div>
+        <button class="mini-icon" id="btn-devices" title="Devices" hidden>▢</button>
+        <button class="mini-icon" id="chip-browser" title="Browser (Ctrl+Shift+B)">🌐</button>
+        <button class="mini-icon" id="btn-settings" title="Settings">⚙</button>
+      </div>
+    </aside>
+
+    <!-- ============ MAIN ============ -->
+    <main class="main empty" id="main">
+      <div class="error-banner" id="error-banner" hidden role="alert" aria-live="assertive">
+        <div class="error-head">
+          <span class="error-icon">⚠</span>
+          <span class="error-title" id="error-title">Something went wrong</span>
+          <button class="error-close" id="error-close" type="button" title="Dismiss">✕</button>
+        </div>
+        <div class="error-body" id="error-body"></div>
+        <div class="error-actions">
+          <button class="error-btn" id="error-details" type="button" hidden>Show details</button>
+          <button class="error-btn" id="error-retry" type="button" hidden>Retry</button>
+          <button class="error-btn" id="error-open-log" type="button">Open log</button>
+        </div>
+      </div>
+
+      <!-- Splash screen (logo + pulse on app start) -->
+      <div class="splash" id="splash" role="status" aria-label="Loading">
+        <!-- the app logo (the brand "V"): every colour comes from the theme -->
+        <svg class="splash-logo" viewBox="0 0 120 120" fill="none" aria-hidden="true">
+          <defs>
+            <linearGradient id="splashLogoFill" x1="60" y1="22" x2="60" y2="104" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="var(--logo-1)"/>
+              <stop offset="1" stop-color="var(--logo-2)"/>
+            </linearGradient>
+          </defs>
+          <path d="M28 26 H51 L60 64 L69 26 H92 L68 104 H52 Z" fill="url(#splashLogoFill)"/>
+        </svg>
+        <span class="splash-pulse" aria-hidden="true"></span>
+      </div>
+
+      <div class="hero" id="hero">
+        <svg class="watermark" viewBox="0 0 120 120" fill="none" aria-hidden="true">
+          <defs>
+            <linearGradient id="heroLogoFill" x1="60" y1="22" x2="60" y2="104" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="var(--logo-1)"/>
+              <stop offset="1" stop-color="var(--logo-2)"/>
+            </linearGradient>
+          </defs>
+          <path d="M28 26 H51 L60 64 L69 26 H92 L68 104 H52 Z" fill="url(#heroLogoFill)"/>
+        </svg>
+        <h1 class="hero-title" id="hero-title">Start a new task</h1>
+      </div>
+
+      <div class="chat-scroll" id="messages"></div>
+
+      <!-- Live retry counter: shown exactly where the run stopped (no popup) -->
+      <div class="retry-inline" id="retry-inline" hidden role="status" aria-live="polite">
+        <span class="retry-spin" aria-hidden="true">⟳</span>
+        <span class="retry-text" id="retry-inline-text">Retrying…</span>
+        <button class="retry-inline-stop" id="retry-inline-stop" type="button">Stop</button>
+      </div>
+
+      <!-- Background job indicator: the agent keeps working while the app is in the background -->
+      <div class="bg-job" id="bg-job" hidden>
+        <button class="bg-job-btn" id="bg-job-btn" type="button" title="Show the running jobs">
+          <span class="status-dot"></span>
+          <span id="bg-job-text">Running</span>
+        </button>
+        <div class="bg-job-panel" id="bg-job-panel" hidden>
+          <div class="bg-job-head">
+            <span>Running jobs</span>
+            <button class="bg-job-x" id="bg-job-close" type="button" title="Close">✕</button>
+          </div>
+          <div class="bg-job-list" id="bg-job-list"></div>
+          <div class="bg-job-foot">
+            <span class="bg-job-note">Stopping a job stops the agent run.</span>
+            <button class="bg-job-stop" id="bg-job-stop" type="button">Stop all</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- The task list of the agent: a compact strip right below the Running
+           chip. The arrow opens it (what is done, what is still left). -->
+      <div class="todo-panel collapsed" id="todo-panel" hidden>
+        <div class="todo-head" id="todo-toggle" role="button" tabindex="0" aria-expanded="false"
+             title="Show what the agent has done and what is left">
+          <span class="todo-caret" id="todo-caret" aria-hidden="true">▶</span>
+          <span class="todo-title">Tasks</span>
+          <span class="todo-count" id="todo-count">0/0</span>
+          <span class="todo-left" id="todo-left"></span>
+          <button class="todo-x" id="todo-close" type="button" title="Hide the task list">✕</button>
+        </div>
+        <div class="todo-body" id="todo-body" hidden>
+          <div class="todo-list" id="todo-list"></div>
+          <div class="todo-foot">
+            <span class="todo-note" id="todo-note">The agent keeps this list up to date.</span>
+            <button class="todo-clear" id="todo-clear" type="button">Clear done</button>
+          </div>
+        </div>
+      </div>
+
+      <button class="jump-live" id="jump-live" hidden title="Jump to where the agent is working">
+        <span class="jump-arrow">↓</span>
+        <span class="jump-label">Agent working</span>
+      </button>
+
+      <!-- SINGLE composer -->
+      <div class="composer" id="composer">
+        <div class="composer-chips">
+          <button class="chip" id="chip-project" title="Choose a project directory">
+            <span class="chip-ic">▣</span>
+            <span id="chip-project-label">Select project</span>
+            <span class="chev">▾</span>
+          </button>
+          <button class="chip" id="chip-branch" title="Git branch" hidden>
+            <span class="chip-ic">⑂</span> <span id="chip-branch-label"></span>
+            <span class="chev">▾</span>
+          </button>
+        </div>
+
+        <textarea id="input" rows="2"
+          placeholder="Ask VibeCoder, type @ to add files, / for commands, $ for skills, # to link chats"></textarea>
+
+        <div class="attach-tray" id="attach-tray" hidden></div>
+
+        <div class="composer-foot">
+          <button class="icon-btn" id="btn-attach" title="Attach">＋</button>
+          <div class="menu-wrap">
+            <button class="mode-pill" id="btn-access" title="Permission mode">
+              <span class="ic">🛡</span> <span id="access-label">Ask before changes</span>
+              <span class="chev">▾</span>
+            </button>
+            <div class="drop-menu" id="access-menu" hidden>
+              <div class="drop-title">Permission mode</div>
+              <button class="drop-item" data-access="ask">✋ Ask before changes<small>Asks permission before edits & commands</small></button>
+              <button class="drop-item" data-access="full">🚀 Full Access<small>Acts without asking — model won't request permission</small></button>
+            </div>
+          </div>
+          <span class="spacer"></span>
+          <div class="menu-wrap">
+            <button class="mode-pill" id="btn-model" title="Model">
+              <span class="mdl" id="model-label">Select model</span> <span class="chev">▾</span>
+            </button>
+            <div class="drop-menu model-menu" id="model-menu" hidden>
+              <div class="model-search-row">
+                <input id="model-search" class="s-input mono" placeholder="Search model…" />
+                <button class="mini-icon" id="btn-model-refresh" type="button" title="Refresh the model list">⟳</button>
+              </div>
+              <div class="model-results" id="model-results"></div>
+            </div>
+          </div>
+          <div class="menu-wrap">
+            <button class="mode-pill" id="btn-thinking" title="Reasoning effort">
+              <span class="ic">🧠</span> <span id="thinking-label">Low</span> <span class="chev">▾</span>
+            </button>
+            <div class="drop-menu" id="thinking-menu" hidden>
+              <div class="drop-title">Thinking</div>
+              <button class="drop-item" data-think="None">◯ None<small>Fastest, no reasoning</small></button>
+              <button class="drop-item selected" data-think="Low">◐ Low<small>Default — light reasoning</small></button>
+              <button class="drop-item" data-think="Medium">◑ Medium<small>Balanced reasoning</small></button>
+              <button class="drop-item" data-think="High">● High<small>Deep reasoning, slower</small></button>
+            </div>
+          </div>
+          <div class="menu-wrap">
+            <button class="ctx-btn unknown" id="btn-ctx" title="Context window usage" aria-label="Context window usage">
+              <svg class="ctx-svg" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                <circle class="ctx-track" cx="12" cy="12" r="9" />
+                <circle class="ctx-arc" id="ctx-arc" cx="12" cy="12" r="9" />
+              </svg>
+              <span class="ctx-pct" id="ctx-pct">–</span>
+            </button>
+            <div class="drop-menu ctx-menu" id="ctx-menu" hidden>
+              <div class="drop-title">Context window</div>
+              <div class="ctx-row"><span>Used</span><b id="ctx-used">–</b></div>
+              <div class="ctx-row"><span>Window</span><b id="ctx-limit">unknown</b></div>
+              <div class="ctx-row"><span>Remaining</span><b id="ctx-left">–</b></div>
+              <div class="ctx-sep"></div>
+              <div class="drop-title">Last step</div>
+              <div class="ctx-row"><span>Input</span><b id="ctx-in">0</b></div>
+              <div class="ctx-row"><span>Output</span><b id="ctx-out">0</b></div>
+              <div class="ctx-row"><span>Reasoning</span><b id="ctx-rea">0</b></div>
+              <div class="ctx-row"><span>Cache read</span><b id="ctx-cr">0</b></div>
+              <div class="ctx-row"><span>Cache write</span><b id="ctx-cw">0</b></div>
+              <div class="ctx-sep"></div>
+              <div class="drop-title">This session</div>
+              <div class="ctx-row"><span>Steps</span><b id="ctx-steps">0</b></div>
+              <div class="ctx-row"><span>Total tokens</span><b id="ctx-total">0</b></div>
+              <div class="ctx-row"><span>Cost</span><b id="ctx-cost">$0.00</b></div>
+              <div class="ctx-sep"></div>
+              <div class="drop-title">Compaction</div>
+              <button class="ctx-row ctx-toggle" id="ctx-auto-toggle" type="button" title="Summarize automatically when the window fills up">
+                <span>Auto-compact</span><b id="ctx-auto-state">On</b>
+              </button>
+              <div class="ctx-row"><span>Triggers at</span><b id="ctx-auto-at">–</b></div>
+              <button class="ctx-compact-btn" id="ctx-compact-now" type="button">Compact now</button>
+              <div class="ctx-note">Auto-compact summarizes the conversation into a checkpoint before the context window is full, so long sessions keep working.</div>
+            </div>
+          </div>
+          <span class="run-badge" id="run-badge" hidden>● Running</span>
+          <button class="send" id="btn-send" title="Send">↑</button>
+        </div>
+      </div>
+    </main>
+
+    <!-- ============ IN-APP BROWSER (docked on the right) ============
+         One browser for everything: links, localhost previews and anything the
+         user types open in these tabs, never in an outside window. -->
+    <aside class="browser-panel" id="browser-panel" hidden aria-label="Browser">
+      <div class="browser-resize" id="br-resize" title="Drag to resize · double-click to reset"></div>
+      <div class="browser-tabbar">
+        <div class="browser-tablist" id="br-tabs"></div>
+        <button class="mini-icon" id="br-new" type="button" title="New tab (Ctrl+Shift+T)">＋</button>
+        <button class="mini-icon" id="br-close" type="button" title="Close the browser (Ctrl+Shift+B)">✕</button>
+      </div>
+      <div class="browser-head">
+        <button class="mini-icon" id="br-back" type="button" title="Back">←</button>
+        <button class="mini-icon" id="br-fwd" type="button" title="Forward">→</button>
+        <button class="mini-icon" id="br-reload" type="button" title="Reload">⟳</button>
+        <input class="browser-url" id="br-url" type="text" spellcheck="false" autocomplete="off"
+               placeholder="Search or enter an address (localhost:3000)" />
+        <button class="mini-icon" id="br-external" type="button" title="Open in the system browser">↗</button>
+      </div>
+      <div class="browser-progress" id="br-progress" hidden></div>
+      <div class="browser-body" id="browser-body">
+        <div class="browser-shield" id="br-shield" hidden></div>
+        <div class="browser-empty" id="browser-empty">
+          <div class="browser-empty-title">Browser</div>
+          <p>Pages open here, on the right side, instead of in a separate window.</p>
+          <p class="browser-empty-hint">Type an address above, or open your local dev server.</p>
+          <div class="browser-quick">
+            <button class="chip" type="button" data-url="http://localhost:3000">localhost:3000</button>
+            <button class="chip" type="button" data-url="http://localhost:5173">localhost:5173</button>
+            <button class="chip" type="button" data-url="http://localhost:8080">localhost:8080</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </div>
+    <!-- ============ SETTINGS VIEW ============ -->
+    <div class="settings-page" id="settings" hidden>
+      <aside class="settings-nav">
+        <button class="icon-btn back-row" id="btn-back"><span class="ic">←</span> Back to workspace</button>
+
+        <div class="nav-scroll">
+          <div class="nav-group">Basics</div>
+          <button class="nav-item active" data-page="general"><span class="ic">⚙</span> General</button>
+          <button class="nav-item" data-page="appearance"><span class="ic">🌗</span> Appearance</button>
+          <button class="nav-item" data-page="model-settings"><span class="ic">🧠</span> Model settings</button>
+          <button class="nav-item" data-page="browser-use"><span class="ic">🌐</span> Browser Use</button>
+          <button class="nav-item" data-page="computer-use"><span class="ic">🖥</span> Computer Use</button>
+          <button class="nav-item" data-page="keyboard"><span class="ic">⌨</span> Keyboard Shortcuts</button>
+
+          <div class="nav-group">Agent capabilities</div>
+          <button class="nav-item" data-page="memory"><span class="ic">🧩</span> Memory</button>
+          <button class="nav-item" data-page="subagents"><span class="ic">👥</span> Subagents</button>
+          <button class="nav-item" data-page="marketplace"><span class="ic">🛍</span> Marketplace</button>
+          <button class="nav-item" data-page="plugins"><span class="ic">🧱</span> Plugins</button>
+          <button class="nav-item" data-page="mcp"><span class="ic">⚡</span> MCP Servers</button>
+          <button class="nav-item" data-page="skills"><span class="ic">✎</span> Skills</button>
+          <button class="nav-item" data-page="commands"><span class="ic">>_</span> Commands</button>
+          <button class="nav-item" data-page="hooks"><span class="ic">⚓</span> Hooks</button>
+
+          <div class="nav-group">Data and statistics</div>
+          <button class="nav-item" data-page="usage"><span class="ic">📈</span> Usage</button>
+          <button class="nav-item" data-page="privacy"><span class="ic">🔒</span> Privacy</button>
+        </div>
+
+        <div class="nav-bottom">
+          <span class="avatar" id="nav-avatar">?</span>
+          <span class="nav-user" id="nav-user">Not connected</span>
+          <span class="spacer"></span>
+          <button class="mini-icon" title="Settings">⚙</button>
+        </div>
+      </aside>
+
+      <div class="settings-content" id="settings-content">
+        <!-- General page -->
+        <div class="s-page" data-page="general">
+          <h1 class="s-title">General</h1>
+          <div class="s-chip">System default</div>
+
+          <div class="s-card">
+            <div class="s-row">
+              <div>
+                <div class="s-name">Language</div>
+                <div class="s-desc">Choose the display language used by the application UI.</div>
+              </div>
+              <select><option>System default</option><option>English</option><option>বাংলা</option></select>
+            </div>
+
+            <div class="s-row">
+              <div>
+                <div class="s-name">Interface mode</div>
+                <div class="s-desc">Office mode focuses on summaries and results. Coding mode shows commands, output, and code changes.</div>
+              </div>
+              <select><option>Coding mode</option><option>Office mode</option></select>
+            </div>
+
+            <div class="s-row">
+              <div>
+                <div class="s-name">Proactive task suggestions</div>
+                <div class="s-desc">Available only in Office mode.</div>
+              </div>
+              <div class="toggle"></div>
+            </div>
+
+            <div class="s-row" id="row-notify">
+              <div>
+                <div class="s-name">Background notifications</div>
+                <div class="s-desc">Show a Windows toast when the agent finishes, fails, or needs your permission while the app is in the background.</div>
+              </div>
+              <div class="toggle on" id="toggle-notify" role="switch" aria-checked="true" tabindex="0"></div>
+            </div>
+            <div class="s-row">
+              <div>
+                <div class="s-name">Test notification</div>
+                <div class="s-desc">Send a test toast to check that Windows notifications are allowed for VibeCoder AI.</div>
+              </div>
+              <button class="save-btn" id="btn-test-notify" type="button">Send test</button>
+            </div>
+
+            <div class="s-row" id="row-autocontinue">
+              <div>
+                <div class="s-name">Continue automatically in the background</div>
+                <div class="s-desc">When a run finishes while the app is in the background, the agent is notified and keeps working on the open items on its own (up to 5 automatic continuations, then it waits for you).</div>
+              </div>
+              <div class="toggle on" id="toggle-autocontinue" role="switch" aria-checked="true" tabindex="0"></div>
+            </div>
+
+            <div class="s-row">
+              <div>
+                <div class="s-name">Backend</div>
+                <div class="s-desc">CLI service (free models) or embedded SDK</div>
+              </div>
+              <select id="setting-backend">
+                <option value="cli">CLI Service</option>
+                <option value="sdk">Embedded SDK</option>
+              </select>
+            </div>
+
+            <div class="s-row">
+              <div>
+                <div class="s-name">OpenCode CLI</div>
+                <div class="s-desc" id="cli-desc">Checking…</div>
+              </div>
+              <button class="save-btn" id="cli-fix" type="button" hidden>Install tested version</button>
+            </div>
+
+            <div class="s-row" id="row-cli-update">
+              <div>
+                <div class="s-name">CLI updates <span class="dot-ind" id="cli-update-dot" hidden></span></div>
+                <div class="s-desc" id="cli-update-desc">Not checked yet. This app never updates itself — it only tells you when npm has a newer pinned version.</div>
+              </div>
+              <button class="save-btn" id="cli-update-check" type="button">Check now</button>
+            </div>
+
+            <div class="s-row" id="row-upgrade" hidden>
+              <div>
+                <div class="s-name">Upgrade &amp; rebuild (dev)</div>
+                <div class="s-desc" id="upgrade-desc">Source tree detected. One click bumps the three OpenCode pins, runs the tests and rebuilds the installer.</div>
+              </div>
+              <button class="save-btn" id="btn-upgrade" type="button">Upgrade &amp; rebuild</button>
+            </div>
+            <div class="upgrade-log-wrap" id="upgrade-log-wrap" hidden>
+              <pre class="upgrade-log" id="upgrade-log"></pre>
+            </div>
+
+            <div class="s-row">
+              <div>
+                <div class="s-name">Inherit system terminal profile</div>
+                <div class="s-desc">When launching the built-in terminal, inherit login shell environment, proxy, and variables when possible.</div>
+              </div>
+              <div class="toggle on"></div>
+            </div>
+
+            <div class="s-row">
+              <div>
+                <div class="s-name">Terminal font</div>
+                <div class="s-desc">Leave blank to auto-detect system terminal settings; set a value to override.</div>
+              </div>
+              <button class="save-btn">Save</button>
+            </div>
+            <input class="s-input" placeholder="Leave blank to inherit, e.g. MesloLGS NF, monospace" />
+
+            <div class="s-row">
+              <div class="s-name">Integrated terminal shell</div>
+              <select><option>System default</option><option>PowerShell</option><option>cmd</option><option>Git Bash</option></select>
+            </div>
+          </div>
+        </div>
+
+        <!-- appearance -->
+        <div class="s-page" data-page="appearance" hidden>
+          <div class="s-head-row">
+            <div>
+              <h1 class="s-title">Interface Setting</h1>
+              <p class="s-sub">Choose the app theme and interface text size.</p>
+            </div>
+          </div>
+
+          <div class="s-card">
+            <div class="s-row">
+              <div class="s-col">
+                <div class="s-name">App theme</div>
+                <div class="s-desc">Choose light, dark, AMOLED (pure black) or follow the system theme. The chat, the settings and every popup follow it.</div>
+              </div>
+              <select class="s-input s-select-compact" id="theme-select">
+                <option value="dark">🌙 Dark</option>
+                <option value="amoled">🌑 AMOLED</option>
+                <option value="light">☀️ Light</option>
+                <option value="system">🖥 Follow the system</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="s-card">
+            <div class="s-row">
+              <div class="s-col">
+                <div class="s-name">UI font size</div>
+                <div class="s-desc">Adjust the interface text without changing the icons or the layout.</div>
+              </div>
+              <div class="fs-box">
+                <input class="fs-range" id="font-size-range" type="range" min="12" max="18" step="1" value="14" />
+                <span class="fs-val" id="font-size-value">14 px</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="s-card">
+            <div class="s-row">
+              <div class="s-col">
+                <div class="s-name">Preview</div>
+                <div class="s-desc">A quick look at the colours of the current theme.</div>
+              </div>
+              <div class="theme-preview" id="theme-preview">
+                <span class="tp-dot"></span>
+                <span class="tp-bar"></span>
+                <span class="tp-text"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="s-page model-page" data-page="model-settings" hidden>
+          <div class="model-head">
+            <div>
+              <h1 class="s-title">Model settings</h1>
+              <p class="s-sub">Manage custom model providers. Once configured, they can be selected during chat.</p>
+            </div>
+            <div class="model-head-actions">
+              <button class="icon-btn square" title="Refresh">⟳</button>
+              <button class="save-btn add-provider">＋ Add provider</button>
+            </div>
+          </div>
+
+          <div class="model-layout">
+            <!-- inner provider list -->
+            <aside class="model-list">
+              <div class="ml-group">Providers</div>
+              <div class="ml-item provider-item" data-provider="opencode">
+                <span class="prov-ic">◈</span>
+                <span class="prov-nm">OpenCode</span>
+                <span class="prov-dot" id="opencode-dot"></span>
+              </div>
+
+              <div class="ml-group">Custom providers</div>
+              <div class="ml-empty" id="custom-provider-empty">Ekhane custom provider gulo dekhao jabe</div>
+              <div id="custom-provider-list"></div>
+            </aside>
+
+            <!-- right detail panel -->
+            <section class="model-detail" id="model-detail">
+              <div class="md-empty">
+                <div class="md-logo-rack">
+                  <div class="md-slot"></div>
+                  <div class="md-slot"></div>
+                  <div class="md-slot"></div>
+                </div>
+                <p>Kono provider nai ekhne</p>
+                <small>Provider add korle ei jayota tar dekhai hobe</small>
+              </div>
+              <div class="md-provider" id="md-opencode" hidden>
+                <div class="mdp-head">
+                  <div class="mdp-logo">◈</div>
+                  <div>
+                    <div class="mdp-name">OpenCode</div>
+                    <div class="mdp-sub" id="opencode-sub">Connect your OpenCode account to use free models</div>
+                  </div>
+                </div>
+
+                <div class="mdp-status" id="opencode-status">
+                  <span class="st-dot" id="opencode-st-dot"></span>
+                  <span id="opencode-st-text">Checking…</span>
+                </div>
+
+                <div class="mdp-device" id="opencode-device" hidden>
+                  <div class="s-name">Device login</div>
+                  <div class="mdp-code">Code: <span class="mono" id="opencode-code">—</span></div>
+                  <div class="mdp-wait" id="opencode-wait">Waiting for authorization… the login finishes automatically after you sign in in the browser</div>
+                </div>
+
+                <div class="mdp-actions">
+                  <button class="save-btn" id="opencode-connect">Connect</button>
+                  <button class="danger-btn" id="opencode-disconnect" hidden>Disconnect</button>
+                </div>
+              </div>
+
+              <!-- custom provider detail -->
+              <div class="md-provider" id="md-custom" hidden>
+                <div class="mdp-head">
+                  <div class="mdp-logo" id="md-custom-logo">◈</div>
+                  <div>
+                    <div class="mdp-name" id="md-custom-name">Custom provider</div>
+                    <div class="mdp-sub" id="md-custom-sub">Apni nijei provider banaye model use korte paren</div>
+                  </div>
+                  <div class="toggle on" id="toggle-provider" role="switch" aria-checked="true" tabindex="0" title="Enable / disable this provider"></div>
+                </div>
+
+                <div class="prov-form">
+                  <label class="pf-row">
+                    <span class="pf-label">Name</span>
+                    <input class="s-input" id="pf-name" placeholder="My Provider" />
+                  </label>
+                  <label class="pf-row">
+                    <span class="pf-label">Base URL</span>
+                    <input class="s-input" id="pf-baseurl" placeholder="https://api.example.com/v1" />
+                    <span class="pf-hint" id="pf-baseurl-hint">The API root, e.g. https://api.example.com/v1 — the app adds the path of the chosen format.</span>
+                  </label>
+                  <label class="pf-row">
+                    <span class="pf-label">API format</span>
+                    <select class="s-input" id="pf-format">
+                      <option value="anthropic">Anthropic messages (/v1/messages)</option>
+                      <option value="chat">Chat completions (/chat/completions)</option>
+                      <option value="responses">Responses (/responses)</option>
+                    </select>
+                  </label>
+                  <label class="pf-row">
+                    <span class="pf-label">API key</span>
+                    <span class="pf-key">
+                      <input class="s-input" id="pf-apikey" type="password" placeholder="sk-..." autocomplete="off" />
+                      <button class="icon-btn square sm" id="pf-key-toggle" type="button" title="Show / hide the key">👁</button>
+                    </span>
+                    <span class="pf-hint" id="pf-storage-hint">Provider profiles are stored in the local Vibe profile file; API keys are stored separately in the local auth file. Neither is written into your repository.</span>
+                  </label>
+                  <label class="pf-row">
+                    <span class="pf-label">Save in</span>
+                    <select class="s-input" id="pf-scope">
+                      <option value="global">Global (all projects)</option>
+                      <option value="project">This project only</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div class="pf-models-head">
+                  <div>
+                    <div class="s-name">Models</div>
+                    <div class="s-desc" id="pf-models-count">—</div>
+                  </div>
+                  <div class="pf-models-actions">
+                    <button class="save-btn ghost" id="pf-fetch-models" type="button">Fetch models</button>
+                    <button class="save-btn" id="pf-add-model" type="button">＋ Add model</button>
+                  </div>
+                </div>
+                <div id="pf-model-list"></div>
+
+                <div class="mdp-actions">
+                  <button class="save-btn" id="pf-save" type="button">Save provider</button>
+                  <button class="danger-btn" id="pf-delete" type="button">Delete</button>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+        <div class="s-page" data-page="browser-use" hidden>          <div class="s-head-row">
+            <div>
+              <h1 class="s-title">Browser Use</h1>
+              <p class="s-sub">What the agent can do in a browser. The built-in web tools work right away; browser control is one click away.</p>
+            </div>
+          </div>
+
+          <div class="s-card">
+            <div class="s-row">
+              <div class="s-col">
+                <div class="s-name">Fetch a page</div>
+                <div class="s-desc">Built-in. The agent downloads a URL and reads it as text — no browser needed.</div>
+              </div>
+              <span class="cfg-tag">always on</span>
+            </div>
+            <div class="s-row">
+              <div class="s-col">
+                <div class="s-name">Search the web</div>
+                <div class="s-desc">Built-in. The agent searches the internet and reads the results.</div>
+              </div>
+              <span class="cfg-tag">always on</span>
+            </div>
+          </div>
+
+          <div class="s-card">
+            <div class="s-row s-row-top">
+              <div class="s-col">
+                <div class="s-name">Browser control (Playwright)</div>
+                <div class="s-desc" id="browser-mcp-desc">Real browser control: open pages, click buttons, fill forms, read the DOM and take screenshots. The first start downloads the Playwright browser (~150 MB).</div>
+              </div>
+              <button class="save-btn" id="btn-browser-install" type="button">Install</button>
+            </div>
+          </div>
+
+          <div class="s-card">
+            <div class="s-row">
+              <div class="s-col">
+                <div class="s-name">OpenCode desktop browser</div>
+                <div class="s-desc">OpenCode also ships a browser plugin that attaches to the tabs of the OpenCode desktop app. It only works inside that desktop app, so VibeCoder AI does not offer it here.</div>
+              </div>
+              <span class="cfg-tag">not available here</span>
+            </div>
+          </div>
+        </div>
+        <div class="s-page" data-page="computer-use" hidden>
+          <h1 class="s-title">Computer Use</h1>
+          <div class="s-card">
+            <div class="s-row">
+              <div class="s-col">
+                <div class="s-name">Allow desktop control</div>
+                <div class="s-desc">The agent can drive the computer with the Playwright browser (Settings > Browser Use). Desktop control itself is not part of this app.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="s-page" data-page="keyboard" hidden>
+          <h1 class="s-title">Keyboard Shortcuts</h1>
+          <div class="s-card">
+            <div class="s-row">
+              <div class="s-col">
+                <div class="s-name">Shortcuts</div>
+                <div class="s-desc">
+                  Enter — send the message · Shift+Enter — new line · Ctrl+Enter — save an edited message ·
+                  Esc — close a menu or a dialog · Ctrl+, — settings
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="s-page" data-page="memory" hidden>
+          <div class="s-head-row">
+            <div>
+              <h1 class="s-title">Memory</h1>
+              <p class="s-sub">Facts the agent keeps for itself — preferences, decisions and corrections it remembered. The agent writes these on its own, and you can edit or remove them here.</p>
+            </div>
+          </div>
+
+          <div class="s-card">
+            <div class="s-row">
+              <div class="s-col">
+                <div class="s-name">Persistent memory</div>
+                <div class="s-desc">When this is on, the agent reads the notes below when a topic comes up again — and it writes a new one ONLY when you tell it to (“remember this”). It never saves anything on its own.</div>
+              </div>
+              <div class="toggle on" id="toggle-memory" role="switch" aria-checked="true" tabindex="0"></div>
+            </div>
+          </div>
+
+          <div class="s-card">
+            <div class="s-row">
+              <div class="s-col">
+                <div class="s-name">Memory file</div>
+                <div class="s-desc" id="memory-path">Loading…</div>
+              </div>
+              <button class="save-btn ghost" id="btn-memory-open" type="button">Open file</button>
+            </div>
+          </div>
+
+          <div class="s-card">
+            <div class="s-row memory-add-row">
+              <div class="s-col">
+                <div class="s-name">Add a memory</div>
+                <div class="s-desc">One short fact per line — e.g. “answers in Banglish”, “always run npm test before commit”.</div>
+              </div>
+              <div class="memory-add-line">
+                <input class="s-input" id="memory-input" placeholder="Remember that …" />
+                <button class="save-btn" id="btn-memory-add" type="button">Add</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="s-card">
+            <div class="s-row s-row-top">
+              <div class="s-col">
+                <div class="s-name">Saved memories</div>
+                <div class="s-desc" id="memory-count">—</div>
+              </div>
+            </div>
+            <div class="cfg-note" id="memory-off-note" hidden>Persistent memory is off — the agent does not read or write these notes.</div>
+            <div id="memory-list"></div>
+          </div>
+        </div>
+        <div class="s-page" data-page="subagents" hidden>
+          <div class="s-head-row">
+            <div>
+              <h1 class="s-title">Subagents</h1>
+              <p class="s-sub">The agents the main agent can call for a job. Switch one off and OpenCode removes it — the main agent then cannot use it.</p>
+            </div>
+          </div>
+
+          <div class="s-card">
+          <div class="s-row s-row-top">
+            <div class="s-col">
+              <div class="s-name">Subagents</div>
+              <div class="s-desc">Let the main agent spawn background subagents for focused work (research, read/write, run commands, MCP/plugins). Turn off to disable subagent spawning entirely.</div>
+            </div>
+          </div>
+          <div class="s-row s-row-flat subagent-mt-12">
+            <div class="s-name">Enabled</div>
+            <div class="toggle on" id="subagent-toggle" role="switch" aria-checked="true" tabindex="0"></div>
+          </div>
+          <div class="s-desc cfg-note subagent-mt-8">When on, the agent may spawn subagents on its own for long background tasks.</div>
+
+          <div class="s-row s-row-flat subagent-mt-16">
+            <div class="s-name">Running subagents</div>
+            <span class="s-count" id="subagent-count">–</span>
+          </div>
+          <div id="subagent-list"></div>
+        </div>
+        </div>
+        <div class="s-page" data-page="marketplace" hidden>
+          <div class="s-head-row">
+            <div>
+              <h1 class="s-title">Marketplace</h1>
+              <p class="s-sub">Free MCP servers, plugins and skills. Install once — OpenCode picks them up automatically.</p>
+            </div>
+            <div class="s-head-actions">
+              <button class="save-btn" id="mkt-refresh">⟳ Refresh</button>
+            </div>
+          </div>
+
+          <div class="s-card mkt-toolbar">
+            <input class="s-input grow" id="mkt-search" placeholder="Search MCP servers, plugins, skills…" />
+            <div class="mkt-chips" id="mkt-chips">
+              <button class="mkt-chip active" data-kind="all">All <span id="mkt-count-all">0</span></button>
+              <button class="mkt-chip" data-kind="mcp">MCP <span id="mkt-count-mcp">0</span></button>
+              <button class="mkt-chip" data-kind="plugin">Plugins <span id="mkt-count-plugin">0</span></button>
+              <button class="mkt-chip" data-kind="skill">Skills <span id="mkt-count-skill">0</span></button>
+            </div>
+            <label class="s-check mkt-global"><input type="checkbox" id="mkt-global" /> Install globally (all projects)</label>
+          </div>
+
+          <!-- Custom marketplaces (registries) -->
+          <div class="s-card mkt-registry" id="mkt-registry">
+            <div class="s-row s-row-flat">
+              <div class="s-name">Custom marketplaces</div>
+              <span class="s-count" id="mkt-reg-count">–</span>
+            </div>
+            <div class="s-desc mkt-reg-desc">
+              Add a registry URL — a JSON file that lists extra MCP servers, plugins and skills. Its items show up in the grid below with a “custom” badge.
+            </div>
+            <div class="s-inline">
+              <input class="s-input" id="mkt-reg-name" placeholder="Name (optional)" />
+              <input class="s-input grow mono" id="mkt-reg-url" placeholder="https://example.com/marketplace.json" />
+              <button class="save-btn" id="mkt-reg-add">Add registry</button>
+            </div>
+            <div class="cfg-list" id="mkt-reg-list"></div>
+          </div>
+
+          <div class="mkt-grid" id="mkt-grid"></div>
+          <div class="cfg-files" id="mkt-files"></div>
+        </div>
+        <div class="s-page" data-page="plugins" hidden>
+          <div class="s-head-row">
+            <div>
+              <h1 class="s-title">Plugins</h1>
+              <p class="s-sub">Ordered plugin declarations from your OpenCode config (global + project).</p>
+            </div>
+            <div class="s-head-actions">
+              <button class="save-btn" id="plugin-refresh">⟳ Refresh</button>
+            </div>
+          </div>
+
+          <div class="s-card">
+            <div class="s-row">
+              <div class="s-col">
+                <div class="s-name">Add plugin</div>
+                <div class="s-desc">npm package or Git specifier, e.g. <code>opencode-plugin-foo</code>. Installs via <code>opencode plugin add</code>.</div>
+                <div class="s-inline">
+                  <input class="s-input grow" id="plugin-add-input" placeholder="opencode-plugin-… or github:user/repo" />
+                  <button class="save-btn" id="plugin-add-btn">Add</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="s-card">
+            <div class="s-row s-row-flat">
+              <div class="s-name">Built-in plugins</div>
+              <label class="s-check"><input type="checkbox" id="builtin-plugin-global" /> Install globally</label>
+            </div>
+            <div class="cfg-note cfg-note-top">Installed into <code>.opencode/plugins/</code> of the open project, or the global config folder when no project is open.</div>
+            <div class="cfg-list" id="builtin-plugin-list"></div>
+          </div>
+
+          <div class="s-card">
+            <div class="s-row s-row-flat">
+              <div class="s-name">Installed plugins</div>
+              <span class="s-count" id="plugin-count">–</span>
+            </div>
+            <div class="cfg-list" id="plugin-list"></div>
+          </div>
+
+          <div class="cfg-files" id="plugin-files"></div>
+        </div>
+        <div class="s-page" data-page="mcp" hidden>
+          <div class="s-head-row">
+            <div>
+              <h1 class="s-title">MCP Servers</h1>
+              <p class="s-sub">Model Context Protocol servers from your OpenCode config (global + project).</p>
+            </div>
+            <div class="s-head-actions">
+              <button class="save-btn" id="mcp-refresh">⟳ Refresh</button>
+            </div>
+          </div>
+
+          <div class="s-card">
+            <div class="s-row s-row-flat">
+              <div class="s-name">Add server</div>
+            </div>
+            <div class="mcp-form">
+              <div class="s-inline">
+                <input class="s-input grow" id="mcp-name" placeholder="Server name, e.g. github" />
+                <select id="mcp-type">
+                  <option value="local">Local (command)</option>
+                  <option value="remote">Remote (URL)</option>
+                </select>
+                <label class="s-check"><input type="checkbox" id="mcp-global" /> Global</label>
+              </div>
+              <div class="s-inline" id="mcp-local-row">
+                <input class="s-input grow mono" id="mcp-command" placeholder="Command + args, e.g. npx -y @modelcontextprotocol/server-github" />
+              </div>
+              <div class="s-inline" id="mcp-remote-row" hidden>
+                <input class="s-input grow mono" id="mcp-url" placeholder="https://example.com/mcp" />
+              </div>
+              <div class="s-inline">
+                <input class="s-input grow mono" id="mcp-env" placeholder="ENV or headers: KEY=value, KEY2=value2 (optional)" />
+                <button class="save-btn" id="mcp-add-btn">Add server</button>
+              </div>
+              <div class="s-desc" id="mcp-add-hint">Local servers run a command; remote servers connect over HTTP. “Global” writes to the global config instead of this project.</div>
+            </div>
+          </div>
+
+          <div class="s-card">
+            <div class="s-row s-row-flat">
+              <div class="s-name">Built-in servers</div>
+              <span class="s-desc">One-click presets. Written to the project config, or global when no project is open / “Global” is checked.</span>
+            </div>
+            <div class="cfg-list" id="builtin-mcp-list"></div>
+          </div>
+
+          <div class="s-card">
+            <div class="s-row s-row-flat">
+              <div class="s-name">Configured servers</div>
+              <span class="s-count" id="mcp-count">–</span>
+            </div>
+            <div class="cfg-list" id="mcp-list"></div>
+          </div>
+
+          <div class="cfg-files" id="mcp-files"></div>
+        </div>
+        <div class="s-page" data-page="skills" hidden>
+          <div class="s-head-row">
+            <div>
+              <h1 class="s-title">Skills</h1>
+              <p class="s-sub">Installed skills from .opencode/skills (project) and the global OpenCode folder.</p>
+            </div>
+            <div class="s-head-actions">
+              <button class="save-btn" id="skills-open-market">🛍 Marketplace</button>
+              <button class="save-btn" id="skills-refresh">⟳ Refresh</button>
+            </div>
+          </div>
+
+          <div class="s-card" id="skills-github-import-card">
+            <div class="s-row s-row-flat">
+              <div class="s-col">
+                <div class="s-name">Import skills from GitHub</div>
+                <div class="s-desc">Import public Agent Skills from a repository, a skills folder, or a direct SKILL.md URL. Imported files are read as instructions only and are not executed automatically.</div>
+              </div>
+            </div>
+            <div class="s-inline">
+              <input class="s-input grow" id="skills-github-source" type="text" spellcheck="false" placeholder="owner/repo or https://github.com/owner/repo/tree/main/skills" aria-label="GitHub repository or skills folder URL" />
+              <label class="s-check"><input type="checkbox" id="skills-github-global" /> Global</label>
+              <button class="save-btn" id="skills-github-import">Import</button>
+            </div>
+            <div class="cfg-note" id="skills-github-status" role="status" aria-live="polite">Only public GitHub repositories are supported. Review skill instructions before use.</div>
+          </div>
+
+          <div class="s-card">
+            <div class="s-row s-row-flat">
+              <div class="s-name">Installed skills</div>
+              <span class="s-count" id="skills-count">–</span>
+            </div>
+            <div class="cfg-list" id="skills-list"></div>
+          </div>
+
+          <div class="cfg-files" id="skills-files"></div>
+        </div>
+        <div class="s-page" data-page="commands" hidden>
+          <h1 class="s-title">Commands</h1>
+          <div class="s-card">
+            <div class="s-row">
+              <div class="s-col">
+                <div class="s-name">Custom commands</div>
+                <div class="s-desc">Custom slash commands live in <code>.opencode/command/</code> of the project — OpenCode picks them up automatically. Type <code>/</code> in the composer to use one.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="s-page" data-page="hooks" hidden>
+          <h1 class="s-title">Hooks</h1>
+          <div class="s-card">
+            <div class="s-row">
+              <div class="s-col">
+                <div class="s-name">Hooks</div>
+                <div class="s-desc">Hooks are configured in the OpenCode config (the <code>hook</code> key). VibeCoder AI ships its own plugins for the environment guard and the compaction context.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="s-page" data-page="usage" hidden>
+          <h1 class="s-title">Usage</h1>
+          <div class="s-card">
+            <div class="s-row">
+              <div class="s-col">
+                <div class="s-name">Token usage</div>
+                <div class="s-desc">The context ring next to the composer shows the tokens used in this session. Click it for the details: input, output, reasoning, cache and the cost.</div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Overall usage summary -->
+          <div class="s-card" id="usage-overview" hidden>
+            <div class="s-row">
+              <div class="s-col">
+                <div class="s-name">Total Usage (All Sessions)</div>
+              </div>
+            </div>
+            <div class="s-row s-row-flat">
+              <div class="s-name">Total Tokens</div>
+              <span id="usage-total-tokens" class="s-count">–</span>
+            </div>
+            <div class="s-row s-row-flat">
+              <div class="s-name">Estimated Cost</div>
+              <span id="usage-total-cost" class="s-count">–</span>
+            </div>
+            <div class="s-row s-row-flat">
+              <div class="s-name">Sessions</div>
+              <span id="usage-session-count" class="s-count">–</span>
+            </div>
+          </div>
+          
+          <!-- Session usage list -->
+          <div class="s-card" id="usage-sessions" hidden>
+            <div class="s-row">
+              <div class="s-col">
+                <div class="s-name">Session History</div>
+              </div>
+            </div>
+            <div id="usage-session-list"></div>
+          </div>
+          
+          <div class="cfg-note cfg-note-usage">
+            Token counts include input, output, and reasoning tokens. Cost is an estimate based on typical provider pricing.
+          </div>
+        </div>
+        <div class="s-page" data-page="privacy" hidden>
+          <h1 class="s-title">Privacy</h1>
+          <div class="s-card">
+            <div class="s-row">
+              <div class="s-col">
+                <div class="s-name">Data sharing</div>
+                <div class="s-desc">Nothing is sent anywhere by VibeCoder AI. The agent talks to the model provider you picked (the built-in OpenCode account or your own provider), and the errors of this app only go to the local log file.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  <!-- Overlays live on <body>, never inside a page (a hidden settings page used
+       to swallow the dialog, so rename/delete looked like dead buttons). -->
+  <!-- App dialog (themed, replaces the native white popups) -->
+  <div class="app-dialog" id="app-dialog" hidden>
+    <div class="dlg-box">
+      <div class="dlg-head">
+        <span class="dlg-ic">◆</span>
+        <span class="dlg-title" id="dlg-title">VibeCoder AI</span>
+        <button class="dlg-x" id="dlg-x" type="button" title="Close">✕</button>
+      </div>
+      <div class="dlg-body" id="dlg-message"></div>
+      <input class="dlg-input" id="dlg-input" type="text" hidden autocomplete="off" spellcheck="false" />
+      <div class="dlg-foot">
+        <button class="save-btn ghost" id="dlg-cancel" type="button">Cancel</button>
+        <button class="save-btn" id="dlg-ok" type="button">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add model modal (custom provider) -->
+  <div class="modal-backdrop" id="model-modal" hidden>
+    <div class="modal">
+      <div class="modal-head">
+        <span>Add model</span>
+        <button class="icon-btn square sm" id="model-modal-close" type="button" title="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="pf-row">
+          <span class="pf-label">Model ID</span>
+          <input class="s-input" id="mf-id" placeholder="my-model" />
+        </label>
+        <label class="pf-row">
+          <span class="pf-label">Context window</span>
+          <input class="s-input" id="mf-context" type="number" min="0" placeholder="128000" />
+        </label>
+        <label class="pf-row">
+          <span class="pf-label">Max output tokens</span>
+          <input class="s-input" id="mf-output" type="number" min="0" placeholder="8192" />
+        </label>
+        <div class="pf-row pf-row-inline" id="mf-image-row" hidden>
+          <span class="pf-label">Image input</span>
+          <label class="s-check">
+            <input type="checkbox" id="mf-image" />
+            <span>this model can read images</span>
+          </label>
+        </div>
+        <div class="pf-row pf-row-inline">
+          <span class="pf-label">Smart configuration</span>
+          <div class="toggle on" id="mf-smart" role="switch" aria-checked="true" tabindex="0"></div>
+        </div>
+        <span class="pf-hint">On: the context window and the output size are filled in from the provider or models.dev. You can still change them.</span>
+        <div class="mf-status" id="mf-status"></div>
+        <div class="mf-picker" id="mf-picker"></div>
+      </div>
+      <div class="modal-foot">
+        <button class="save-btn ghost" id="mf-cancel" type="button">Cancel</button>
+        <button class="save-btn" id="mf-save" type="button">Add model</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="vendor/marked.min.js"></script>
+    <script src="vendor/purify.min.js"></script>
+    <script src="markdown.js"></script>
+    <script src="usage.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

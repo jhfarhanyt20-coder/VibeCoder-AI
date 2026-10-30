@@ -1,0 +1,21 @@
+# dependencies
+VibeCoderAI-live-fixed/node_modules/
+node_modules/
+
+# build output
+VibeCoderAI-live-fixed/release/
+release/
+dist/
+
+# agent scratch
+.vibe-scratch/
+**/.vibe-scratch/
+
+# logs / temp
+*.log
+*.tmp
+npm-debug.log*
+
+# local env / secrets
+.env
+.env.local

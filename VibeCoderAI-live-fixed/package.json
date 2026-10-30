@@ -1,0 +1,66 @@
+{
+  "name": "vibe-core",
+  "version": "0.1.0",
+  "description": "VibeCoder AI engine: own CLI, own SDK, 3 LLM formats, auto-compaction. Zero dependencies.",
+  "author": {
+    "name": "Jamil Hussain"
+  },
+  "main": "electron/main.cjs",
+  "bin": {
+    "vibe": "cli/vibe.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node test/core-test.mjs && node test/skills-test.mjs && node test/electron-backend-smoke.cjs && node test/compaction-ui-regression.mjs",
+    "serve": "node cli/vibe.js serve",
+    "app": "electron electron/main.cjs",
+    "dev": "electron electron/main.cjs --dev",
+    "dist": "electron-builder --win nsis --x64"
+  },
+  "devDependencies": {
+    "electron": "^45.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "ai.vibecoder.app",
+    "productName": "VibeCoder AI",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**",
+      "core/**",
+      "sdk/**",
+      "cli/**",
+      "renderer/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/icon.ico",
+        "to": "build/icon.ico"
+      }
+    ],
+    "asar": true,
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "VibeCoder AI",
+      "artifactName": "VibeCoderAI-v2-${version}.${ext}"
+    }
+  }
+}

@@ -73,18 +73,32 @@ class SubAgentManager {
 
   /** Create a subagent inside a session. Returns { id, status }. */
   create({ sessionId, name, type = "general", task, maxSteps, profile } = {}) {
-    const session = this.engine.store.get(sessionId)
-    if (!session) throw new Error("Session not found: " + sessionId)
+    const parent = this.engine.store.get(sessionId)
+    if (!parent) throw new Error("Session not found: " + sessionId)
     const profileName = PROFILES[type]
     if (!profileName) throw new Error("Unknown subagent type: " + type)
 
     // The subagent runs against the SAME model profile as the parent session
     // (it is the same engine, same home). Without this the subagent fell back
     // to a built-in profile id it could not authenticate -> "error".
-    const subProfile = profile || session.profile
+    const subProfile = profile || parent.profile
 
     const id = newId("subagent")
     const ctl = new AbortController()
+
+    // V-01: the child gets its OWN session. It used to receive the parent's
+    // session object, which meant the child's whole tool trace was appended to
+    // the parent's history (context pollution) and both runs wrote the same
+    // JSON file (lost messages). The parent conversation is now read-only here.
+    const child = this.engine.store.create({
+      dir: parent.dir,
+      profile: subProfile,
+      title: `subagent: ${String(task || type).replace(/\s+/g, " ").trim().slice(0, 40) || type}`,
+      kind: "subagent",
+      parentId: parent.id,
+      agentId: id,
+    })
+
     const agent = {
       id,
       name: name || type + "_agent",
@@ -93,7 +107,10 @@ class SubAgentManager {
       status: "running",
       result: "",
       error: "",
-      sessionId,
+      // sessionId stays the PARENT id: list()/events/UI are keyed by it.
+      sessionId: parent.id,
+      childSessionId: child.id,
+      session: child,
       ctl,
       done: null,
     }
@@ -101,10 +118,11 @@ class SubAgentManager {
 
     // Fire and forget; errors are stored on the agent so subagentResult/Status
     // can report them. The parent session keeps running independently.
-    this._run(agent, session, subProfile, maxSteps || DEFAULT_MAX_STEPS)
+    this._run(agent, subProfile, maxSteps || DEFAULT_MAX_STEPS)
     return {
       id,
       status: "running",
+      sessionID: child.id,
       // opencode-style guidance so the parent does NOT poll the child
       notice:
         `The subagent is working in the background (sessionID: ${id}). You will be notified automatically when it finishes. ` +
@@ -150,15 +168,17 @@ class SubAgentManager {
   }
 
   /** Internal: run the subagent's mini loop. */
-  async _run(agent, session, profile, maxSteps) {
+  async _run(agent, profile, maxSteps) {
     const store = this.engine.store
+    // V-01: the loop works on the child session, never on the parent's.
+    const session = agent.session
     const id = agent.id
     const tryEmit = (ev) => {
       try {
         // Engine exposes _emit(sessionId, event), not an `emit` property.
-        // Going through it makes child events visible to the UI and allows
-        // permission.ask events to be answered by the parent session.
-        this.engine._emit(session.id, { ...ev, subagentId: id })
+        // Events go to the PARENT session id (with subagentId) so the UI keeps
+        // rendering them on the card that started the child.
+        this.engine._emit(agent.sessionId, { ...ev, subagentId: id, subagentSessionId: agent.childSessionId })
       } catch {}
     }
 
@@ -199,9 +219,9 @@ class SubAgentManager {
         apiKey,
         emit: emitSubagent,
         signal: agent.ctl.signal,
-        // Reuse the session's actual permission policy. Permission prompts are
-        // emitted into the parent session so the user can approve/deny them.
-        askPermission: this.engine._ask(session, agent.ctl.signal, tryEmit),
+        // Reuse the session's actual permission policy, plus the parent's saved
+        // "always" approvals. Prompts still surface on the parent session.
+        askPermission: this.engine._ask(session, agent.ctl.signal, tryEmit, this.engine.store.get(agent.sessionId)),
         agentName: agent.name,
         extraSystem: system,
         maxSteps,

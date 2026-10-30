@@ -152,6 +152,13 @@ class Engine {
   }
   removeSession(id) {
     this.interrupt(id)
+    // V-01: child sessions are hidden from list(), so they must be removed here
+    // or they would leak on disk for ever.
+    try {
+      for (const child of this.store.list({ includeSubagents: true })) {
+        if (child.parentId === id) this.store.remove(child.id)
+      }
+    } catch {}
     this.store.remove(id)
   }
   switchModel(id, profile) {
@@ -179,9 +186,14 @@ class Engine {
   }
 
   // ---- permissions ----
-  _ask(session, signal, emit) {
+  /**
+   * `inherits` lets a child run (subagent) keep the parent session's approvals:
+   * rules are matched against engine rules + inherited rules + own rules, while
+   * a new "always" approval is still stored on `session` (the run that asked).
+   */
+  _ask(session, signal, emit, inherits = null) {
     return ({ tool, subject }) => {
-      const action = decide([...this.rules, ...session.rules], tool, subject)
+      const action = decide([...this.rules, ...(inherits?.rules || []), ...session.rules], tool, subject)
       if (action === "allow") return true
       if (action === "deny") return false
       if (this.permissionMode === "allow") return true
@@ -189,7 +201,7 @@ class Engine {
       if (signal.aborted) return false // the run was stopped: never wait for an answer nobody can give
       const permissionId = newId("perm")
       return new Promise((resolve) => {
-        this.pending.set(permissionId, { resolve, session, tool, subject })
+        this.pending.set(permissionId, { resolve, session, inherits, tool, subject })
         signal.addEventListener("abort", () => this.replyPermission(permissionId, "deny"), { once: true })
         emit({ type: "permission.ask", permissionId, tool, subject })
       })

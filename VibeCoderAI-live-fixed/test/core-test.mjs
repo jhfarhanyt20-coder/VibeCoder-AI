@@ -1212,6 +1212,69 @@ test("subagent spawn + result round-trip against a mock LLM", async () => {
   m.close()
 })
 
+test("V-01: a subagent runs in its own session and never touches the parent history", async () => {
+  // Every child first asks for a bash tool call, then answers in text. The
+  // handler is stateless so two children can interleave safely.
+  const m = await mock(({ body }) => {
+    const hasToolResult = (body.messages || []).some((x) => x.role === "tool")
+    return hasToolResult
+      ? { chunks: [...chat.text("child done"), ...chat.end()] }
+      : { chunks: [...chat.tool("call_1", "bash", { command: "echo hi" }), ...chat.end(2, 1, "tool_calls")] }
+  })
+  const home = tmp()
+  const dir = tmp()
+  const vibe = createVibe({ home, permission: "allow" })
+  await vibe.profiles.upsert({ id: "mock", format: "openai-chat", baseURL: `http://127.0.0.1:${m.port}/v1`, model: "m", noAuth: true, contextLimit: 128000 })
+  const parent = await vibe.session.create({ dir, profile: "mock" })
+
+  const parentFile = path.join(home, "sessions", parent.id + ".json")
+  const beforeMtime = fs.statSync(parentFile).mtimeMs
+  const beforeMessages = JSON.stringify(vibe.engine.getSession(parent.id).messages)
+
+  const a = await vibe.subagents.create({ sessionId: parent.id, type: "general", task: "child A" })
+  const b = await vibe.subagents.create({ sessionId: parent.id, type: "general", task: "child B" })
+  assert.ok(a.sessionID && b.sessionID && a.sessionID !== b.sessionID, "each subagent gets its own child session")
+
+  for (let i = 0; i < 200; i++) {
+    const sa = await vibe.subagents.status(a.id)
+    const sb = await vibe.subagents.status(b.id)
+    if (sa && sb && sa.status !== "running" && sb.status !== "running") break
+    await new Promise((r) => setTimeout(r, 50))
+  }
+
+  // 1. the parent conversation is byte-for-byte unchanged
+  assert.equal(JSON.stringify(vibe.engine.getSession(parent.id).messages), beforeMessages, "parent messages must not change")
+  assert.equal(fs.statSync(parentFile).mtimeMs, beforeMtime, "parent session file must not be rewritten by a child")
+
+  // 2. each child owns a real, isolated session with its own tool trace
+  const childA = vibe.engine.getSession(a.sessionID)
+  const childB = vibe.engine.getSession(b.sessionID)
+  assert.equal(childA.kind, "subagent")
+  assert.equal(childA.parentId, parent.id)
+  assert.ok(childA.messages.length >= 2, "child keeps its own tool call + result")
+  assert.notEqual(childA, childB, "children are distinct session objects")
+  assert.equal(fs.existsSync(path.join(home, "sessions", a.sessionID + ".json")), true)
+  assert.equal(fs.existsSync(path.join(home, "sessions", b.sessionID + ".json")), true)
+
+  // 3. results still round-trip to the parent-facing API
+  assert.equal((await vibe.subagents.result(a.id)).result, "child done")
+  assert.equal((await vibe.subagents.result(b.id)).result, "child done")
+  assert.equal((await vibe.subagents.list(parent.id)).length, 2)
+
+  // 4. child sessions stay out of the session list
+  const listed = (await vibe.session.list({ dir })).map((r) => r.id)
+  assert.deepEqual(listed, [parent.id], "subagent sessions are hidden from the user's session list")
+  const all = vibe.engine.store.list({ includeSubagents: true }).map((r) => r.id)
+  assert.equal(all.length, 3)
+
+  // 5. deleting the parent cleans up the children
+  await vibe.session.remove(parent.id)
+  assert.equal(fs.existsSync(path.join(home, "sessions", a.sessionID + ".json")), false)
+  assert.equal(fs.existsSync(path.join(home, "sessions", b.sessionID + ".json")), false)
+
+  m.close()
+})
+
 // ---------- runner ----------
 let failed = 0
 for (const [name, fn] of tests) {

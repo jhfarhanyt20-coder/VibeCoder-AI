@@ -17,7 +17,20 @@
 3. Implement. Keep the diff to that task only.
 4. Add or extend a test (see `test/` map below) that fails before and passes after.
 5. Run `npm test`. Run the task's own manual check.
-6. Update the **Status table** at the bottom (`⬜` → `✅`) and append one line to **Changelog**.
+6. **Only if everything passes**, commit (`git add -A && git commit -m "V-01: ..."`).
+   If it fails, fix it. If you cannot fix it, revert (`git checkout -- . && git clean -fd`) — **never commit a red test**.
+7. Update the **Status table** at the bottom (`⬜` → `✅`) and append one line to **Changelog**.
+
+### Commit rules (non-negotiable)
+
+| # | Rule |
+|---|---|
+| C1 | **A commit must always be green.** `npm test` passes before `git commit`. No exceptions, no "I'll fix it in the next commit". |
+| C2 | **One task = one commit.** Message format: `V-07: agent definition loader`. |
+| C3 | **Broken work never gets committed.** Revert with `git checkout -- . && git clean -fd` and leave the task ⬜ with a `BLOCKED` note instead. |
+| C4 | **Backup + git baseline exist** (`C:\Users\farhan\Downloads\VibeCoderAI-BACKUP-<ts>\` + commit `baseline: pre-plan snapshot`). Never delete them. |
+| C5 | If a commit turns out to be bad later, revert it with `git revert <sha>` — do not rewrite history. |
+
 
 If a task turns out to be wrong, do **not** silently skip it. Add a note under the task and open a `BLOCKED` status with the reason.
 
@@ -437,7 +450,7 @@ verify-and-build.bat
 
 | ID | Task | Phase | Status | Notes |
 |---|---|---|---|---|
-| V-01 | Isolate subagent history | P0 | ⬜ | |
+| V-01 | Isolate subagent history | P0 | ✅ | own child session, parent untouched, cleanup on delete |
 | V-02 | Fix mcp/plugin subagent tools | P0 | ⬜ | |
 | V-03 | Browser refs → main process + generation | P0 | ⬜ | |
 | V-04 | `browser.evaluate` never persists | P0 | ⬜ | |
@@ -478,4 +491,5 @@ verify-and-build.bat
 
 | Date | Task | Agent | Summary |
 |---|---|---|---|
+| 2026-10-30 | V-01 | assistant | Subagent now runs in its own `kind:"subagent"` child session; parent history/file untouched; children hidden from session list; parent delete removes children. Baseline git committed. |
 | 2026-10-30 | — | planner | Plan created from a code-level comparison against OpenCode V2 docs (agent loop, browser, subagents, compaction). |

@@ -14,10 +14,16 @@ class SessionStore {
     if (!/^ses_[0-9a-f]+$/.test(id)) throw new Error("Invalid session id")
     return path.join(this.dir, id + ".json")
   }
-  create({ dir, profile, title }) {
+  create({ dir, profile, title, kind, parentId, agentId }) {
     const now = Date.now()
     const s = {
       id: newId("ses"),
+      // `kind`/`parentId` live near the top on purpose: SessionStore._row reads
+      // only the first 4 KB of the file to build the session list, so optional
+      // metadata must sit before the (potentially huge) messages array.
+      ...(kind ? { kind } : {}),
+      ...(parentId ? { parentId } : {}),
+      ...(agentId ? { agentId } : {}),
       dir: path.resolve(dir || process.cwd()),
       profile,
       title: title || "New session",
@@ -82,7 +88,7 @@ class SessionStore {
     const idH = str("id")
     if (idH !== id || str("dir") == null || num("createdAt") == null || num("messageCount") == null) {
       const s = this.get(id) // old single-line format: one full parse
-      return { id, title: s.title, dir: s.dir, profile: s.profile, createdAt: s.createdAt, updatedAt: s.updatedAt, messages: s.messages.length }
+      return { id, title: s.title, dir: s.dir, profile: s.profile, createdAt: s.createdAt, updatedAt: s.updatedAt, messages: s.messages.length, kind: s.kind, parentId: s.parentId }
     }
     const live = this.cache.get(id) // a cached (live) session knows its real message count
     return {
@@ -93,15 +99,20 @@ class SessionStore {
       createdAt: num("createdAt"),
       updatedAt: num("updatedAt") || num("createdAt"),
       messages: live ? live.messages.length : num("messageCount") || 0,
+      kind: str("kind"),
+      parentId: str("parentId"),
     }
   }
-  list({ dir } = {}) {
+  list({ dir, includeSubagents = false } = {}) {
     const out = []
     for (const n of fs.readdirSync(this.dir)) {
       if (!n.endsWith(".json")) continue
       try {
         const r = this._row(path.join(this.dir, n), n.slice(0, -5))
         if (!r || (dir && path.resolve(dir) !== r.dir)) continue
+        // Subagent sessions are internal child runs. They must not show up in
+        // the user's session list; pass includeSubagents for cleanup/telemetry.
+        if (r.kind === "subagent" && !includeSubagents) continue
         out.push(r)
       } catch {}
     }

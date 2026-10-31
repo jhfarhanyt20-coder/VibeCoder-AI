@@ -629,6 +629,14 @@ class Engine {
     try { const result = await bm.evaluate(tabID, script); return { ok: true, data: { result } } }
     catch (e) { return { ok: false, error: String(e?.message || e) } }
   }
+  async browserWait({ tabID, selector, text, networkIdle = false, timeoutMs } = {}) {
+    const bm = this._browserManager()
+    if (!bm) return this._noBrowser()
+    try {
+      const result = await bm.wait(tabID, { selector, text, networkIdle, timeoutMs })
+      return { ok: true, data: result }
+    } catch (e) { return { ok: false, error: String(e?.message || e) } }
+  }
   async browserSnapshot({ tabID, depth = 8 } = {}) {
     const bm = this._browserManager()
     if (!bm) return this._noBrowser()

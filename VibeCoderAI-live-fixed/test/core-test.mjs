@@ -1025,6 +1025,14 @@ test("browser tools return a clear error when no browser is connected (CLI/SDK)"
   assert.match(String(list), /No browser available|Failed/i)
   const open = await byName("browser.tabs.open").run({ url: "about:blank" }, ctx)
   assert.match(String(open), /No browser available|Failed to open/i)
+  // V-09: browser.wait exists, carries the guided params, and degrades cleanly.
+  const wait = byName("browser.wait")
+  assert.ok(wait, "browser.wait is registered")
+  assert.equal(wait.perm().subject, "wait")
+  assert.ok(wait.parameters.properties.selector && wait.parameters.properties.timeoutMs)
+  let waitError = ""
+  try { await wait.run({ selector: "#done", timeoutMs: 100 }, ctx) } catch (e) { waitError = e.message }
+  assert.match(String(waitError), /No browser available|Failed to wait/i)
 })
 
 test("large grouped tool interaction can be fully summarized instead of remaining as an oversized tail", () => {

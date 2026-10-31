@@ -458,7 +458,7 @@ verify-and-build.bat
 | V-06 | Last-step summarisation | P0 | ✅ | final step drops tools, asks for closing summary, done.summarized |
 | V-07 | Agent definition loader | P1 | ✅ | `core/agents/index.js`: global + project `.vibe/agents/*.md`, nested ids, frontmatter, builtins build/plan/explore/general, model/steps/permissions applied, `engine.agents.list/get` |
 | V-08 | Permission rule shape upgrade | P1 | ✅ | `decide()` accepts `{tool,pattern,action}` and `{action,resource,effect}`; `git *` matches bare `git`; grep subject = search pattern |
-| V-09 | `browser.wait` + navigate readiness | P1 | ⬜ | |
+| V-09 | `browser.wait` + navigate readiness | P1 | ✅ | 150 ms polling for selector/text/network-idle (max 30 s, JS bounded); navigate waits for body, 1 s sleep only as fallback |
 | V-10 | `question` tool | P1 | ⬜ | |
 | V-11 | Subagent upgrades | P1 | ⬜ | depends V-01, V-07 |
 | V-12 | Plugin hooks | P1 | ⬜ | |
@@ -491,6 +491,7 @@ verify-and-build.bat
 
 | Date | Task | Agent | Summary |
 |---|---|---|---|
+| 2026-10-31 | V-09 | assistant | `BrowserManager.wait(tabID,{selector,text,networkIdle,timeoutMs})` polls every 150 ms (max 30 s) and bounds page JS with the same deadline; new `browser.wait` tool (perm subject `wait`). `browser.navigate` waits for `body` and keeps the old 1 s sleep only when readiness fails. Tests: 78 core + 10 agents + 6 skills + Electron smoke (wait resolves + timeout) + compaction UI green. |
 | 2026-10-31 | V-08 | assistant | `core/perm/rules.js` exports `normalizeRule/normalizeRules`; `decide()` accepts the OpenCode `{action,resource,effect}` shape as well as the old one, so `rules.json` keeps working either way. Bash patterns ending in ` *` also match the bare command; documented that a `grep` rule matches the search pattern. Tests: 78 core + 10 agents + 6 skills + Electron + compaction UI green. |
 | 2026-10-31 | V-07 | assistant | New `core/agents/index.js` (built on the skills frontmatter parser): discovers `~/.vibe/agents/*.md` and `<dir>/.vibe/agents/*.md`, nested folders become ids, project overrides global, builtins build/plan/explore/general. `engine.agents.list/get`, `createSession({agent})`, agent `model`/`steps`/`permissions` applied in the run; agent rules outrank stored approvals. New `test/agents-test.mjs` (10 tests). Tests: 74 core + 10 agents + 6 skills + Electron + compaction UI green. |
 | 2026-10-31 | V-18/19/20 | assistant | Compaction parity: new `core/config.js` (`~/.vibe/config.json` compaction block), `keep.tokens`/`buffer`/`maxRuns` (0 = unlimited, old 6-cap removed), the replaced head is archived to `<session>.archive.json` (newest 2, never sent to a model), and `compaction.model` can name a separate summary profile (falls back with a warning). Auto-compact toggle and "Compact now" already exist in the context menu. Tests: 74 core + 6 skills + Electron + compaction UI green. |

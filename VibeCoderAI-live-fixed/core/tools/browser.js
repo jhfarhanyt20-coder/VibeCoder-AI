@@ -82,10 +82,45 @@ function createBrowserTools() {
       perm: () => ({ tool: "browser", subject: "navigate" }),
       paths: () => [],
       async run(a, c) {
-        const res = await (c.engine || c.vibe)?.browserNavigate?.({ tabID: a.tabID, url: a.url })
+        const api = c.engine || c.vibe
+        const res = await api?.browserNavigate?.({ tabID: a.tabID, url: a.url })
         if (!res?.ok) throw new Error(res?.error || "Failed to navigate")
-        await new Promise(r => setTimeout(r, 1000))
+        // V-09: wait for the body instead of guessing with a sleep. The old 1 s
+        // pause stays as a fallback only when readiness cannot be confirmed.
+        const waited = await api?.browserWait?.({ tabID: a.tabID, selector: "body", timeoutMs: 5000 })
+        if (!waited?.ok) await new Promise((r) => setTimeout(r, 1000))
         return `Navigated the ${a.tabID ? `tab ${a.tabID}` : "active browser tab"} to ${a.url}`
+      },
+    },
+    wait: {
+      name: "browser.wait",
+      description:
+        "Wait until a CSS selector or visible text appears in the visible in-app browser tab (poll every 150 ms, max 30 s). Use it after navigating or clicking when content loads asynchronously instead of guessing with sleeps.",
+      parameters: {
+        type: "object",
+        properties: {
+          tabID: { type: "string", description: "Optional; defaults to the active visible browser tab." },
+          selector: { type: "string", description: "CSS selector that must exist, e.g. '#results'." },
+          text: { type: "string", description: "Visible text that must appear on the page." },
+          networkIdle: { type: "boolean", description: "Also wait for the next page load to finish." },
+          timeoutMs: { type: "integer", description: "Maximum wait in milliseconds (default 10000, max 30000)." },
+        },
+        required: [],
+      },
+      perm: () => ({ tool: "browser", subject: "wait" }),
+      paths: () => [],
+      async run(a, c) {
+        const res = await (c.engine || c.vibe)?.browserWait?.({
+          tabID: a.tabID,
+          selector: a.selector,
+          text: a.text,
+          networkIdle: a.networkIdle,
+          timeoutMs: a.timeoutMs,
+        })
+        if (!res?.ok) throw new Error(res?.error || "Failed to wait")
+        const d = res.data || {}
+        const what = [d.selector ? `selector ${d.selector}` : "", d.text ? `text ${JSON.stringify(d.text)}` : "", d.networkIdle ? "network idle" : ""].filter(Boolean).join(" / ")
+        return `Wait completed in ${d.elapsedMs} ms${what ? ` (${what})` : ""}`
       },
     },
     snapshot: {

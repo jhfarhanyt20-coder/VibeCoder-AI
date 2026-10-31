@@ -54,6 +54,10 @@ async function main() {
     getURL() { return this.loadedURL || "https://example.test/" },
     getTitle() { return "Live Mock Page" },
     async executeJavaScript(script) {
+      // V-09: the wait probe returns true unless the test asks for a selector
+      // that never appears (to exercise the timeout path).
+      if (script.includes('const sel = "#missing"')) return false
+      if (script.includes("const sel =")) return true
       if (script.includes(".click();")) return { clicked: "e1", tag: "button", generation: 1 }
       if (script.includes("data-vibe-ref")) return [{ level: 0, role: "button", name: "Submit", value: "", ref: "e1", tag: "button" }]
       if (script.includes("document.title")) return "Mock Page"
@@ -111,6 +115,12 @@ async function main() {
   assert.ok(/older snapshot/.test(staleErr), "stale generation yields a guided error: " + staleErr)
   const okClick = await browserManager.click(browserTab.id, "e1", undefined)
   assert.ok(okClick && okClick.clicked, "omitting generation still clicks the latest ref")
+  // V-09: wait resolves as soon as the selector appears and times out cleanly.
+  const waited = await browserManager.wait(browserTab.id, { selector: "#done", timeoutMs: 3000 })
+  assert.ok(waited && Number.isFinite(waited.elapsedMs), "wait reports elapsed time")
+  let waitTimeout = ""
+  try { await browserManager.wait(browserTab.id, { selector: "#missing", timeoutMs: 200 }) } catch (e) { waitTimeout = e.message }
+  assert.match(waitTimeout, /Timed out after 200 ms/, "a missing selector returns a clear timeout error")
   await browserManager.closeTab(browserTab.id)
   console.log("PASS in-app browser bridge: agent tab creation/activation uses the visible renderer dock and operates the registered guest page")
 

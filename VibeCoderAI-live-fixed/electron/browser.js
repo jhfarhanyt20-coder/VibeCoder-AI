@@ -196,6 +196,79 @@ class BrowserManager {
     return contents.executeJavaScript(script)
   }
 
+  /**
+   * V-09: wait until a condition holds in the tab instead of a fixed sleep.
+   * Polls every 150 ms for a CSS selector or a visible text substring, and
+   * optionally waits for the next did-finish-load (network idle). Page JS is
+   * bounded by the same deadline, so a stuck page cannot hang the run.
+   */
+  async wait(tabID, options = {}) {
+    const { contents } = await this._getTab(tabID)
+    const selector = options.selector ? String(options.selector) : ""
+    const text = options.text ? String(options.text) : ""
+    const networkIdle = !!options.networkIdle
+    const timeoutMs = Math.max(50, Math.min(30000, Number(options.timeoutMs) || 10000))
+    const started = Date.now()
+    const deadline = started + timeoutMs
+    const probe = selector || text
+      ? `(() => {
+          const sel = ${JSON.stringify(selector)};
+          const wanted = ${JSON.stringify(text)};
+          if (sel) { const el = document.querySelector(sel); if (el) return true; }
+          if (wanted) { const body = document.body ? document.body.innerText : ''; if (String(body).includes(wanted)) return true; }
+          return false;
+        })()`
+      : ""
+
+    let idleDone = !networkIdle
+    let onIdle = null
+    if (networkIdle) {
+      onIdle = () => { idleDone = true }
+      try {
+        contents.once("did-finish-load", onIdle)
+        if (typeof contents.isLoading === "function" && !contents.isLoading()) idleDone = true
+        else if (typeof contents.isLoading !== "function") idleDone = true
+      } catch {
+        idleDone = true
+      }
+    }
+
+    const withTimeout = (promise, ms) => {
+      const p = Promise.resolve(promise)
+      p.catch(() => {})
+      let timer
+      const guard = new Promise((resolve) => { timer = setTimeout(() => resolve(null), Math.max(1, ms)) })
+      return Promise.race([p, guard]).finally(() => clearTimeout(timer))
+    }
+
+    try {
+      while (true) {
+        const remaining = deadline - Date.now()
+        if (probe && remaining > 0) {
+          // race the page probe against the remaining budget
+          const found = await withTimeout(contents.executeJavaScript(probe), remaining)
+          if (found && idleDone) {
+            return { elapsedMs: Date.now() - started, selector, text, networkIdle }
+          }
+        } else if (!probe && idleDone) {
+          return { elapsedMs: Date.now() - started, selector, text, networkIdle }
+        }
+        if (Date.now() >= deadline) {
+          const what =
+            [selector && `selector ${selector}`, text && `text ${JSON.stringify(text)}`, networkIdle && "network idle"]
+              .filter(Boolean)
+              .join(" / ") || "condition"
+          throw new Error(`Timed out after ${timeoutMs} ms waiting for ${what}`)
+        }
+        await new Promise((resolve) => setTimeout(resolve, Math.min(150, Math.max(1, deadline - Date.now()))))
+      }
+    } finally {
+      if (onIdle) {
+        try { contents.removeListener("did-finish-load", onIdle) } catch {}
+      }
+    }
+  }
+
   async snapshot(tabID, options = {}) {
     const { tab, contents } = await this._getTab(tabID)
     const depth = Math.max(1, Math.min(16, Number(options.depth) || 8))

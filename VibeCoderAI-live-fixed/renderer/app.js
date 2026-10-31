@@ -1445,9 +1445,12 @@ function toolCardEl(name, input = {}, output = "") {
 
 function subagentMeta(state = {}, input = {}) {
   const md = state?.metadata && typeof state.metadata === "object" ? state.metadata : {}
-  const known = md.subagentId && typeof subAgentsById !== "undefined" ? subAgentsById.get(md.subagentId) : null
+  const output = (Array.isArray(state?.content) ? state.content : []).filter((item) => item?.type === "text").map((item) => item.text || "").join("\n")
+  const legacyId = /\b(?:id|sessionID):\s*(subagent_[0-9a-f]+)\b/i.exec(output)?.[1] || ""
+  const subagentId = md.subagentId || legacyId
+  const known = subagentId && typeof subAgentsById !== "undefined" ? subAgentsById.get(subagentId) : null
   return {
-    id: md.subagentId || "",
+    id: subagentId,
     sessionID: known?.childSessionId || md.subagentSessionId || "",
     name: known?.name || md.subagentName || input.name || input.agent || input.type || "Subagent",
     type: known?.type || md.subagentType || input.agent || input.type || "general",

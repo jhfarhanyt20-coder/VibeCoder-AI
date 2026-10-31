@@ -281,7 +281,7 @@ test("permission 'always' adds a session rule", async () => {
   assert.equal(fs.existsSync(path.join(dir, "b.txt")), true)
 })
 
-test("AUTO-COMPACTION step 1: old tool outputs are pruned, loop continues", async () => {
+test("AUTO-COMPACTION step 1: old tool outputs are pruned or summarized, loop continues", async () => {
   const { m, vibe, s, dir } = await setup(
     ({ body }) => {
       const toolMsgs = body.messages.filter((x) => x.role === "tool").length
@@ -297,7 +297,8 @@ test("AUTO-COMPACTION step 1: old tool outputs are pruned, loop continues", asyn
   assert.ok(end, "compaction should trigger")
   assert.ok(end.after < end.before, `shrunk ${end.before} -> ${end.after}`)
   const outputs = vibe.engine.getSession(s.id).messages.flatMap((x) => x.parts).filter((p) => p.type === "tool_result").map((p) => p.output)
-  assert.ok(outputs.some((o) => /Old tool output cleared/.test(o)))
+  const saved = vibe.engine.getSession(s.id)
+  assert.ok(outputs.some((o) => /Old tool output cleared/.test(o)) || saved.messages.some((message) => message.summary), "old outputs must be removed from active context by pruning or checkpoint summary")
   assert.equal(evs.at(-1).type, "done")
 })
 
@@ -310,7 +311,7 @@ test("AUTO-COMPACTION step 2: model writes a checkpoint summary, history replace
       if (/checkpoint summar(?:y|ies)/i.test(sys)) {
         summaryCalls++
         assert.equal(body.messages.length, 2)
-        assert.match(body.messages[1].content, /## Goal/)
+        assert.match(body.messages[1].content, /## Objective/)
         return { chunks: [...chat.text("## Goal\nwrite files\n\n## Accomplished\nwrote some"), ...chat.end(500, 50)] }
       }
       const n = writes++
@@ -1051,6 +1052,39 @@ test("compaction safe-cut refuses cross-boundary tool-result IDs and ID-less amb
     { role: "assistant", parts: [{ type: "text", text: "later" }] },
   ]
   assert.equal(cutIsSafe(ambiguous, 2), false, "an ID-less result cannot be assumed unrelated to a call on the other side")
+})
+
+test("OpenCode-style compaction summarizes meaningful history even when everything fits keep.tokens", async () => {
+  const compaction = require("../core/agent/compaction")
+  const prefix = "[Checkpoint: the earlier part of this conversation was compacted. Continue from this summary.]"
+  const messages = [
+    { role: "user", summary: true, parts: [{ type: "text", text: `${prefix}\n\n## Goal\nOld MCP inventory topic\n\n## Accomplished\nNothing yet` }] },
+    { role: "assistant", parts: [{ type: "text", text: "Old unrelated answer" }] },
+    { role: "user", parts: [{ type: "text", text: "Research ten Arijit Singh songs on YouTube" }] },
+    { role: "assistant", parts: [{ type: "text", text: "YouTube research and links were collected" }] },
+    { role: "user", parts: [{ type: "text", text: "Research the recent Binance security incident" }] },
+    { role: "assistant", parts: [{ type: "text", text: "Binance research was completed" }] },
+    { role: "user", parts: [{ type: "text", text: "Now verify the exact tools and techniques" }] },
+    { role: "assistant", parts: [{ type: "text", text: "Current exchange remains verbatim" }] },
+  ]
+  assert.equal(compaction.pickSummaryCut(messages, 100000), 6, "only the latest user exchange should remain verbatim")
+
+  let summaryInput = ""
+  const m = await mock(({ body }) => {
+    summaryInput = String(body.messages?.at(-1)?.content || "")
+    return { chunks: [...chat.text("## Objective\n- Continue the Binance and YouTube research accurately.\n\n## Work State\n### Completed\n- YouTube and Binance research collected.\n### Active\n- Verify tools and techniques.\n### Blocked\n- (none)\n\n## Next Move\n1. Verify sources."), ...chat.end()] }
+  })
+  const profile = { id: "summary", format: "openai-chat", baseURL: `http://127.0.0.1:${m.port}/v1`, model: "m", noAuth: true, contextLimit: 16000, maxOutput: 1000 }
+  const session = { id: "ses_1212121212121212", dir: "C:/tmp", profile: "summary", messages: structuredClone(messages), usage: { lastInput: 0 } }
+  const result = await compaction.compact({ session, profile, apiKey: "", reason: "manual", config: { keep: { tokens: 100000 } } })
+  m.close()
+  assert.equal(result.committed, true)
+  assert.match(summaryInput, /Arijit Singh songs on YouTube/)
+  assert.match(summaryInput, /Binance security incident/)
+  assert.doesNotMatch(summaryInput, /Previous checkpoint summary:/)
+  assert.doesNotMatch(result.summary, /Old MCP inventory topic/)
+  assert.match(result.summary, /Binance and YouTube research/)
+  assert.equal(session.messages[1].parts[0].text, "Now verify the exact tools and techniques")
 })
 
 test("agent blocks follow-up requests when a committed checkpoint still exceeds budget", async () => {

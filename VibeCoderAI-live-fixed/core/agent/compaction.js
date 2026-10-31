@@ -26,24 +26,37 @@ const MESSAGE_OVERHEAD = 4
 const SUMMARY_SILENCE_TIMEOUT_MS = 30000
 const SUMMARY_SYSTEM =
   "You write checkpoint summaries of a coding-agent conversation so that another agent can continue the work without the original messages. Be factual, dense and exact. Never invent details."
-const TEMPLATE = `Write a checkpoint summary of the conversation above. Use exactly these sections:
+const TEMPLATE = `Summarize only what the user and assistant said and did. Newer history overrides stale or contradicted information.
 
-## Goal
-What the user is trying to achieve right now.
+Use exactly these sections (omit only sections that truly do not apply):
 
-## Instructions
-Rules, preferences and constraints the user gave that still apply.
+## Objective
+- One or two brief sentences describing what the user is trying to accomplish now.
 
-## Discoveries
-Facts learned: how the code works, errors seen, decisions made and why.
+## Requirements
+- Constraints, preferences, scope boundaries, and exact unanswered requests from the user, or "(none)".
 
-## Accomplished
-What is done, what is in progress, what is still to do (keep the remaining TODO items).
+## Decisions
+- Consequential decisions already made and why, or "(none)".
 
-## Relevant files and directories
-Exact paths, with one line on what changed or why it matters.
+## Work State
+### Completed
+- Completed goals, or "(none)".
+### Active
+- Work currently in progress, or "(none)".
+### Blocked
+- Blockers and their causes, or "(none)".
 
-Keep exact file paths, commands that were run and any error that is still open. No preamble, no closing remarks.`
+## Next Move
+1. Ordered next actions, or "(none)".
+
+## Relevant Files
+- At most 15 exact file/directory paths another agent needs, with a brief reason; otherwise "(none)".
+
+## Important Context
+- Facts the next agent cannot continue without and cannot easily rediscover, including exact URLs, commands, identifiers, and unresolved errors; otherwise "(none)".
+
+Rules: keep sections concise; use terse single-line bullets; preserve only current/unresolved work; do not mention compaction or the summary process; do not continue the task or call tools. Return only the structured summary.`
 const CHECKPOINT_PREFIX = "[Checkpoint: the earlier part of this conversation was compacted. Continue from this summary.]"
 
 function tokenCount(value) {
@@ -256,7 +269,9 @@ function renderTranscript(messages, maxChars) {
 
 function validSummary(summary) {
   const s = String(summary || "").trim()
-  return s.length >= 40 && /##\s+Goal\b/i.test(s) && /##\s+(Accomplished|Discoveries)\b/i.test(s)
+  const objective = /##\s+(Goal|Objective)\b/i.test(s)
+  const state = /##\s+(Accomplished|Discoveries|Work State|Next Move)\b/i.test(s)
+  return s.length >= 40 && objective && state
 }
 
 function projectContext(session) {
@@ -285,11 +300,13 @@ function mechanicalSummary(messages) {
     }
   }
   return [
-    "## Goal", users[0] || "- Continue the user's current task.",
-    "## Instructions", users.slice(1, 5).join("\n") || "- (none recorded)",
-    "## Discoveries", errors.slice(-8).join("\n") || "- (no explicit tool errors recorded)",
-    "## Accomplished", assistant.slice(-8).join("\n") || "- Work is not yet summarized; continue by inspecting recent history.",
-    "## Relevant files and directories", [...files].slice(-40).map((file) => `- ${file}`).join("\n") || "- (none recorded)",
+    "## Objective", users.at(-1) || users[0] || "- Continue the user's current task.",
+    "## Requirements", users.slice(-5).join("\n") || "- (none)",
+    "## Decisions", "- (none)",
+    "## Work State", "### Completed", assistant.slice(-8).join("\n") || "- (none)", "### Active", users.at(-1) || "- (none)", "### Blocked", errors.slice(-8).join("\n") || "- (none)",
+    "## Next Move", "1. Continue from the latest retained user request.",
+    "## Relevant Files", [...files].slice(-15).map((file) => `- ${file}`).join("\n") || "- (none)",
+    "## Important Context", "- Preserve the newest conversation over stale earlier goals.",
   ].join("\n\n")
 }
 
@@ -378,6 +395,56 @@ function pickSafeCut(messages, keepTokens) {
     if (cutIsSafe(messages, cut)) return cut
   }
   return 0
+}
+
+/**
+ * OpenCode-style summary split: keep recent messages verbatim, but even when
+ * the whole conversation fits the keep allowance retain only the latest user
+ * exchange so there is meaningful older history to summarize. Tool-result-only
+ * user turns are not boundaries; they stay with their assistant tool call.
+ */
+function pickSummaryCut(messages, keepTokens) {
+  if (!Array.isArray(messages) || !messages.length) return 0
+  const previousKeepsRecent = !!messages[0]?.summary && (messages[0].displayAfter == null || Number(messages[0].displayAfter) > 0)
+  const entries = messages.flatMap((message, index) => {
+    if (message?.summary) return []
+    const parts = Array.isArray(message?.parts) ? message.parts : []
+    const visible = parts.some((part) =>
+      part?.type === "tool_call" || part?.type === "tool_result" || part?.type === "image" || (part?.type === "text" && !part.agentOnly),
+    )
+    return visible ? [{ message, index, tokens: msgTokens(message) }] : []
+  })
+  if (!entries.length) return previousKeepsRecent ? Math.min(1, messages.length) : messages.length
+
+  const keep = Math.max(0, Number.isFinite(keepTokens) ? Math.floor(keepTokens) : 0)
+  let total = 0
+  let start = entries.length
+  while (start > 0) {
+    const next = total + entries[start - 1].tokens
+    if (next > keep) break
+    total = next
+    start--
+  }
+  const dropped = Math.min(start, entries.length - 1)
+  const isUser = (entry) => entry.message?.role === "user" && (entry.message.parts || []).some((part) => part?.type === "text" && !part.agentOnly)
+  let boundary = -1
+  for (let i = 0; i <= dropped; i++) if (isUser(entries[i])) boundary = i
+  if (boundary <= 0) {
+    for (let i = entries.length - 1; i > 0; i--) {
+      if (isUser(entries[i])) { boundary = i; break }
+    }
+  }
+
+  let cut
+  if (boundary > 0) cut = entries[boundary].index
+  else if (previousKeepsRecent) cut = Math.min(1, messages.length)
+  else cut = messages.length
+
+  for (let candidate = Math.max(1, cut); candidate <= messages.length; candidate++) {
+    if (candidate < messages.length && !validCut(messages[candidate])) continue
+    if (cutIsSafe(messages, candidate)) return candidate
+  }
+  return pickSafeCut(messages, keepTokens)
 }
 
 function checkpointMessage(session, summary, reason = "auto", summarySource = "llm", summaryModel = "", displayAfter = 0) {
@@ -564,7 +631,7 @@ async function compact({
   const keepTokens = configuredKeep > 0
     ? Math.min(configuredKeep, Math.max(1, budgetLimit - 1))
     : Math.min(20000, Math.floor(budgetLimit * 0.2))
-  const cut = pickSafeCut(candidateMessages, keepTokens)
+  const cut = pickSummaryCut(candidateMessages, keepTokens)
 
   if (cut <= 0) {
     return { before, after: before, summarized: false, committed: false, fitsBudget: before <= budgetLimit, budgetLimit, reason, error: "Cannot compact safely: no valid split boundary preserves the known tool-call/result relationships." }
@@ -589,13 +656,17 @@ async function compact({
     if (typeof onSummaryDelta === "function") onSummaryDelta({ ...update, summaryModel: model })
   }
   let generated
+  // A previous checkpoint is already the first message in `head`. Repeating it
+  // again after the transcript over-weights stale goals (the reported session
+  // repeated its old MCP topic and ignored newer YouTube/Binance research).
+  const previousSummary = head.some((message) => message?.summary) ? "" : session.compactedSummary
   try {
     generated = await generateSummary({
       profile: summarizer,
       apiKey: summarizerKey,
       signal,
       head,
-      previousSummary: session.compactedSummary,
+      previousSummary,
       targetTokens: budgetLimit,
       timeoutMs: summaryTimeoutMs,
       onDelta: progressFor(configuredSummaryModel),
@@ -609,7 +680,7 @@ async function compact({
         apiKey,
         signal,
         head,
-        previousSummary: session.compactedSummary,
+        previousSummary,
         targetTokens: budgetLimit,
         timeoutMs: summaryTimeoutMs,
         onDelta: progressFor(sessionModel),
@@ -725,6 +796,7 @@ module.exports = {
   partTokens,
   pickCut,
   pickSafeCut,
+  pickSummaryCut,
   cutIsSafe,
   limits,
   normalizeProfile,

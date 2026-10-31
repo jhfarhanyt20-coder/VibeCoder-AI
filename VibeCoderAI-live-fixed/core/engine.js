@@ -421,18 +421,55 @@ class Engine {
    * never stop compaction - it falls back and reports a warning.
    */
   _summaryTarget(cfg) {
-    const id = cfg && cfg.model
-    if (!id) return { profile: null, apiKey: "", warning: "" }
+    const target = cfg && cfg.model ? String(cfg.model).trim() : ""
+    if (!target) return { profile: null, apiKey: "", warning: "" }
     try {
-      const profile = profiles.getProfile(id, this.home)
+      let profile
+      let modelKey = ""
+      try {
+        // Backward compatible: a plain profile id keeps using that profile's
+        // selected model.
+        profile = profiles.getProfile(target, this.home)
+        modelKey = `${profile.id}/${profile.model}`
+      } catch (exactError) {
+        // The desktop picker stores an exact provider/model key. Model ids may
+        // contain slashes, so only the first segment is the profile id.
+        const slash = target.indexOf("/")
+        if (slash <= 0 || slash === target.length - 1) throw exactError
+        const profileID = target.slice(0, slash)
+        const modelID = target.slice(slash + 1)
+        const base = profiles.getProfile(profileID, this.home)
+        const rows = Array.isArray(base.models) ? base.models : []
+        const row = rows.find((item) => item && String(item.id) === modelID)
+        if (!row && String(base.model || "") !== modelID) {
+          throw new Error(`Model "${modelID}" is not configured for profile "${profileID}".`)
+        }
+        profile = {
+          ...base,
+          model: modelID,
+          ...(Number(row?.context) > 0 ? { contextLimit: Number(row.context) } : {}),
+          ...(Number(row?.output) > 0 ? { maxOutput: Number(row.output) } : {}),
+          ...(row && Object.prototype.hasOwnProperty.call(row, "image") ? { image: !!row.image } : {}),
+        }
+        modelKey = `${profileID}/${modelID}`
+      }
+      profile = { ...profile, summaryModelKey: modelKey }
       return { profile, apiKey: profiles.getKey(profile, this.home), warning: "" }
     } catch (e) {
       return {
         profile: null,
         apiKey: "",
-        warning: `Compaction summary model "${id}" is unavailable (${e.message}); using the session model.`,
+        warning: `Compaction summary model "${target}" is unavailable (${e.message}); using the session model.`,
       }
     }
+  }
+
+  getCompactionConfig() {
+    return config.compactionConfig(this.home)
+  }
+
+  setCompactionConfig(patch = {}) {
+    return config.updateCompaction(this.home, patch)
   }
 
   /** V-19: archive callback shared by runLoop and manual compaction. */
@@ -683,7 +720,7 @@ class Engine {
     return { items: s.todos }
   }
 
-  /** Manual compaction. Returns {before, after, summarized}. */
+  /** Explicit compaction. Returns {before, after, summarized}. */
   async compact(id, opts = {}) {
     if (this.runs.has(id)) throw new Error("Session is busy")
     const session = this.store.get(id)
@@ -691,8 +728,9 @@ class Engine {
     const apiKey = profiles.getKey(profile, this.home)
     const ctl = new AbortController()
     this.runs.set(id, ctl)
+    const reason = opts.reason === "auto" ? "auto" : "manual"
     try {
-      this._emit(id, { type: "compaction.start", reason: "manual" })
+      this._emit(id, { type: "compaction.start", reason })
       const toolSpecs = tools.specs([...tools.ALL, ...this.extraTools(session.dir)])
       const system = buildSystem({ agentName: this.agentName, cwd: session.dir, extra: this.extraSystem })
       const compactionConfig = config.compactionConfig(this.home)
@@ -703,7 +741,7 @@ class Engine {
         profile,
         apiKey,
         signal: opts.signal || ctl.signal,
-        reason: "manual",
+        reason,
         system,
         toolSpecs,
         config: compactionConfig,
@@ -713,7 +751,7 @@ class Engine {
       })
       if (summary.warning && r.committed && !r.warning) r.warning = summary.warning
       if (r.committed) this.store.save(session)
-      this._emit(id, { type: "compaction.end", reason: "manual", ...r, summary: r.summary || "", text: r.summary || "" })
+      this._emit(id, { type: "compaction.end", reason, ...r, summary: r.summary || "", text: r.summary || "" })
       return r
     } finally {
       this.runs.delete(id)

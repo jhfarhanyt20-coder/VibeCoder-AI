@@ -467,9 +467,9 @@ verify-and-build.bat
 | V-15 | Accessibility-tree snapshots | P2 | ⬜ | |
 | V-16 | Browser dialog handling | P2 | ⬜ | |
 | V-17 | Browser perf trace | P2 | ⬜ | optional |
-| V-18 | Configurable compaction | P3 | ✅ | `~/.vibe/config.json` `compaction` block: auto/keep.tokens/buffer/maxRuns(0=unlimited)/model; hard cap removed |
+| V-18 | Configurable compaction | P3 | ✅ | Config + desktop controls: persisted auto toggle, keep.tokens/buffer/maxRuns(0=unlimited), exact summary-model selector; hard cap removed |
 | V-19 | Compacted-history archive | P3 | ✅ | replaced head written to `<session>.archive.json` (newest 2); model never sees it |
-| V-20 | Separate summary model | P3 | ✅ | `compaction.model` profile writes the checkpoint; bad id falls back with a warning |
+| V-20 | Separate summary model | P3 | ✅ | Any configured `provider/model` can write auto + manual checkpoints; writer is recorded/displayed; bad id falls back with a warning |
 | V-21 | Background compaction | P3 | ⬜ | flagged |
 | V-22 | Native compaction (responses) | P3 | ⬜ | optional |
 | V-23 | File snapshots + `/undo` | P4 | ⬜ | |
@@ -491,6 +491,7 @@ verify-and-build.bat
 
 | Date | Task | Agent | Summary |
 |---|---|---|---|
+| 2026-10-31 | V-18/20 completion | assistant | Finished the user-facing compaction path: Auto toggle now persists to the same core config used by the run loop; Context window menu can select an exact provider/model as the summary writer; renderer-triggered auto compaction stays `reason:auto` through IPC/SDK/engine; manual uses the same AI-summary path; checkpoint history records and displays the writer. Config writes are atomic and preserve unrelated keys. Added real mock-provider tests for manual + automatic dedicated-model summaries and `auto:false` + manual behavior. Tests: 82 core + 10 agents + 6 skills + Electron smoke (109 handlers) + compaction UI green; static dependency/tool/compaction checks green. |
 | 2026-10-31 | V-09 | assistant | `BrowserManager.wait(tabID,{selector,text,networkIdle,timeoutMs})` polls every 150 ms (max 30 s) and bounds page JS with the same deadline; new `browser.wait` tool (perm subject `wait`). `browser.navigate` waits for `body` and keeps the old 1 s sleep only when readiness fails. Tests: 78 core + 10 agents + 6 skills + Electron smoke (wait resolves + timeout) + compaction UI green. |
 | 2026-10-31 | V-08 | assistant | `core/perm/rules.js` exports `normalizeRule/normalizeRules`; `decide()` accepts the OpenCode `{action,resource,effect}` shape as well as the old one, so `rules.json` keeps working either way. Bash patterns ending in ` *` also match the bare command; documented that a `grep` rule matches the search pattern. Tests: 78 core + 10 agents + 6 skills + Electron + compaction UI green. |
 | 2026-10-31 | V-07 | assistant | New `core/agents/index.js` (built on the skills frontmatter parser): discovers `~/.vibe/agents/*.md` and `<dir>/.vibe/agents/*.md`, nested folders become ids, project overrides global, builtins build/plan/explore/general. `engine.agents.list/get`, `createSession({agent})`, agent `model`/`steps`/`permissions` applied in the run; agent rules outrank stored approvals. New `test/agents-test.mjs` (10 tests). Tests: 74 core + 10 agents + 6 skills + Electron + compaction UI green. |

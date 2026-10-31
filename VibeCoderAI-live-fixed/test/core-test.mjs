@@ -900,6 +900,7 @@ test("compaction checkpoint is surfaced separately from project context in histo
       summary: true,
       compactionReason: "overflow",
       summarySource: "llm",
+      summaryModel: "summary/writer",
       parts: [{ type: "text", text: `${prefix}\n\n## Goal\nFix provider refresh\n\n## Accomplished\nAdded watcher\n\n## Project context\n- Working directory: /workspace` }],
     }],
   })
@@ -907,6 +908,7 @@ test("compaction checkpoint is surfaced separately from project context in histo
   assert.equal(ui[0].type, "compaction")
   assert.equal(ui[0].reason, "overflow")
   assert.equal(ui[0].summarySource, "llm")
+  assert.equal(ui[0].summaryModel, "summary/writer")
   assert.match(ui[0].summary, /## Goal\nFix provider refresh/)
   assert.doesNotMatch(ui[0].summary, /Checkpoint: the earlier part/)
   assert.match(ui[0].projectContext, /Working directory: \/workspace/)
@@ -1532,6 +1534,110 @@ test("V-20: a separate summary model writes the checkpoint with its own key", as
   assert.equal(summarizer.requests[0].headers.authorization, "Bearer SUMMARY-KEY")
   assert.match(r.summary, /second model/)
   assert.equal(r.summaryModel, "summary-model")
+})
+
+test("compaction settings persist atomically without deleting unrelated config", () => {
+  const cfg = require("../core/config")
+  const home = tmp()
+  fs.writeFileSync(path.join(home, "config.json"), JSON.stringify({ theme: "dark", compaction: { auto: true, keep: { tokens: 1234 }, futureFlag: "keep-me" } }))
+  const updated = cfg.updateCompaction(home, { auto: false, model: "summary/writer" })
+  assert.equal(updated.auto, false)
+  assert.equal(updated.model, "summary/writer")
+  assert.equal(updated.keep.tokens, 1234)
+  const disk = JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8"))
+  assert.equal(disk.theme, "dark")
+  assert.equal(disk.compaction.futureFlag, "keep-me")
+  assert.equal(disk.compaction.model, "summary/writer")
+})
+
+test("manual compaction uses the exact configured provider/model and records it", async () => {
+  const main = await mock(() => ({ chunks: [...chat.text("main should not be called"), ...chat.end()] }))
+  const writer = await mock(() => ({ chunks: [...chat.text("## Goal\nkeep the coding task moving\n\n## Accomplished\nmodel-written manual checkpoint created"), ...chat.end()] }))
+  const home = tmp()
+  const dir = tmp()
+  const vibe = createVibe({ home, permission: "allow" })
+  await vibe.profiles.upsert({ id: "main", format: "openai-chat", baseURL: `http://127.0.0.1:${main.port}/v1`, model: "chat", noAuth: true, contextLimit: 8000, maxOutput: 1000 })
+  await vibe.profiles.upsert({
+    id: "summary",
+    format: "openai-chat",
+    baseURL: `http://127.0.0.1:${writer.port}/v1`,
+    model: "other",
+    models: [
+      { id: "other", context: 16000, output: 1000 },
+      { id: "writer", context: 16000, output: 1200 },
+    ],
+    noAuth: true,
+    contextLimit: 16000,
+    maxOutput: 1000,
+  })
+  const s = await vibe.session.create({ dir, profile: "main" })
+  const session = vibe.engine.getSession(s.id)
+  for (let i = 0; i < 10; i++) session.messages.push({ role: i % 2 ? "assistant" : "user", parts: [{ type: "text", text: `manual-${i} ` + "m".repeat(3500) }] })
+  vibe.engine.setCompactionConfig({ model: "summary/writer", keep: { tokens: 500 } })
+  const events = []
+  const off = vibe.event.subscribe((event) => events.push(event))
+  const result = await vibe.session.compact(s.id, { reason: "manual" })
+  off()
+  main.close()
+  writer.close()
+  assert.equal(result.committed, true)
+  assert.equal(result.summarySource, "llm")
+  assert.equal(result.summaryModel, "summary/writer")
+  assert.equal(main.requests.length, 0, "manual compaction only calls the summary model")
+  assert.ok(writer.requests.length >= 1)
+  assert.equal(writer.requests[0].body.model, "writer")
+  assert.ok(events.some((event) => event.type === "compaction.start" && event.reason === "manual"))
+  assert.ok(events.some((event) => event.type === "compaction.end" && event.reason === "manual" && event.summaryModel === "summary/writer"))
+  assert.equal(vibe.engine.getSession(s.id).messages[0].summaryModel, "summary/writer")
+})
+
+test("automatic compaction uses the configured summary model and continues the run", async () => {
+  const main = await mock(() => ({ chunks: [...chat.text("continued after automatic checkpoint"), ...chat.end()] }))
+  const writer = await mock(() => ({ chunks: [...chat.text("## Goal\ncontinue the long coding session\n\n## Accomplished\nautomatic model-written checkpoint created"), ...chat.end()] }))
+  const home = tmp()
+  const dir = tmp()
+  const vibe = createVibe({ home, permission: "allow" })
+  await vibe.profiles.upsert({ id: "main", format: "openai-chat", baseURL: `http://127.0.0.1:${main.port}/v1`, model: "chat", noAuth: true, contextLimit: 8000, maxOutput: 1000 })
+  await vibe.profiles.upsert({ id: "summary", format: "openai-chat", baseURL: `http://127.0.0.1:${writer.port}/v1`, model: "writer", models: [{ id: "writer", context: 16000, output: 1200 }], noAuth: true, contextLimit: 16000, maxOutput: 1200 })
+  const s = await vibe.session.create({ dir, profile: "main" })
+  const session = vibe.engine.getSession(s.id)
+  for (let i = 0; i < 10; i++) session.messages.push({ role: i % 2 ? "assistant" : "user", parts: [{ type: "text", text: `auto-${i} ` + "a".repeat(3500) }] })
+  vibe.engine.setCompactionConfig({ auto: true, model: "summary/writer", keep: { tokens: 500 } })
+  const events = await collect(vibe.session.prompt(s.id, "please continue"))
+  main.close()
+  writer.close()
+  const end = events.find((event) => event.type === "compaction.end")
+  assert.ok(end && end.reason === "auto" && end.committed, JSON.stringify(end))
+  assert.equal(end.summarySource, "llm")
+  assert.equal(end.summaryModel, "summary/writer")
+  assert.ok(writer.requests.length >= 1, "the dedicated model writes the automatic checkpoint")
+  assert.equal(writer.requests[0].body.model, "writer")
+  assert.equal(main.requests.length, 1, "the session model continues after compaction")
+  assert.match(events.filter((event) => event.type === "text.delta").map((event) => event.delta).join(""), /continued after automatic checkpoint/)
+})
+
+test("auto:false stops proactive compaction but manual model-summary compaction still works", async () => {
+  const m = await mock(({ body }) => {
+    if (/checkpoint summar/i.test(body.messages?.[0]?.content || "")) {
+      return { chunks: [...chat.text("## Goal\nretain manual control\n\n## Accomplished\nmanual checkpoint still works"), ...chat.end()] }
+    }
+    return { chunks: [...chat.text("normal answer"), ...chat.end()] }
+  })
+  const home = tmp()
+  const dir = tmp()
+  const vibe = createVibe({ home, permission: "allow" })
+  await vibe.profiles.upsert({ id: "main", format: "openai-chat", baseURL: `http://127.0.0.1:${m.port}/v1`, model: "chat", noAuth: true, contextLimit: 8000, maxOutput: 1000 })
+  const s = await vibe.session.create({ dir, profile: "main" })
+  const session = vibe.engine.getSession(s.id)
+  for (let i = 0; i < 10; i++) session.messages.push({ role: i % 2 ? "assistant" : "user", parts: [{ type: "text", text: `history-${i} ` + "h".repeat(3500) }] })
+  vibe.engine.setCompactionConfig({ auto: false, model: null, keep: { tokens: 500 } })
+  const promptEvents = await collect(vibe.session.prompt(s.id, "answer without proactive compaction"))
+  assert.equal(promptEvents.some((event) => event.type === "compaction.start"), false)
+  const manual = await vibe.session.compact(s.id)
+  m.close()
+  assert.equal(manual.committed, true)
+  assert.equal(manual.summarySource, "llm")
+  assert.equal(manual.reason, "manual")
 })
 
 test("V-20: an unknown summary model id falls back to the session model and warns", async () => {

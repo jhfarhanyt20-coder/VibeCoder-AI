@@ -31,7 +31,7 @@ function createVibe(opts = {}) {
       prompt: (id, text, o) => e.prompt(id, text, o),
       resume: (id, o) => e.resume(id, o),
       interrupt: async (id) => e.interrupt(id),
-      compact: (id) => e.compact(id),
+      compact: (id, o) => e.compact(id, o),
     },
     permission: { reply: async (permissionId, decision) => e.replyPermission(permissionId, decision) },
     subagents: {
@@ -108,7 +108,7 @@ function connect({ url, token }) {
         }
       },
       interrupt: (id) => call("POST", `/session/${id}/interrupt`, {}),
-      compact: (id) => call("POST", `/session/${id}/compact`, {}),
+      compact: (id, o = {}) => call("POST", `/session/${id}/compact`, o),
     },
     permission: { reply: (permissionId, decision) => call("POST", `/permission/${permissionId}`, { decision }) },
     profiles: { list: () => call("GET", "/profiles") },

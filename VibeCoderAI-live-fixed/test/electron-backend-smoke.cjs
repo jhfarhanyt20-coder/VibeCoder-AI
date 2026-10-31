@@ -166,6 +166,19 @@ async function main() {
   assert.equal(recoveredModel.selectedModel, "kilo2/kilo-auto/free")
   assert.equal(recoveredModel.recoveredStaleProvider, true)
 
+  // Compaction controls are backed by the same config the core reads. The UI
+  // can toggle auto mode and choose an exact provider/model without JSON edits.
+  const defaultCompaction = await invoke("getCompactionSettings")
+  assert.equal(defaultCompaction.auto, true)
+  const savedCompaction = await invoke("setCompactionSettings", { auto: false, model: "kilo2/kilo-auto/free" })
+  assert.equal(savedCompaction.auto, false)
+  assert.equal(savedCompaction.model, "kilo2/kilo-auto/free")
+  const compactionDisk = JSON.parse(fs.readFileSync(path.join(tempHome, "config.json"), "utf8"))
+  assert.equal(compactionDisk.compaction.auto, false)
+  assert.equal(compactionDisk.compaction.model, "kilo2/kilo-auto/free")
+  assert.ok(sent.some(([channel, payload]) => channel === "vibe:event" && payload?.type === "compaction.settings.changed"), "setting changes should update the renderer live")
+  await invoke("setCompactionSettings", { auto: true, model: null })
+
   // Provider metadata is persisted locally and can be edited by another tool.
   // Verify that the directory watcher refreshes model rows and invalidates a
   // stale selection after an external profiles.json change.

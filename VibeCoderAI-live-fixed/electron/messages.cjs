@@ -27,6 +27,7 @@ function convertMessages(session) {
         summary: checkpoint,
         projectContext,
         summarySource: m.summarySource || "llm",
+        summaryModel: m.summaryModel || "",
         time: { created: session.updatedAt },
       })
       return

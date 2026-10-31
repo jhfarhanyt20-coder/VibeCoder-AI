@@ -64,4 +64,48 @@ function readConfig(home) {
 
 const compactionConfig = (home) => readConfig(home).compaction
 
-module.exports = { DEFAULTS, configFile, readConfig, compactionConfig, normalizeCompaction }
+/**
+ * Persist a partial compaction update without discarding unrelated config keys.
+ * The desktop UI uses this so non-technical users never need to edit JSON by
+ * hand. The write is atomic: readers see either the old or the complete new
+ * file, never a half-written settings document.
+ */
+function updateCompaction(home, patch) {
+  const file = configFile(home)
+  let raw = {}
+  try {
+    raw = JSON.parse(fs.readFileSync(file, "utf8"))
+  } catch {}
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) raw = {}
+  const previous = raw.compaction && typeof raw.compaction === "object" && !Array.isArray(raw.compaction)
+    ? raw.compaction
+    : {}
+  const change = patch && typeof patch === "object" && !Array.isArray(patch) ? patch : {}
+  const merged = {
+    ...previous,
+    ...change,
+    keep: {
+      ...(previous.keep && typeof previous.keep === "object" ? previous.keep : {}),
+      ...(change.keep && typeof change.keep === "object" ? change.keep : {}),
+    },
+  }
+  const normalized = normalizeCompaction(merged)
+  const next = {
+    ...raw,
+    compaction: {
+      ...previous,
+      ...normalized,
+      keep: {
+        ...(previous.keep && typeof previous.keep === "object" ? previous.keep : {}),
+        ...normalized.keep,
+      },
+    },
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const temp = `${file}.${process.pid}.tmp`
+  fs.writeFileSync(temp, JSON.stringify(next, null, 2), { mode: 0o600 })
+  fs.renameSync(temp, file)
+  return normalized
+}
+
+module.exports = { DEFAULTS, configFile, readConfig, compactionConfig, updateCompaction, normalizeCompaction }

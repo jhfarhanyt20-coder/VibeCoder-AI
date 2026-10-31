@@ -54,6 +54,8 @@ const api = {
   resumeRun: call("resumeRun"),
   interrupt: call("interrupt"),
   compactSession: call("compactSession"),
+  getCompactionSettings: call("getCompactionSettings"),
+  setCompactionSettings: call("setCompactionSettings"),
 
   // background shell jobs
   listShells: call("listShells"),

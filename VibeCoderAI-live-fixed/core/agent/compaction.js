@@ -376,13 +376,14 @@ function pickSafeCut(messages, keepTokens) {
   return 0
 }
 
-function checkpointMessage(session, summary, reason = "auto", summarySource = "llm") {
+function checkpointMessage(session, summary, reason = "auto", summarySource = "llm", summaryModel = "") {
   const sourceNote = summarySource === "fallback" ? "[Automatic fallback summary; the LLM summary was unavailable.]\n\n" : ""
   return {
     role: "user",
     summary: true,
     compactionReason: reason,
     summarySource,
+    ...(summaryModel ? { summaryModel } : {}),
     parts: [{ type: "text", text: `${CHECKPOINT_PREFIX}\n\n${sourceNote}${summary}\n\n${projectContext(session)}` }],
   }
 }
@@ -549,7 +550,10 @@ async function compact({
     return { before, after: before, summarized: false, committed: false, fitsBudget: before <= budgetLimit, budgetLimit, reason, error: "Summary generation returned empty content; original history was preserved." }
   }
 
-  const nextMessages = [checkpointMessage(session, summary, reason, generated.source || "llm"), ...tail]
+  const summaryModel = summaryProfile
+    ? summaryProfile.summaryModelKey || summaryProfile.id || summaryProfile.model || "custom"
+    : (profile?.id && profile?.model ? `${profile.id}/${profile.model}` : (session.profile || ""))
+  const nextMessages = [checkpointMessage(session, summary, reason, generated.source || "llm", summaryModel), ...tail]
   const after = requestTokens(system, nextMessages, toolSpecs)
   const fitsBudget = after <= budgetLimit
 
@@ -565,7 +569,7 @@ async function compact({
         before,
         after,
         summarySource: generated.source || "llm",
-        summarizer: summaryProfile ? summaryProfile.id || summaryProfile.model || "custom" : (session.profile || ""),
+        summarizer: summaryModel,
       })
     } catch {}
   }
@@ -588,7 +592,7 @@ async function compact({
     summarySource: generated.source || "llm",
     reason,
   }
-  if (summaryProfile) result.summaryModel = summaryProfile.id || summaryProfile.model || "custom"
+  result.summaryModel = summaryModel
   if (generated.warning) result.warning = generated.warning
   if (!fitsBudget) {
     result.error = `Checkpoint committed, but the resulting request remains over budget (${after} estimated input tokens; budget ${budgetLimit}). Do not send another model request without recovery.`

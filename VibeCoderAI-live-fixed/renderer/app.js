@@ -62,6 +62,8 @@ var vibe = window.vibe ?? {
   setPermissions: async () => ({ ok: true }),
   getMessages: async () => ({ ok: true, data: [] }),
   compactSession: async () => ({ ok: true, data: {} }),
+  getCompactionSettings: async () => ({ ok: true, data: { auto: true, model: null } }),
+  setCompactionSettings: async (value) => ({ ok: true, data: { auto: value?.auto !== false, model: value?.model || null } }),
   listShells: async () => ({ ok: true, data: [] }),
   shellOutput: async () => ({ ok: true, data: { output: "" } }),
   backgroundSession: async () => ({ ok: true, data: { moved: [] } }),
@@ -721,21 +723,99 @@ state.compactTimer = null
 state.compactWatch = null
 state.compactCooldownUntil = 0
 state.compactTrigger = null
+state.compactionModel = null
 let liveCompactEl = null
 
-function setAutoCompact(on) {
+function applyCompactionSettings(value) {
+  if (!value || typeof value !== "object") return
+  state.autoCompact = value.auto !== false
+  state.compactionModel = value.model ? String(value.model) : null
+  try { localStorage.setItem(AUTO_COMPACT_KEY, state.autoCompact ? "1" : "0") } catch {}
+  renderAutoCompact()
+  renderCompactionModels()
+}
+
+async function loadCompactionSettings({ silent = false } = {}) {
+  if (typeof vibe.getCompactionSettings !== "function") return
+  try {
+    const res = await vibe.getCompactionSettings()
+    if (!res || res.ok === false) throw new Error(res?.error || "Could not read compaction settings")
+    applyCompactionSettings(res.data?.compaction || res.data || {})
+    hideError("compaction-settings")
+  } catch (error) {
+    if (!silent) showError("Could not load compaction settings", String(error?.message || error), { key: "compaction-settings" })
+  }
+}
+
+async function saveCompactionSettings(patch) {
+  if (typeof vibe.setCompactionSettings !== "function") return true
+  const res = await vibe.setCompactionSettings(patch)
+  if (!res || res.ok === false) throw new Error(res?.error || "Could not save compaction settings")
+  applyCompactionSettings(res.data?.compaction || res.data || {})
+  hideError("compaction-settings")
+  return true
+}
+
+async function setAutoCompact(on) {
+  const previous = state.autoCompact
   state.autoCompact = !!on
   try {
     localStorage.setItem(AUTO_COMPACT_KEY, on ? "1" : "0")
   } catch {}
   renderAutoCompact()
-  if (on) maybeAutoCompact(0)
+  try {
+    await saveCompactionSettings({ auto: state.autoCompact })
+    if (state.autoCompact) maybeAutoCompact(0)
+  } catch (error) {
+    state.autoCompact = previous
+    renderAutoCompact()
+    showError("Could not save auto-compaction", String(error?.message || error), { key: "compaction-settings" })
+  }
 }
 
 function renderAutoCompact() {
   const stateEl = $("ctx-auto-state")
   if (stateEl) stateEl.textContent = state.autoCompact ? "On" : "Off"
   $("ctx-auto-toggle")?.classList.toggle("off", !state.autoCompact)
+}
+
+function renderCompactionModels() {
+  const select = $("ctx-summary-model")
+  if (!select) return
+  const selected = state.compactionModel || ""
+  select.replaceChildren()
+  const current = document.createElement("option")
+  current.value = ""
+  current.textContent = "Current session model"
+  select.appendChild(current)
+  for (const model of Array.isArray(state.models) ? state.models : []) {
+    if (!model || !model.providerID || !model.id) continue
+    const key = `${model.providerID}/${model.id}`
+    const option = document.createElement("option")
+    option.value = key
+    option.textContent = `${model.providerName || model.providerID} · ${model.name || model.id}`
+    select.appendChild(option)
+  }
+  if (selected && ![...select.options].some((option) => option.value === selected)) {
+    const unavailable = document.createElement("option")
+    unavailable.value = selected
+    unavailable.textContent = `Unavailable · ${selected}`
+    select.appendChild(unavailable)
+  }
+  select.value = selected
+}
+
+async function setCompactionModel(model) {
+  const previous = state.compactionModel
+  state.compactionModel = model || null
+  renderCompactionModels()
+  try {
+    await saveCompactionSettings({ model: state.compactionModel })
+  } catch (error) {
+    state.compactionModel = previous
+    renderCompactionModels()
+    showError("Could not save the summary model", String(error?.message || error), { key: "compaction-settings" })
+  }
 }
 
 function usageSnapshot() {
@@ -809,9 +889,10 @@ function showCompaction(status, opts = {}) {
     sum.textContent = ""
   } else if (status === "done" || status === "overbudget") {
     title.textContent = status === "overbudget" ? "Checkpoint created — still over context budget" : "Context compacted"
-    const source = opts.summarySource ? ` · ${opts.summarySource === "fallback" ? "fallback summary" : "LLM summary"}` : ""
+    const source = opts.summarySource ? ` · ${opts.summarySource === "fallback" ? "fallback summary" : "AI summary"}` : ""
+    const model = opts.summaryModel && opts.summarySource !== "fallback" ? ` · ${opts.summaryModel}` : ""
     const tokens = Number.isFinite(opts.before) && Number.isFinite(opts.after) ? ` · ${opts.before.toLocaleString()} → ${opts.after.toLocaleString()} tokens` : ""
-    meta.textContent = `${opts.reason || "manual"}${source}${tokens}`
+    meta.textContent = `${opts.reason || "manual"}${source}${model}${tokens}`
     const summary = String(opts.text || opts.summary || "").trim()
     sum.textContent = [summary, opts.projectContext || "", status === "overbudget" ? `⚠ ${opts.error || "The next request is still estimated to exceed the input budget."}` : ""].filter(Boolean).join("\n\n")
     sum.hidden = !sum.textContent
@@ -886,7 +967,7 @@ async function compactNow({ reason = "manual" } = {}) {
     finishCompaction("failed", { reason, error: "No response from the compaction step (timed out)" })
   }, COMPACT_TIMEOUT_MS)
   try {
-    const res = await vibe.compactSession({ sessionID })
+    const res = await vibe.compactSession({ sessionID, reason })
     if (!res || !res.ok) {
       const error = (res && res.error) || "unknown error"
       // Auto is a hint, not a command: a session with nothing to summarize is fine.
@@ -1532,8 +1613,9 @@ function compactionHistoryEl(m) {
   head.className = "ctxd-head"
   head.innerHTML = `<span class="ctxd-ic">⌁</span><span class="ctxd-title">Context checkpoint</span><span class="ctxd-meta"></span>`
   const reason = m.reason || "checkpoint"
-  const source = m.summarySource === "fallback" ? "fallback summary" : "LLM summary"
-  head.querySelector(".ctxd-meta").textContent = `${reason} · ${source}`
+  const source = m.summarySource === "fallback" ? "fallback summary" : "AI summary"
+  const model = m.summaryModel && m.summarySource !== "fallback" ? ` · ${m.summaryModel}` : ""
+  head.querySelector(".ctxd-meta").textContent = `${reason} · ${source}${model}`
   const sum = document.createElement("div")
   sum.className = "ctxd-sum"
   sum.textContent = [String(m.summary || "").trim(), String(m.projectContext || "").trim()].filter(Boolean).join("\n\n")
@@ -2655,6 +2737,11 @@ vibe.onEvent(async (event) => {
     return
   }
 
+  if (type === "compaction.settings.changed") {
+    applyCompactionSettings(data.compaction || data)
+    return
+  }
+
   // The question tool surfaces as a session "form". Render it as an interactive
   // card — the agent is paused until the user answers or dismisses it.
   if (type === "form.created" || type === "form.replied" || type === "form.cancelled") {
@@ -2692,9 +2779,9 @@ vibe.onEvent(async (event) => {
       if (data.summarized === false) {
         finishCompaction("failed", { reason: why, error: data.error || "No valid checkpoint summary was created." })
       } else if (data.fitsBudget === false) {
-        finishCompaction("overbudget", { reason: why, text, summarySource: data.summarySource, before: data.before, after: data.after, error: data.error || "The compacted request remains over budget." })
+        finishCompaction("overbudget", { reason: why, text, summarySource: data.summarySource, summaryModel: data.summaryModel, before: data.before, after: data.after, error: data.error || "The compacted request remains over budget." })
       } else {
-        finishCompaction("done", { reason: why, text, summarySource: data.summarySource, before: data.before, after: data.after, projectContext: data.projectContext })
+        finishCompaction("done", { reason: why, text, summarySource: data.summarySource, summaryModel: data.summaryModel, before: data.before, after: data.after, projectContext: data.projectContext })
       }
     } else if (type === "session.compaction.failed") {
       const msg = (data.error && (data.error.message || data.error.type)) || "compaction failed"
@@ -4532,6 +4619,7 @@ function applyProviderCatalog(data) {
   }
   const label = $("model-label")
   if (label) label.textContent = state.selectedModel ? modelDisplayLabel(state.selectedModel) : "Select model"
+  renderCompactionModels()
 }
 
 async function loadModels() {
@@ -4576,6 +4664,7 @@ async function loadModels() {
   updateUsageRing()
   loadCtxLimits()
   if (state.modelMenuOpen) renderModelList(modelSearch?.value || "")
+  renderCompactionModels()
   return state.models
 }
 
@@ -7385,10 +7474,24 @@ function wireMenu(btnID, menuID, onPick) {
 
 wireMenu("btn-access", "access-menu", (item) => setAccess(item.dataset.access))
 wireMenu("btn-thinking", "thinking-menu", (item) => setThinking(item.dataset.think))
-wireMenu("btn-ctx", "ctx-menu", () => {})
-$("ctx-auto-toggle").onclick = (e) => {
+$("btn-ctx").onclick = async (e) => {
   e.stopPropagation()
-  setAutoCompact(!state.autoCompact)
+  const menu = $("ctx-menu")
+  const wasHidden = menu.hidden
+  closeAllMenus()
+  menu.hidden = !wasHidden
+  if (!menu.hidden) {
+    await Promise.all([loadCompactionSettings({ silent: true }), loadModels()])
+    renderCompactionModels()
+  }
+}
+$("ctx-auto-toggle").onclick = async (e) => {
+  e.stopPropagation()
+  await setAutoCompact(!state.autoCompact)
+}
+$("ctx-summary-model").onchange = async (e) => {
+  e.stopPropagation()
+  await setCompactionModel(e.target.value || null)
 }
 $("ctx-compact-now").onclick = (e) => {
   e.stopPropagation()
@@ -7499,6 +7602,7 @@ for (const [id, msg] of [
 
 renderSessions()
 refreshSessions()
+loadCompactionSettings({ silent: true })
 /* ---------- splash screen (logo + pulse) ---------- */
 const splash = $("splash")
 if (splash) {
@@ -8017,4 +8121,3 @@ if (vibe && typeof vibe.onBrowserCommand === "function") {
     ).catch(() => {})
   })
 }
-

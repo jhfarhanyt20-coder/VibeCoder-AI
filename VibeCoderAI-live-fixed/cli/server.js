@@ -103,7 +103,7 @@ function createServer(engine, { token = crypto.randomBytes(24).toString("hex") }
             return res.end()
           }
           if (p[2] === "interrupt" && m === "POST") return engine.interrupt(id), sendJson(res, 200, { ok: true })
-          if (p[2] === "compact" && m === "POST") return sendJson(res, 200, await engine.compact(id))
+          if (p[2] === "compact" && m === "POST") return sendJson(res, 200, await engine.compact(id, await readBody(req)))
           if (p[2] === "model" && m === "POST") return sendJson(res, 200, engine.switchModel(id, (await readBody(req)).profile))
         }
       }

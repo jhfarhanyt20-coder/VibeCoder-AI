@@ -480,7 +480,31 @@ const handlers = {
     return { started: true, sessionID: id }
   },
   interrupt: async (a = {}) => { await vibe.session.interrupt(idOf(a)); return { interrupted: true } },
-  compactSession: async (a = {}) => vibe.session.compact(idOf(a)),
+  compactSession: async (a = {}) => vibe.session.compact(idOf(a), { reason: a.reason === "auto" ? "auto" : "manual" }),
+  getCompactionSettings: async () => engine.getCompactionConfig(),
+  setCompactionSettings: async (a = {}) => {
+    const source = a.compaction && typeof a.compaction === "object" ? a.compaction : a
+    const patch = {}
+    if (Object.prototype.hasOwnProperty.call(source, "auto")) patch.auto = !!source.auto
+    if (Object.prototype.hasOwnProperty.call(source, "model")) {
+      const model = source.model == null || String(source.model).trim() === "" ? null : String(source.model).trim()
+      if (model) {
+        const available = new Set([
+          ...engine.listProfiles().map((profile) => String(profile.id)),
+          ...modelRows().map((row) => `${row.providerID}/${row.id}`),
+        ])
+        if (!available.has(model)) throw new Error(`Summary model "${model}" is not in the configured model catalog.`)
+      }
+      patch.model = model
+    }
+    if (Object.prototype.hasOwnProperty.call(source, "buffer")) patch.buffer = source.buffer
+    if (Object.prototype.hasOwnProperty.call(source, "maxRuns")) patch.maxRuns = source.maxRuns
+    if (Object.prototype.hasOwnProperty.call(source, "background")) patch.background = !!source.background
+    if (source.keep && typeof source.keep === "object") patch.keep = { tokens: source.keep.tokens }
+    const updated = engine.setCompactionConfig(patch)
+    emitUI("compaction.settings.changed", null, { compaction: updated })
+    return updated
+  },
   listShells: async (a = {}) => engine.listShells(idOf(a)),
   shellOutput: async (a = {}) => engine.shellOutput(a.shellID || a.id, a.max),
   backgroundSession: async (a = {}) => engine.backgroundSession(idOf(a)),
@@ -732,7 +756,7 @@ const handlers = {
 
 const preloadNames = [
   "info","setMode","getAllUsage","clearSessionRules","browserCreateTab","browserCloseTab","browserListTabs","browserCurrent","browserNavigate","browserScreenshot","browserEvaluate","browserSnapshot","browserClick","browserFill","browserPress","browserScroll",
-  "listSessions","createSession","getMessages","renameSession","deleteSession","revertSession","prompt","resumeRun","interrupt","compactSession",
+  "listSessions","createSession","getMessages","renameSession","deleteSession","revertSession","prompt","resumeRun","interrupt","compactSession","getCompactionSettings","setCompactionSettings",
   "listShells","shellOutput","backgroundSession","backgroundShell","cancelShell","setPermissions","listPermissionRequests","replyPermission","listForms","replyForm","cancelForm",
   "listModels","listAllModels","listModelLimits","setModel","providerCatalog","providerList","providerSave","providerRemove","providerDisabled","providerKey","providerModels","providerModel","providerMeta",
   "cwd","setDirectory","getDirectory","gitBranch","pickProject","pickAttachments","readAttachment","ensureAgent","switchAgent","listAgents","setAgentDisabled","mcpList","mcpAdd","mcpRemove","subagentCreate","subagentList","subagentStatus","subagentResult","subagentStop","subagentToggle",

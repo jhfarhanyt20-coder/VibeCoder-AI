@@ -1939,8 +1939,10 @@ body {
 }
 .fr-diff .dl-mark { text-align: center; user-select: none; }
 .fr-diff .dl-code { min-width: 0; padding: 0 5px; white-space: pre; overflow: visible; }
-.fr-diff .dl.add { color: var(--ok-soft); background: var(--ok-weak); }
-.fr-diff .dl.del { color: var(--danger-soft); background: var(--danger-soft-bg); }
+.fr-diff .dl.add { color: var(--ok); background: transparent; box-shadow: inset 2px 0 var(--ok); }
+.fr-diff .dl.del { color: var(--danger-soft); background: transparent; box-shadow: inset 2px 0 var(--danger); }
+.fr-diff .dl.add .dl-code, .fr-diff .dl.add .dl-code * { color: var(--ok) !important; }
+.fr-diff .dl.del .dl-code, .fr-diff .dl.del .dl-code * { color: var(--danger-soft) !important; }
 .fr-diff .dl.meta { color: var(--muted); background: color-mix(in srgb, var(--panel-2) 72%, transparent); font-style: italic; }
 .fr-diff .dl.meta .dl-no { border-right-color: transparent; }
 .fr-diff .code-row { display: grid; grid-template-columns: 52px minmax(0, 1fr); min-height: 19px; }

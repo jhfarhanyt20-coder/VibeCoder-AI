@@ -42,11 +42,6 @@ const KNOWN = {
   "openrouter.ai": ["https://openrouter.ai/api/v1", "chat"],
   "deepseek.com": ["https://api.deepseek.com/v1", "chat"],
   "platform.deepseek.com": ["https://api.deepseek.com/v1", "chat"],
-  // Agent Router's origin is a React management console. Its OpenAI-compatible
-  // chat + Responses API lives under /v1; posting to the origin returns the
-  // "You need to enable JavaScript" HTML shell with HTTP 200.
-  "agentrouter.org": ["https://agentrouter.org/v1", "responses"],
-  "www.agentrouter.org": ["https://agentrouter.org/v1", "responses"],
 }
 
 const ENDPOINT_SUFFIX = /\/(chat\/completions|completions|responses|messages|models|api\/show)$/i
@@ -61,8 +56,6 @@ const HOST_FORMATS = {
   "api.anthropic.com": ["anthropic"],
   "generativelanguage.googleapis.com": ["chat"],
   "openrouter.ai": ["chat"],
-  "agentrouter.org": ["chat", "responses"],
-  "www.agentrouter.org": ["chat", "responses"],
 }
 
 /**
@@ -157,20 +150,20 @@ function listHeaders(format, apiKey) {
 }
 
 /** GET the provider's model list. Returns [{id, context, output, image}] (limits when the provider gives them). */
-async function listRemoteModels({ baseURL, apiKey, format = "chat" }) {
+async function listRemoteModels({ baseURL, apiKey, format = "chat", headers: customHeaders = {} }) {
   const base = String(baseURL || "").replace(/\/+$/, "")
   if (!base) throw new Error("Enter the base URL first")
   let url, headers
   if (/11434/.test(base)) {
     // Ollama native API
     url = base.replace(/\/v1$/i, "") + "/api/tags"
-    headers = {}
+    headers = { ...customHeaders }
   } else if (format === "anthropic") {
     url = base.replace(/\/v1$/i, "") + "/v1/models"
-    headers = listHeaders("anthropic", apiKey)
+    headers = { ...listHeaders("anthropic", apiKey), ...customHeaders }
   } else {
     url = base + "/models"
-    headers = listHeaders(format, apiKey)
+    headers = { ...listHeaders(format, apiKey), ...customHeaders }
   }
   let res
   try {
@@ -328,7 +321,7 @@ function builtinLookup(modelId) {
  * lookupModel({ modelId, baseURL?, apiKey?, format? })
  * -> { found, context, output, image, source }
  */
-async function lookupModel({ modelId, baseURL, apiKey, format = "chat" } = {}) {
+async function lookupModel({ modelId, baseURL, apiKey, format = "chat", headers } = {}) {
   const id = String(modelId || "").trim()
   if (!id) return { found: false }
   const fmt = TO_UI[String(format || "chat").toLowerCase()] || "chat"
@@ -340,7 +333,7 @@ async function lookupModel({ modelId, baseURL, apiKey, format = "chat" } = {}) {
       if (show && (show.context || show.image)) return { found: true, ...show }
     }
     try {
-      const list = await listRemoteModels({ baseURL, apiKey, format: fmt })
+      const list = await listRemoteModels({ baseURL, apiKey, format: fmt, headers })
       const mine = list.find((m) => m.id === id || m.id.toLowerCase() === id.toLowerCase())
       if (mine) {
         inProviderList = true

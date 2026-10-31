@@ -5235,6 +5235,36 @@ function updateFormatHint() {
   hint.textContent = FORMAT_HINT[fmt] || FORMAT_HINT.chat
 }
 
+function providerHeadersText(headers) {
+  return Object.entries(headers && typeof headers === "object" ? headers : {}).map(([name, value]) => `${name}: ${value}`).join("\n")
+}
+
+function parseProviderHeaders(text) {
+  const headers = {}
+  for (const raw of String(text || "").split(/\r?\n/)) {
+    const line = raw.trim()
+    if (!line) continue
+    const colon = line.indexOf(":")
+    if (colon <= 0) throw new Error(`Invalid request header line: "${line}". Use Name: value.`)
+    const name = line.slice(0, colon).trim()
+    const value = line.slice(colon + 1).trim()
+    if (!value) throw new Error(`Request header "${name}" has no value.`)
+    headers[name] = value
+  }
+  return headers
+}
+
+function parseProviderBody(text) {
+  const source = String(text || "").trim()
+  if (!source) return {}
+  let value
+  try { value = JSON.parse(source) } catch (error) { throw new Error(`Extra request body is not valid JSON: ${error.message}`) }
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Extra request body must be a JSON object.")
+  return value
+}
+
+const providerBodyText = (body) => body && typeof body === "object" && Object.keys(body).length ? JSON.stringify(body, null, 2) : ""
+
 $("pf-format")?.addEventListener("change", updateFormatHint)
 
 function newProviderDraft() {
@@ -5246,6 +5276,8 @@ function newProviderDraft() {
     apiKey: "",
     hasKey: false,
     maskedKey: "",
+    headers: {},
+    body: {},
     models: [],
     scope: "global",
     disabled: false,
@@ -5299,6 +5331,8 @@ function providerDraftDirty() {
   return String($("pf-name")?.value || "") !== String(saved.name || "") ||
     String($("pf-baseurl")?.value || "") !== String(saved.baseURL || "") ||
     String($("pf-format")?.value || "chat") !== String(saved.apiFormat || "chat") ||
+    String($("pf-headers")?.value || "").trim() !== providerHeadersText(saved.headers).trim() ||
+    String($("pf-body")?.value || "").trim() !== providerBodyText(saved.body).trim() ||
     String($("pf-scope")?.value || "global") !== String(saved.scope || "global") ||
     currentModels !== JSON.stringify(saved.models || []) ||
     !!d.disabled !== !!saved.disabled
@@ -5415,6 +5449,8 @@ function renderProviderDetail() {
   $("pf-name").value = d.name || ""
   $("pf-baseurl").value = d.baseURL || ""
   $("pf-format").value = d.apiFormat || "chat"
+  $("pf-headers").value = providerHeadersText(d.headers)
+  $("pf-body").value = providerBodyText(d.body)
   updateFormatHint()
   $("pf-apikey").value = ""
   $("pf-apikey").type = "password"
@@ -5478,12 +5514,16 @@ async function saveProvider() {
   const old = btn.textContent
   btn.textContent = "Saving…"
   try {
+    const headers = parseProviderHeaders($("pf-headers").value)
+    const body = parseProviderBody($("pf-body").value)
     const res = await vibe.providerSave({
       id: d.id || undefined,
       name: $("pf-name").value.trim(),
       baseURL: $("pf-baseurl").value.trim(),
       apiFormat: $("pf-format").value,
       apiKey: $("pf-apikey").value,
+      headers,
+      body,
       models: d.models,
       scope: $("pf-scope").value,
       directory: projectDir,
@@ -5500,6 +5540,8 @@ async function saveProvider() {
       name: $("pf-name").value.trim(),
       baseURL: $("pf-baseurl").value.trim(),
       apiFormat: $("pf-format").value,
+      headers,
+      body,
       scope: $("pf-scope").value,
       isNew: false,
     }
@@ -5559,6 +5601,7 @@ async function fetchModelsForForm() {
       baseURL: $("pf-baseurl").value.trim(),
       apiFormat: $("pf-format").value,
       apiKey: $("pf-apikey").value,
+      headers: parseProviderHeaders($("pf-headers").value),
     })
     if (!res || res.ok === false) {
       providerState.fetched = []
@@ -5644,11 +5687,14 @@ async function confirmModel(modelId) {
   const baseURL = $("pf-baseurl").value.trim()
   const apiFormat = $("pf-format").value
   const apiKey = $("pf-apikey").value
+  let headers
+  try { headers = parseProviderHeaders($("pf-headers").value) }
+  catch (error) { status.textContent = error.message; status.classList.add("err"); return }
 
   if (baseURL) {
     status.textContent = `Looking up "${id}" on the provider…`
     try {
-      const res = await vibe.providerModel({ id: d?.id || undefined, baseURL, apiFormat, apiKey, modelId: id })
+      const res = await vibe.providerModel({ id: d?.id || undefined, baseURL, apiFormat, apiKey, headers, modelId: id })
       if (res && res.ok && res.data?.found) {
         const m = res.data.model
         $("mf-context").value = m.context || ""

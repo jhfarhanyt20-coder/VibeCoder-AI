@@ -3,10 +3,15 @@ const { sleep } = require("../util")
 
 class ApiError extends Error {
   constructor(status, body) {
-    super(`HTTP ${status}: ${String(body).slice(0, 500)}`)
+    const text = String(body)
+    const restricted = [401, 403].includes(status) && /unauthori[sz]ed[_\s-]*client|client[^\n]{0,40}(?:not allowed|not authori[sz]ed|detected)/i.test(text)
+    super(restricted
+      ? `This provider rejected VibeCoder AI as an unauthorized client (HTTP ${status}). The credential is restricted to another approved application; ask the provider to authorize VibeCoder AI or use an unrestricted API credential.`
+      : `HTTP ${status}: ${text.slice(0, 500)}`)
     this.name = "ApiError"
     this.status = status
-    this.body = String(body)
+    this.body = text
+    if (restricted) this.code = "PROVIDER_CLIENT_RESTRICTED"
   }
   /** True when the provider says the prompt is larger than the context window. */
   get overflow() {
@@ -68,7 +73,7 @@ async function postStream(url, { headers = {}, body, signal, retries = 2, connec
     try {
       const res = await fetch(url, {
         method: "POST",
-        headers: { "content-type": "application/json", accept: "text/event-stream", ...headers },
+        headers: { "content-type": "application/json", accept: "text/event-stream", "user-agent": "VibeCoderAI/0.1.0", ...headers },
         body: JSON.stringify(body),
         signal: ctl.signal,
       })

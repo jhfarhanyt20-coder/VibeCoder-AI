@@ -67,6 +67,47 @@ function safeResolveDirectory(value) {
 function slug(value) {
   return String(value || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60)
 }
+const PROTECTED_PROVIDER_HEADERS = /authorization|auth|cookie|api[_-]?key|token|secret|password|credential|^user-agent$|^x-opencode-/i
+function providerHeaders(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {}
+  const out = {}
+  for (const [rawName, rawValue] of Object.entries(source)) {
+    const name = String(rawName || "").trim()
+    const headerValue = String(rawValue == null ? "" : rawValue).trim()
+    if (!name || !headerValue) continue
+    if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name)) throw new Error(`Invalid provider header name "${name}".`)
+    if (PROTECTED_PROVIDER_HEADERS.test(name)) throw new Error(`${name} is a protected credential header. Use the API key field instead of storing secrets in provider headers.`)
+    if (/\r|\n/.test(headerValue)) throw new Error(`Provider header "${name}" contains a line break.`)
+    if (headerValue.length > 4096) throw new Error(`Provider header "${name}" is too long.`)
+    out[name] = headerValue
+  }
+  return out
+}
+function providerBodyValue(value, pathName) {
+  if (Array.isArray(value)) return value.map((item, index) => providerBodyValue(item, `${pathName}[${index}]`))
+  if (!value || typeof value !== "object") return value
+  const out = {}
+  for (const [key, item] of Object.entries(value)) {
+    if (["__proto__", "prototype", "constructor"].includes(key)) throw new Error(`Unsafe request body key "${key}".`)
+    if (/api[_-]?key|token|secret|password|authorization|auth|cookie|credential/i.test(key)) throw new Error(`${pathName}.${key} looks like a credential. Keep secrets in the API key field.`)
+    out[key] = providerBodyValue(item, `${pathName}.${key}`)
+  }
+  return out
+}
+function providerBody(value) {
+  if (value == null) return {}
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Extra request body must be a JSON object.")
+  const out = providerBodyValue(value, "body")
+  if (JSON.stringify(out).length > 50000) throw new Error("Extra request body must be 50 KB or smaller.")
+  return out
+}
+function publicProviderBody(value) {
+  if (Array.isArray(value)) return value.map(publicProviderBody)
+  if (!value || typeof value !== "object") return value
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => !/api[_-]?key|token|secret|password|authorization|auth|cookie|credential/i.test(key) && !["__proto__", "prototype", "constructor"].includes(key))
+    .map(([key, item]) => [key, publicProviderBody(item)]))
+}
 function idOf(a = {}) { return a.sessionID || a.sessionId || a.id || activeSessionId || null }
 function requireSession(id) {
   if (!id) throw new Error("No active session. Create or open a session first.")
@@ -127,6 +168,8 @@ function customProviderRows(profileList = engine.listProfiles()) {
     format: p.format,
     hasKey: profileStore.hasKey(p, home),
     maskedKey: profileStore.hasKey(p, home) ? "••••••••" : "",
+    headers: Object.fromEntries(Object.entries(p.headers || {}).filter(([name]) => !PROTECTED_PROVIDER_HEADERS.test(name))),
+    body: p.quirks?.extraBody && typeof p.quirks.extraBody === "object" ? publicProviderBody(p.quirks.extraBody) : {},
     models: Array.isArray(p.models) && p.models.length
       ? p.models
       : [{ id: p.model, context: p.contextLimit, output: p.maxOutput, image: !!p.image }],
@@ -620,7 +663,9 @@ const handlers = {
     if (isBuiltin && !storedCustom.some((p) => p.id === id)) throw new Error(`Provider ID "${id}" is reserved for a built-in provider`)
     const model = models[0]?.id || String(a.model || current?.model || "")
     if (!model) throw new Error("Add at least one model before saving this provider")
-    const profile = { ...(current || {}), id, label: name, name, baseURL: String(a.baseURL).trim(), format: profileFormat(a.apiFormat), model, models, contextLimit: models[0]?.context || Number(a.contextLimit) || 128000, maxOutput: models[0]?.output || Number(a.maxOutput) || 8192, scope: a.scope === "project" ? "project" : "global", disabled: !!a.disabled, noAuth: false }
+    const headers = providerHeaders(a.headers)
+    const extraBody = providerBody(a.body)
+    const profile = { ...(current || {}), id, label: name, name, baseURL: String(a.baseURL).trim(), format: profileFormat(a.apiFormat), model, models, contextLimit: models[0]?.context || Number(a.contextLimit) || 128000, maxOutput: models[0]?.output || Number(a.maxOutput) || 8192, scope: a.scope === "project" ? "project" : "global", disabled: !!a.disabled, noAuth: false, headers, quirks: { ...(current?.quirks || {}), extraBody } }
     const result = engine.upsertProfile(profile)
     if (a.apiKey) engine.setKey(id, String(a.apiKey))
     if (a.apiKey) scheduleProviderRefresh("provider-key-saved")
@@ -636,15 +681,17 @@ const handlers = {
     const baseURL = String(a.baseURL || "").trim(); if (!baseURL) throw new Error("Provider API base URL is required")
     const format = profileApiFormat(profileFormat(a.apiFormat))
     let key = String(a.apiKey || "")
-    if (!key && a.id) { const p = profileDetails(a.id); key = p.noAuth ? "" : profileStore.getKey(p, home) }
-    const models = await providerMeta.listRemoteModels({ baseURL, apiKey: key, format })
+    let savedHeaders = {}
+    if (a.id) { const p = profileDetails(a.id); if (!key) key = p.noAuth ? "" : profileStore.getKey(p, home); savedHeaders = p.headers || {} }
+    const models = await providerMeta.listRemoteModels({ baseURL, apiKey: key, format, headers: providerHeaders(a.headers || savedHeaders) })
     return { models: models.slice(0, 200), count: models.length }
   },
   providerModel: async (a = {}) => {
     const format = profileApiFormat(profileFormat(a.apiFormat))
     let key = String(a.apiKey || "")
-    if (!key && a.id) { const p = profileDetails(a.id); key = p.noAuth ? "" : profileStore.getKey(p, home) }
-    const model = await providerMeta.lookupModel({ modelId: a.modelId, baseURL: a.baseURL, apiKey: key, format })
+    let savedHeaders = {}
+    if (a.id) { const p = profileDetails(a.id); if (!key) key = p.noAuth ? "" : profileStore.getKey(p, home); savedHeaders = p.headers || {} }
+    const model = await providerMeta.lookupModel({ modelId: a.modelId, baseURL: a.baseURL, apiKey: key, format, headers: providerHeaders(a.headers || savedHeaders) })
     return { ...model, model: model.found ? { id: a.modelId, context: model.context, output: model.output, image: model.image, source: model.source } : undefined }
   },
   providerMeta: async (a = {}) => providerMeta.lookupModel({ modelId: a.modelId }),

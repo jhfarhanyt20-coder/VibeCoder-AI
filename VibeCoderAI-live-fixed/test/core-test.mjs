@@ -601,6 +601,55 @@ test("an HTML dashboard response retries the conventional /v1 API base", async (
   assert.deepEqual(m.requests.map((request) => request.url), ["/chat/completions", "/v1/chat/completions"])
 })
 
+test("Responses format falls back to Chat by protocol behavior, not provider name", async () => {
+  const m = await mock(({ url }) => {
+    if (url === "/responses") return { html: "<html><body>Management dashboard</body></html>" }
+    assert.equal(url, "/chat/completions")
+    return { chunks: [...chat.text("generic chat fallback"), ...chat.end()] }
+  })
+  const profile = { id: "renamed-any-provider", format: "openai-responses", baseURL: `http://127.0.0.1:${m.port}`, model: "m", noAuth: true }
+  const events = await collect(llm.stream(profile, { system: "s", messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }], tools: [] }))
+  m.close()
+  assert.equal(events.filter((event) => event.type === "text").map((event) => event.delta).join(""), "generic chat fallback")
+  assert.deepEqual(m.requests.map((request) => request.url), ["/responses", "/chat/completions"])
+})
+
+test("an unauthorized-client Responses route may fall back to Chat, but restricted credentials stay explicit", async () => {
+  const m = await mock(({ url }) => url === "/v1/responses"
+    ? { status: 401, text: JSON.stringify({ error: { message: "unauthorized client detected" }, type: "unauthorized_client_error" }) }
+    : { chunks: [...chat.text("chat route accepted"), ...chat.end()] })
+  const profile = { id: "custom", format: "openai-responses", baseURL: `http://127.0.0.1:${m.port}/v1`, model: "m", noAuth: true }
+  const events = await collect(llm.stream(profile, { system: "s", messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }], tools: [] }))
+  m.close()
+  assert.equal(events.filter((event) => event.type === "text").map((event) => event.delta).join(""), "chat route accepted")
+  assert.deepEqual(m.requests.map((request) => request.url), ["/v1/responses", "/v1/chat/completions"])
+  const { ApiError } = require("../core/llm/http")
+  const restricted = new ApiError(401, '{"error":{"message":"unauthorized client detected"}}')
+  assert.equal(restricted.code, "PROVIDER_CLIENT_RESTRICTED")
+  assert.match(restricted.message, /ask the provider to authorize VibeCoder AI/i)
+})
+
+test("custom providers forward safe headers, extra body fields, and a transparent VibeCoder user-agent", async () => {
+  const m = await mock(({ body }) => {
+    assert.deepEqual(body.metadata, { application: "VibeCoderAI", tenant: "team-a" })
+    return { chunks: [...chat.text("custom provider ok"), ...chat.end()] }
+  })
+  const profile = {
+    id: "custom-any-name",
+    format: "openai-chat",
+    baseURL: `http://127.0.0.1:${m.port}/v1`,
+    model: "m",
+    noAuth: true,
+    headers: { "X-Tenant-ID": "team-a" },
+    quirks: { extraBody: { metadata: { application: "VibeCoderAI", tenant: "team-a" } } },
+  }
+  const events = await collect(llm.stream(profile, { system: "s", messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }], tools: [] }))
+  m.close()
+  assert.equal(events.find((event) => event.type === "text").delta, "custom provider ok")
+  assert.equal(m.requests[0].headers["x-tenant-id"], "team-a")
+  assert.match(m.requests[0].headers["user-agent"], /^VibeCoderAI\//)
+})
+
 test("empty model reply is retried, then reported (never a silent 'done')", async () => {
   let n = 0
   const { m, vibe, s } = await setup(() => (n++ < 1 ? { chunks: [...chat.end(5, 0)] } : { chunks: [...chat.text("second try works"), ...chat.end(5, 3)] }))
@@ -925,18 +974,6 @@ test("Groq dashboard URLs and unsupported Responses format are repaired before r
   assert.equal(fixed.url, "https://api.groq.com/openai/v1")
   assert.equal(fixed.format, "chat")
   assert.match(fixed.hint, /console\/dashboard/)
-})
-
-test("Agent Router dashboard profiles resolve to /v1, including profiles saved by old builds", () => {
-  const { repairBaseUrl } = require("../core/llm/provider-meta")
-  const profiles = require("../core/llm/profiles")
-  const fixed = repairBaseUrl("https://agentrouter.org", "openai-responses")
-  assert.equal(fixed.url, "https://agentrouter.org/v1")
-  assert.equal(fixed.engineFormat, "openai-responses")
-  assert.equal(repairBaseUrl("https://agentrouter.org", "openai-chat").engineFormat, "openai-chat")
-  const home = tmp()
-  fs.writeFileSync(path.join(home, "profiles.json"), JSON.stringify([{ id: "old-agentrouter", format: "openai-responses", baseURL: "https://agentrouter.org", model: "gpt-test", noAuth: true }]))
-  assert.equal(profiles.getProfile("old-agentrouter", home).baseURL, "https://agentrouter.org/v1")
 })
 
 // ---------- NEW: regression tests for fixed bugs ----------

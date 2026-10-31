@@ -91,6 +91,12 @@ function runtimeProfiles(profile) {
   return out.filter((candidate, index, list) => list.findIndex((other) => other.baseURL === candidate.baseURL && other.format === candidate.format) === index)
 }
 
+function shouldTryChat(error) {
+  if (error?.code === "PROVIDER_NON_API_RESPONSE") return true
+  if ([404, 405, 501].includes(error?.status)) return true
+  return [401, 403].includes(error?.status) && /unauthori[sz]ed[_\s-]*client|client[^\n]{0,40}(?:not allowed|not authori[sz]ed|detected)/i.test(String(error?.body || ""))
+}
+
 function stream(profile, req) {
   if (!profile || typeof profile !== "object" || !profile.format) {
     throw new Error(`Invalid model profile: missing format (expected openai-chat | openai-responses | anthropic)`)
@@ -115,7 +121,7 @@ function stream(profile, req) {
       try {
         yield* adapter.stream({ ...wireReq, profile: candidate })
       } catch (e) {
-        if (e && e.status === 404) yield* adapters["openai-chat"].stream({ ...wireReq, profile: candidate })
+        if (shouldTryChat(e)) yield* adapters["openai-chat"].stream({ ...wireReq, profile: candidate })
         else throw e
       }
       return
@@ -144,4 +150,4 @@ function stream(profile, req) {
   }
   return remapEvents(robust())
 }
-module.exports = { stream, adapters, normalizeToolNames, runtimeProfiles, ...require("./http"), ...require("./sse") }
+module.exports = { stream, adapters, normalizeToolNames, runtimeProfiles, shouldTryChat, ...require("./http"), ...require("./sse") }

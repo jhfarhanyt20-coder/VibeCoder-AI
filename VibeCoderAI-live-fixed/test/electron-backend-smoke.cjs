@@ -161,6 +161,8 @@ async function main() {
     name: "Kilo 2",
     baseURL: "http://127.0.0.1:9/v1",
     apiFormat: "chat",
+    headers: { "X-Tenant-ID": "team-a" },
+    body: { metadata: { application: "VibeCoderAI" } },
     models: [{ id: "kilo-auto/free", name: "Kilo Auto Free", context: 32768, output: 2048 }],
     scope: "global",
   })
@@ -172,6 +174,21 @@ async function main() {
   assert.equal(recoveredModel.providerID, "kilo2", "stale provider ID should resolve to the unique live provider for this exact model")
   assert.equal(recoveredModel.selectedModel, "kilo2/kilo-auto/free")
   assert.equal(recoveredModel.recoveredStaleProvider, true)
+  const kiloCatalog = await invoke("providerCatalog")
+  const kiloSaved = kiloCatalog.custom.find((item) => item.id === "kilo2")
+  assert.deepEqual(kiloSaved.headers, { "X-Tenant-ID": "team-a" })
+  assert.deepEqual(kiloSaved.body, { metadata: { application: "VibeCoderAI" } })
+  const protectedSave = await handlers.get("vibe:providerSave")({}, {
+    id: "unsafe-headers",
+    name: "Unsafe headers",
+    baseURL: "http://127.0.0.1:9/v1",
+    apiFormat: "chat",
+    headers: { Authorization: "Bearer should-not-be-stored" },
+    models: [{ id: "m" }],
+  })
+  assert.equal(protectedSave.ok, false)
+  assert.match(protectedSave.error, /protected credential header/i)
+  assert.ok(!JSON.stringify(JSON.parse(fs.readFileSync(path.join(tempHome, "profiles.json"), "utf8"))).includes("should-not-be-stored"), "custom header credentials must never reach profiles.json")
 
   // Compaction controls are backed by the same config the core reads. The UI
   // can toggle auto mode and choose an exact provider/model without JSON edits.

@@ -590,6 +590,16 @@
                     </select>
                   </label>
                   <label class="pf-row">
+                    <span class="pf-label">Request headers <span class="muted">(optional)</span></span>
+                    <textarea class="s-input pf-advanced" id="pf-headers" rows="3" placeholder="X-Tenant-ID: team-a&#10;X-Client-Version: 1"></textarea>
+                    <span class="pf-hint">One <span class="mono">Name: value</span> per line. Credentials and another app's identity headers are blocked; use the API key field for secrets.</span>
+                  </label>
+                  <label class="pf-row">
+                    <span class="pf-label">Extra request body <span class="muted">(optional JSON)</span></span>
+                    <textarea class="s-input pf-advanced" id="pf-body" rows="4" placeholder='{"metadata":{"application":"VibeCoderAI"}}'></textarea>
+                    <span class="pf-hint">Merged into every model request. Credential-looking fields are blocked.</span>
+                  </label>
+                  <label class="pf-row">
                     <span class="pf-label">API key</span>
                     <span class="pf-key">
                       <input class="s-input" id="pf-apikey" type="password" placeholder="sk-..." autocomplete="off" />

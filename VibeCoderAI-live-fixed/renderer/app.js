@@ -780,42 +780,9 @@ function renderAutoCompact() {
 }
 
 function renderCompactionModels() {
-  const select = $("ctx-summary-model")
-  if (!select) return
-  const selected = state.compactionModel || ""
-  select.replaceChildren()
-  const current = document.createElement("option")
-  current.value = ""
-  current.textContent = "Current session model"
-  select.appendChild(current)
-  for (const model of Array.isArray(state.models) ? state.models : []) {
-    if (!model || !model.providerID || !model.id) continue
-    const key = `${model.providerID}/${model.id}`
-    const option = document.createElement("option")
-    option.value = key
-    option.textContent = `${model.providerName || model.providerID} · ${model.name || model.id}`
-    select.appendChild(option)
-  }
-  if (selected && ![...select.options].some((option) => option.value === selected)) {
-    const unavailable = document.createElement("option")
-    unavailable.value = selected
-    unavailable.textContent = `Unavailable · ${selected}`
-    select.appendChild(unavailable)
-  }
-  select.value = selected
-}
-
-async function setCompactionModel(model) {
-  const previous = state.compactionModel
-  state.compactionModel = model || null
-  renderCompactionModels()
-  try {
-    await saveCompactionSettings({ model: state.compactionModel })
-  } catch (error) {
-    state.compactionModel = previous
-    renderCompactionModels()
-    showError("Could not save the summary model", String(error?.message || error), { key: "compaction-settings" })
-  }
+  const label = $("ctx-summary-model-current")
+  if (!label) return
+  label.textContent = state.selectedModel ? modelDisplayLabel(state.selectedModel) : "ChatComposer model"
 }
 
 function usageSnapshot() {
@@ -967,7 +934,7 @@ async function compactNow({ reason = "manual" } = {}) {
   state.compactTrigger = reason
   state.compactCooldownUntil = 0
   updateRunBadge()
-  showCompaction("running", { reason, summaryModel: state.compactionModel || state.selectedModel || "current session model" })
+  showCompaction("running", { reason, summaryModel: state.selectedModel || "current session model" })
   if (state.compactWatch) clearTimeout(state.compactWatch)
   state.compactWatch = setTimeout(() => {
     if (!state.compacting) return
@@ -7548,10 +7515,6 @@ $("btn-ctx").onclick = async (e) => {
 $("ctx-auto-toggle").onclick = async (e) => {
   e.stopPropagation()
   await setAutoCompact(!state.autoCompact)
-}
-$("ctx-summary-model").onchange = async (e) => {
-  e.stopPropagation()
-  await setCompactionModel(e.target.value || null)
 }
 $("ctx-compact-now").onclick = (e) => {
   e.stopPropagation()

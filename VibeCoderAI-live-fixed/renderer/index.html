@@ -247,14 +247,9 @@
                 <span>Auto-compact</span><b id="ctx-auto-state">On</b>
               </button>
               <div class="ctx-row"><span>Triggers at</span><b id="ctx-auto-at">–</b></div>
-              <label class="ctx-model-row" for="ctx-summary-model">
-                <span>Summary model</span>
-                <select id="ctx-summary-model" title="Choose the model that writes compaction checkpoint summaries">
-                  <option value="">Current session model</option>
-                </select>
-              </label>
+              <div class="ctx-row ctx-model-row"><span>Summary model</span><b id="ctx-summary-model-current">ChatComposer model</b></div>
               <button class="ctx-compact-btn" id="ctx-compact-now" type="button">Compact now</button>
-              <div class="ctx-note">The selected AI model writes a checkpoint summary. Auto does it before the window fills; Compact now does the same on demand.</div>
+              <div class="ctx-note">Manual and automatic summaries always use the model selected in ChatComposer.</div>
             </div>
           </div>
           <span class="run-badge" id="run-badge" hidden>● Running</span>

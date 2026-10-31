@@ -507,8 +507,6 @@ class Engine {
     // V-18/V-20: read the compaction block once per run so a config edit takes
     // effect on the next prompt without restarting the app.
     const compactionConfig = config.compactionConfig(this.home)
-    const summary = this._summaryTarget(compactionConfig)
-    if (summary.warning) emit({ type: "notice", text: summary.warning })
 
     // V-07: resolve the session's agent definition (prompt, steps, permissions,
     // optional model override). A missing definition falls back to the default.
@@ -524,6 +522,13 @@ class Engine {
         emit({ type: "notice", text: `Agent model "${agent.model}" is unavailable (${e.message}); using ${session.profile}.` })
       }
     }
+    // Desktop ChatComposer explicitly requests the active run model for both
+    // manual and automatic summaries. CLI/SDK callers can still opt into the
+    // advanced config.model override by omitting `summaryModel: "session"`.
+    const summary = opts.summaryModel === "session"
+      ? { profile: null, apiKey: "", warning: "" }
+      : this._summaryTarget(compactionConfig)
+    if (summary.warning) emit({ type: "notice", text: summary.warning })
 
     const done = runLoop({
       session,
@@ -733,7 +738,9 @@ class Engine {
       const toolSpecs = tools.specs([...tools.ALL, ...this.extraTools(session.dir)])
       const system = buildSystem({ agentName: this.agentName, cwd: session.dir, extra: this.extraSystem })
       const compactionConfig = config.compactionConfig(this.home)
-      const summary = this._summaryTarget(compactionConfig)
+      const summary = opts.summaryModel === "session"
+        ? { profile: null, apiKey: "", warning: "" }
+        : this._summaryTarget(compactionConfig)
       const summaryModel = summary.profile
         ? summary.profile.summaryModelKey || summary.profile.id || summary.profile.model || "custom"
         : (profile?.id && profile?.model ? `${profile.id}/${profile.model}` : session.profile)

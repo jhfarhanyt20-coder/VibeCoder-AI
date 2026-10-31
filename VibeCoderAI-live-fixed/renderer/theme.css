@@ -2156,15 +2156,10 @@ body {
 .ctx-toggle b { color: var(--ok); }
 .ctx-toggle.off b { color: var(--muted); }
 .ctx-model-row {
-  display: grid; gap: 5px; margin-top: 6px; color: var(--muted);
+  margin-top: 4px; color: var(--muted);
   font-size: calc(12px * var(--fs-scale, 1));
 }
-.ctx-model-row select {
-  width: 100%; min-width: 0; padding: 6px 8px; border-radius: 7px;
-  border: 1px solid var(--border); background: var(--panel-2); color: var(--text);
-  font: inherit; font-size: calc(12px * var(--fs-scale, 1)); outline: none;
-}
-.ctx-model-row select:focus { border-color: var(--accent); }
+.ctx-model-row b { max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ctx-compact-btn {
   width: 100%; margin-top: 8px; padding: 7px 10px; border-radius: 7px;
   border: 1px solid var(--border); background: var(--panel-2); color: var(--text);

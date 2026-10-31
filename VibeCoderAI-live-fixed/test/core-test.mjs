@@ -1643,6 +1643,27 @@ test("manual compaction uses the exact configured provider/model and records it"
   assert.equal(vibe.engine.getSession(s.id).messages[0].summaryModel, "summary/writer")
 })
 
+test("ChatComposer manual compaction overrides a separate config model with the session model", async () => {
+  const main = await mock(() => ({ chunks: [...chat.text("## Goal\nuse the ChatComposer model\n\n## Accomplished\nmanual session-model checkpoint written"), ...chat.end()] }))
+  const separate = await mock(() => ({ chunks: [...chat.text("## Goal\nwrong model\n\n## Accomplished\nshould not run"), ...chat.end()] }))
+  const home = tmp()
+  const dir = tmp()
+  const vibe = createVibe({ home, permission: "allow" })
+  await vibe.profiles.upsert({ id: "composer", format: "openai-chat", baseURL: `http://127.0.0.1:${main.port}/v1`, model: "selected", noAuth: true, contextLimit: 8000, maxOutput: 1000 })
+  await vibe.profiles.upsert({ id: "separate", format: "openai-chat", baseURL: `http://127.0.0.1:${separate.port}/v1`, model: "writer", models: [{ id: "writer", context: 8000, output: 1000 }], noAuth: true, contextLimit: 8000, maxOutput: 1000 })
+  const s = await vibe.session.create({ dir, profile: "composer" })
+  const session = vibe.engine.getSession(s.id)
+  for (let i = 0; i < 10; i++) session.messages.push({ role: i % 2 ? "assistant" : "user", parts: [{ type: "text", text: `manual-composer-${i} ` + "c".repeat(2500) }] })
+  vibe.engine.setCompactionConfig({ model: "separate/writer", keep: { tokens: 500 } })
+  const result = await vibe.session.compact(s.id, { reason: "manual", summaryModel: "session" })
+  main.close()
+  separate.close()
+  assert.equal(result.committed, true)
+  assert.equal(result.summaryModel, "composer/selected")
+  assert.ok(main.requests.length >= 1)
+  assert.equal(separate.requests.length, 0, "the separate ring/config model is ignored by ChatComposer")
+})
+
 test("a silent summary provider times out quickly and commits a safe fallback", async () => {
   const compaction = require("../core/agent/compaction")
   const slow = await mock(async () => {
@@ -1712,6 +1733,32 @@ test("automatic compaction uses the configured summary model and continues the r
   assert.equal(writer.requests[0].body.model, "writer")
   assert.equal(main.requests.length, 1, "the session model continues after compaction")
   assert.match(events.filter((event) => event.type === "text.delta").map((event) => event.delta).join(""), /continued after automatic checkpoint/)
+})
+
+test("ChatComposer automatic compaction uses the selected session model", async () => {
+  const main = await mock(({ body }) => {
+    if (/checkpoint summar/i.test(body.messages?.[0]?.content || "")) {
+      return { chunks: [...chat.text("## Goal\nuse selected model automatically\n\n## Accomplished\nauto session-model checkpoint written"), ...chat.end()] }
+    }
+    return { chunks: [...chat.text("continued with selected model"), ...chat.end()] }
+  })
+  const separate = await mock(() => ({ chunks: [...chat.text("wrong provider"), ...chat.end()] }))
+  const home = tmp()
+  const dir = tmp()
+  const vibe = createVibe({ home, permission: "allow" })
+  await vibe.profiles.upsert({ id: "composer", format: "openai-chat", baseURL: `http://127.0.0.1:${main.port}/v1`, model: "selected", noAuth: true, contextLimit: 8000, maxOutput: 1000 })
+  await vibe.profiles.upsert({ id: "separate", format: "openai-chat", baseURL: `http://127.0.0.1:${separate.port}/v1`, model: "writer", models: [{ id: "writer", context: 8000, output: 1000 }], noAuth: true, contextLimit: 8000, maxOutput: 1000 })
+  const s = await vibe.session.create({ dir, profile: "composer" })
+  const session = vibe.engine.getSession(s.id)
+  for (let i = 0; i < 10; i++) session.messages.push({ role: i % 2 ? "assistant" : "user", parts: [{ type: "text", text: `auto-composer-${i} ` + "a".repeat(3500) }] })
+  vibe.engine.setCompactionConfig({ auto: true, model: "separate/writer", keep: { tokens: 500 } })
+  const events = await collect(vibe.session.prompt(s.id, "continue", { summaryModel: "session" }))
+  main.close()
+  separate.close()
+  const end = events.find((event) => event.type === "compaction.end")
+  assert.ok(end && end.reason === "auto" && end.summaryModel === "composer/selected", JSON.stringify(end))
+  assert.equal(separate.requests.length, 0)
+  assert.match(events.filter((event) => event.type === "text.delta").map((event) => event.delta).join(""), /continued with selected model/)
 })
 
 test("auto:false stops proactive compaction but manual model-summary compaction still works", async () => {

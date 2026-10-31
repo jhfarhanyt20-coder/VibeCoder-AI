@@ -469,7 +469,7 @@ const handlers = {
     runState.set(id, { assistantMessageID: `asst_${Date.now().toString(36)}`, ordinal: 0, text: "", reasoningStarted: false, failed: null })
     emitUI("session.execution.started", id, {})
     setImmediate(() => {
-      ;(async () => { for await (const _ev of vibe.session.prompt(id, String(a.text || "") + attachmentText.join(""), { files, thinking: a.thinking })) {} })().catch((e) => {
+      ;(async () => { for await (const _ev of vibe.session.prompt(id, String(a.text || "") + attachmentText.join(""), { files, thinking: a.thinking, summaryModel: "session" })) {} })().catch((e) => {
         const st = runState.get(id); if (st) st.failed = String(e?.message || e)
         flushText(id); flushReasoning(id)
         emitUI("session.execution.failed", id, { error: { message: String(e?.message || e) }, persisted: false })
@@ -482,11 +482,11 @@ const handlers = {
     const id = idOf(a); requireSession(id); if (engine.isBusy(id)) throw new Error("Session is already running.")
     runState.set(id, { assistantMessageID: `asst_${Date.now().toString(36)}`, ordinal: 0, text: "", reasoningStarted: false, failed: null })
     emitUI("session.execution.started", id, {})
-    setImmediate(() => { (async () => { for await (const _ev of vibe.session.resume(id)) {} })().catch((e) => { const st = runState.get(id); if (st) st.failed = String(e?.message || e); flushText(id); flushReasoning(id); emitUI("session.execution.failed", id, { error: { message: String(e?.message || e) }, persisted: true }); runState.delete(id) }) })
+    setImmediate(() => { (async () => { for await (const _ev of vibe.session.resume(id, { summaryModel: "session" })) {} })().catch((e) => { const st = runState.get(id); if (st) st.failed = String(e?.message || e); flushText(id); flushReasoning(id); emitUI("session.execution.failed", id, { error: { message: String(e?.message || e) }, persisted: true }); runState.delete(id) }) })
     return { started: true, sessionID: id }
   },
   interrupt: async (a = {}) => { await vibe.session.interrupt(idOf(a)); return { interrupted: true } },
-  compactSession: async (a = {}) => vibe.session.compact(idOf(a), { reason: a.reason === "auto" ? "auto" : "manual" }),
+  compactSession: async (a = {}) => vibe.session.compact(idOf(a), { reason: a.reason === "auto" ? "auto" : "manual", summaryModel: "session" }),
   getCompactionSettings: async () => engine.getCompactionConfig(),
   setCompactionSettings: async (a = {}) => {
     const source = a.compaction && typeof a.compaction === "object" ? a.compaction : a

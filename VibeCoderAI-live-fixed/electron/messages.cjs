@@ -38,8 +38,10 @@ function convertMessages(session) {
         summaryModel: m.summaryModel || "",
         time: { created: session.updatedAt },
       }
-      if (Number.isInteger(m.displayAfter) && m.displayAfter >= 0) {
-        deferredCompactions.push({ target: i + m.displayAfter, row })
+      const legacyDisplayAfter = i === 0 && Number(session.usage?.lastInput || 0) === 0 ? session.messages.length - 1 : null
+      const displayAfter = Number.isInteger(m.displayAfter) && m.displayAfter >= 0 ? m.displayAfter : legacyDisplayAfter
+      if (displayAfter != null) {
+        deferredCompactions.push({ target: i + displayAfter, row })
         flushCompactions(i)
       } else out.push(row)
       return

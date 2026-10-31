@@ -1019,6 +1019,20 @@ test("a new compaction checkpoint renders where compaction happened, not at chat
   assert.equal(ui[2].metadata.displayText, "message sent after compaction")
 })
 
+test("a legacy checkpoint with no later model turn migrates away from chat index zero", () => {
+  const { convertMessages } = require("../electron/messages.cjs")
+  const prefix = "[Checkpoint: the earlier part of this conversation was compacted. Continue from this summary.]"
+  const ui = convertMessages({
+    updatedAt: 123,
+    usage: { lastInput: 0 },
+    messages: [
+      { role: "user", summary: true, parts: [{ type: "text", text: `${prefix}\n\n## Goal\nLegacy checkpoint\n\n## Accomplished\nDone` }] },
+      { role: "assistant", parts: [{ type: "text", text: "retained tail" }] },
+    ],
+  })
+  assert.deepEqual(ui.map((message) => message.type), ["assistant", "compaction"])
+})
+
 test("compaction safe-cut refuses cross-boundary tool-result IDs and ID-less ambiguity", () => {
   const { cutIsSafe, pickSafeCut } = require("../core/agent/compaction")
   const messages = [

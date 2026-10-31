@@ -730,11 +730,14 @@ class Engine {
     this.runs.set(id, ctl)
     const reason = opts.reason === "auto" ? "auto" : "manual"
     try {
-      this._emit(id, { type: "compaction.start", reason })
       const toolSpecs = tools.specs([...tools.ALL, ...this.extraTools(session.dir)])
       const system = buildSystem({ agentName: this.agentName, cwd: session.dir, extra: this.extraSystem })
       const compactionConfig = config.compactionConfig(this.home)
       const summary = this._summaryTarget(compactionConfig)
+      const summaryModel = summary.profile
+        ? summary.profile.summaryModelKey || summary.profile.id || summary.profile.model || "custom"
+        : (profile?.id && profile?.model ? `${profile.id}/${profile.model}` : session.profile)
+      this._emit(id, { type: "compaction.start", reason, summaryModel })
       if (summary.warning) this._emit(id, { type: "notice", text: summary.warning })
       const r = await compaction.compact({
         session,
@@ -747,6 +750,8 @@ class Engine {
         config: compactionConfig,
         summaryProfile: summary.profile,
         summaryApiKey: summary.apiKey,
+        summaryTimeoutMs: opts.summaryTimeoutMs,
+        onSummaryDelta: (update) => this._emit(id, { type: "compaction.delta", reason, ...update }),
         archive: this._archiveFor(session),
       })
       if (summary.warning && r.committed && !r.warning) r.warning = summary.warning

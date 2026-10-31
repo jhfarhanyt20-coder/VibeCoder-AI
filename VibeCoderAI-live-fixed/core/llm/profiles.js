@@ -102,7 +102,14 @@ function listProfiles(home) {
   const user = read(profilesFile(home), [])
   const map = new Map(BUILTIN.map((p) => [p.id, p]))
   for (const p of Array.isArray(user) ? user : []) if (p && p.id) map.set(p.id, { ...(map.get(p.id) || {}), ...p })
-  return [...map.values()]
+  // Repair old saved dashboard/root URLs at read time too. Earlier builds only
+  // repaired on save, so an existing profile could keep posting to an HTML web
+  // console forever until the user manually edited it. Keep the user's chosen
+  // format; this migration changes only a known-bad base URL.
+  return [...map.values()].map((p) => {
+    const fixed = repairProfile(p)
+    return fixed.baseURL && fixed.baseURL !== p.baseURL ? { ...p, baseURL: fixed.baseURL } : p
+  })
 }
 
 function getProfile(id, home) {

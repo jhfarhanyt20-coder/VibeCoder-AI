@@ -4,6 +4,7 @@ const adapters = {
   "openai-responses": require("./openai-responses"),
   anthropic: require("./anthropic"),
 }
+const { repairBaseUrl } = require("./provider-meta")
 
 // OpenAI-compatible gateways validate function names against a restricted
 // character set (and commonly a 64-character limit). Keep internal tool names
@@ -71,12 +72,30 @@ function normalizeToolNames(req) {
 
 /** stream(profile, req) -> async iterable of canonical events:
  *  {type:"text"|"reasoning", delta} | {type:"tool_call", id, name, args} | {type:"usage", input, output} | {type:"finish", reason} */
+function runtimeProfiles(profile) {
+  const fixed = repairBaseUrl(profile.baseURL, profile.format)
+  const first = {
+    ...profile,
+    baseURL: fixed.url || profile.baseURL,
+    format: fixed.engineFormat || profile.format,
+  }
+  const out = [first]
+  // Unknown OpenAI-compatible services commonly expose a dashboard at their
+  // origin and the API at /v1. Retry that API base only after the first request
+  // positively identifies an HTML/non-API response; normal API errors do not
+  // trigger URL guessing.
+  if (first.format === "openai-chat" || first.format === "openai-responses") {
+    const base = String(first.baseURL || "").replace(/\/+$/, "")
+    if (base && !/(?:\/v1|\/openai\/v1|\/api\/v1)$/i.test(base)) out.push({ ...first, baseURL: base + "/v1" })
+  }
+  return out.filter((candidate, index, list) => list.findIndex((other) => other.baseURL === candidate.baseURL && other.format === candidate.format) === index)
+}
+
 function stream(profile, req) {
   if (!profile || typeof profile !== "object" || !profile.format) {
     throw new Error(`Invalid model profile: missing format (expected openai-chat | openai-responses | anthropic)`)
   }
-  const adapter = adapters[profile.format]
-  if (!adapter) throw new Error(`Unknown format "${profile.format}" (use openai-chat | openai-responses | anthropic)`)
+  if (!adapters[profile.format]) throw new Error(`Unknown format "${profile.format}" (use openai-chat | openai-responses | anthropic)`)
 
   const normalized = normalizeToolNames(req || {})
   const { wireToOriginal, ...wireReq } = normalized
@@ -88,18 +107,41 @@ function stream(profile, req) {
     }
   }
 
-  if (profile.format === "openai-responses") {
-    // Some hosts (Groq, DeepSeek, ...) speak only /chat/completions: a 404 on
-    // /responses falls back to chat using the SAME normalized tool-name map.
-    return (async function* () {
+  const runOne = async function* (candidate) {
+    const adapter = adapters[candidate.format]
+    if (candidate.format === "openai-responses") {
+      // Some hosts (Groq, DeepSeek, ...) speak only /chat/completions: a 404 on
+      // /responses falls back to chat using the SAME normalized tool-name map.
       try {
-        yield* remapEvents(adapter.stream({ ...wireReq, profile }))
+        yield* adapter.stream({ ...wireReq, profile: candidate })
       } catch (e) {
-        if (e && e.status === 404) yield* remapEvents(adapters["openai-chat"].stream({ ...wireReq, profile }))
+        if (e && e.status === 404) yield* adapters["openai-chat"].stream({ ...wireReq, profile: candidate })
         else throw e
       }
-    })()
+      return
+    }
+    yield* adapter.stream({ ...wireReq, profile: candidate })
   }
-  return remapEvents(adapter.stream({ ...wireReq, profile }))
+
+  const robust = async function* () {
+    const candidates = runtimeProfiles(profile)
+    let lastError = null
+    for (let i = 0; i < candidates.length; i++) {
+      let emitted = false
+      try {
+        for await (const event of runOne(candidates[i])) {
+          emitted = true
+          yield event
+        }
+        return
+      } catch (error) {
+        lastError = error
+        const canRepair = !emitted && error?.code === "PROVIDER_NON_API_RESPONSE" && i + 1 < candidates.length
+        if (!canRepair) throw error
+      }
+    }
+    if (lastError) throw lastError
+  }
+  return remapEvents(robust())
 }
-module.exports = { stream, adapters, normalizeToolNames, ...require("./http"), ...require("./sse") }
+module.exports = { stream, adapters, normalizeToolNames, runtimeProfiles, ...require("./http"), ...require("./sse") }

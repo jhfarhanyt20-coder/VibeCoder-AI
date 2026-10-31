@@ -145,6 +145,13 @@ async function main() {
   const session = await invoke("createSession", { directory: process.cwd(), title: "Backend smoke test" })
   assert.ok(session.id)
   assert.equal((await invoke("getMessages", { sessionID: session.id })).length, 0)
+  backend.engine._emit(session.id, { type: "compaction.start", reason: "manual", summaryModel: "summary/writer" })
+  backend.engine._emit(session.id, { type: "compaction.delta", reason: "manual", summaryModel: "summary/writer", text: "live checkpoint" })
+  backend.engine._emit(session.id, { type: "compaction.end", reason: "manual", summaryModel: "summary/writer", summarized: true, summary: "live checkpoint" })
+  assert.ok(sent.some(([channel, payload]) => channel === "vibe:event" && payload?.type === "session.compaction.started"), "compaction start must use the renderer-facing event name")
+  const liveCompaction = sent.find(([channel, payload]) => channel === "vibe:event" && payload?.type === "session.compaction.delta" && payload?.text === "live checkpoint")
+  assert.ok(liveCompaction, "compaction summary deltas must reach the renderer while the model writes")
+  assert.ok(sent.some(([channel, payload]) => channel === "vibe:event" && payload?.type === "session.compaction.ended" && payload?.summarized === true), "a completed checkpoint must stop the renderer's compacting state")
 
   // A renamed/recreated provider may leave one stale provider ID in the UI for
   // a single event-loop turn. Resolve only if the model ID maps to one current

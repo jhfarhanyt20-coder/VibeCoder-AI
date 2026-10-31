@@ -558,8 +558,21 @@ test("HTTP 200 with an error json / an html page -> a clear error, not a silent 
   const h = await setup(() => ({ html: "<html><body>Please log in</body></html>" }))
   const e2 = await runEvents(h.vibe, h.s.id)
   h.m.close()
-  assert.match(errOf(e2), /did not return a model reply/)
+  assert.match(errOf(e2), /website instead of its model API/)
   assert.match(errOf(e2), /Please log in/)
+})
+
+test("an HTML dashboard response retries the conventional /v1 API base", async () => {
+  const m = await mock(({ url }) => {
+    if (url === "/chat/completions") return { html: "<html><title>Dashboard</title><body>You need to enable JavaScript</body></html>" }
+    assert.equal(url, "/v1/chat/completions")
+    return { chunks: [...chat.text("repaired API reply"), ...chat.end()] }
+  })
+  const profile = { id: "root-dashboard", format: "openai-chat", baseURL: `http://127.0.0.1:${m.port}`, model: "m", noAuth: true }
+  const events = await collect(llm.stream(profile, { system: "s", messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }], tools: [] }))
+  m.close()
+  assert.equal(events.filter((event) => event.type === "text").map((event) => event.delta).join(""), "repaired API reply")
+  assert.deepEqual(m.requests.map((request) => request.url), ["/chat/completions", "/v1/chat/completions"])
 })
 
 test("empty model reply is retried, then reported (never a silent 'done')", async () => {
@@ -886,6 +899,18 @@ test("Groq dashboard URLs and unsupported Responses format are repaired before r
   assert.equal(fixed.url, "https://api.groq.com/openai/v1")
   assert.equal(fixed.format, "chat")
   assert.match(fixed.hint, /console\/dashboard/)
+})
+
+test("Agent Router dashboard profiles resolve to /v1, including profiles saved by old builds", () => {
+  const { repairBaseUrl } = require("../core/llm/provider-meta")
+  const profiles = require("../core/llm/profiles")
+  const fixed = repairBaseUrl("https://agentrouter.org", "openai-responses")
+  assert.equal(fixed.url, "https://agentrouter.org/v1")
+  assert.equal(fixed.engineFormat, "openai-responses")
+  assert.equal(repairBaseUrl("https://agentrouter.org", "openai-chat").engineFormat, "openai-chat")
+  const home = tmp()
+  fs.writeFileSync(path.join(home, "profiles.json"), JSON.stringify([{ id: "old-agentrouter", format: "openai-responses", baseURL: "https://agentrouter.org", model: "gpt-test", noAuth: true }]))
+  assert.equal(profiles.getProfile("old-agentrouter", home).baseURL, "https://agentrouter.org/v1")
 })
 
 // ---------- NEW: regression tests for fixed bugs ----------
@@ -1587,8 +1612,54 @@ test("manual compaction uses the exact configured provider/model and records it"
   assert.ok(writer.requests.length >= 1)
   assert.equal(writer.requests[0].body.model, "writer")
   assert.ok(events.some((event) => event.type === "compaction.start" && event.reason === "manual"))
+  assert.ok(events.some((event) => event.type === "compaction.delta" && event.summaryModel === "summary/writer" && /model-written manual checkpoint/.test(event.text || "")), "summary text streams into the compaction card")
   assert.ok(events.some((event) => event.type === "compaction.end" && event.reason === "manual" && event.summaryModel === "summary/writer"))
   assert.equal(vibe.engine.getSession(s.id).messages[0].summaryModel, "summary/writer")
+})
+
+test("a silent summary provider times out quickly and commits a safe fallback", async () => {
+  const compaction = require("../core/agent/compaction")
+  const slow = await mock(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    return { chunks: [...chat.text("## Goal\nlate summary\n\n## Accomplished\narrived too late"), ...chat.end()] }
+  })
+  const profile = { id: "slow", format: "openai-chat", baseURL: `http://127.0.0.1:${slow.port}/v1`, model: "slow", noAuth: true, contextLimit: 8000, maxOutput: 1000 }
+  const session = {
+    id: "ses_eeeeeeeeeeeeeeee",
+    dir: "C:/tmp",
+    profile: "slow",
+    messages: Array.from({ length: 10 }, (_, i) => ({ role: i % 2 ? "assistant" : "user", parts: [{ type: "text", text: `slow-${i} ` + "s".repeat(2500) }] })),
+  }
+  const started = Date.now()
+  const result = await compaction.compact({ session, profile, apiKey: "", reason: "manual", summaryTimeoutMs: 75 })
+  const elapsed = Date.now() - started
+  slow.close()
+  assert.equal(result.committed, true)
+  assert.equal(result.summarySource, "fallback")
+  assert.match(result.warning, /did not send data/)
+  assert.ok(elapsed < 1000, `fallback should not hang (${elapsed} ms)`)
+})
+
+test("a broken dedicated summary model retries with the active session model", async () => {
+  const compaction = require("../core/agent/compaction")
+  const broken = await mock(() => ({ html: "<html><body>Dashboard only</body></html>" }))
+  const main = await mock(() => ({ chunks: [...chat.text("## Goal\ncontinue with the active model\n\n## Accomplished\nsession model wrote the checkpoint"), ...chat.end()] }))
+  const profile = { id: "main", format: "openai-chat", baseURL: `http://127.0.0.1:${main.port}/v1`, model: "chat", noAuth: true, contextLimit: 8000, maxOutput: 1000 }
+  const summaryProfile = { id: "broken", summaryModelKey: "broken/writer", format: "openai-chat", baseURL: `http://127.0.0.1:${broken.port}/v1`, model: "writer", noAuth: true, contextLimit: 8000, maxOutput: 1000 }
+  const session = {
+    id: "ses_ffffffffffffffff",
+    dir: "C:/tmp",
+    profile: "main",
+    messages: Array.from({ length: 10 }, (_, i) => ({ role: i % 2 ? "assistant" : "user", parts: [{ type: "text", text: `retry-${i} ` + "r".repeat(2500) }] })),
+  }
+  const result = await compaction.compact({ session, profile, apiKey: "", reason: "manual", summaryProfile, summaryApiKey: "", summaryTimeoutMs: 100 })
+  broken.close()
+  main.close()
+  assert.equal(result.committed, true)
+  assert.equal(result.summarySource, "llm")
+  assert.equal(result.summaryModel, "main/chat")
+  assert.match(result.warning, /Retried with the session model/)
+  assert.ok(main.requests.length >= 1)
 })
 
 test("automatic compaction uses the configured summary model and continues the run", async () => {
@@ -1610,6 +1681,7 @@ test("automatic compaction uses the configured summary model and continues the r
   assert.ok(end && end.reason === "auto" && end.committed, JSON.stringify(end))
   assert.equal(end.summarySource, "llm")
   assert.equal(end.summaryModel, "summary/writer")
+  assert.ok(events.some((event) => event.type === "compaction.delta" && event.reason === "auto" && /automatic model-written checkpoint/.test(event.text || "")), "automatic summary progress is visible")
   assert.ok(writer.requests.length >= 1, "the dedicated model writes the automatic checkpoint")
   assert.equal(writer.requests[0].body.model, "writer")
   assert.equal(main.requests.length, 1, "the session model continues after compaction")

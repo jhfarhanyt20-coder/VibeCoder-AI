@@ -287,6 +287,11 @@ function onEngineEvent(ev) {
   const sid = ev.sessionId || ev.sessionID || null
   const data = { ...ev }
   delete data.sessionId
+  // emitUI's first argument is the renderer-facing event name. Never let the
+  // engine's raw `type` field overwrite mappings such as compaction.end ->
+  // session.compaction.ended; that left a successfully saved checkpoint card
+  // spinning forever in the renderer.
+  delete data.type
   switch (ev.type) {
     case "text.delta": {
       if (!sid) break
@@ -371,6 +376,7 @@ function onEngineEvent(ev) {
       break
     }
     case "compaction.start": emitUI("compaction.start", sid, data); emitUI("session.compaction.started", sid, data); break
+    case "compaction.delta": emitUI("compaction.delta", sid, data); emitUI("session.compaction.delta", sid, data); break
     case "compaction.end": emitUI("compaction.end", sid, data); emitUI("session.compaction.ended", sid, data); break
     case "shell.backgrounded": emitUI("session.shell.backgrounded", sid, { shell: ev.shell }); break
     case "todo.update": emitUI("todo.updated", sid, data); break

@@ -29,6 +29,17 @@ class ApiError extends Error {
   }
 }
 
+class NonApiResponseError extends Error {
+  constructor(body) {
+    const text = String(body || "")
+    const plain = text.replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 300)
+    super(`The provider returned a website instead of its model API. Use the API base URL (usually ending in /v1), not a dashboard URL. Response: ${plain || "(empty)"}`)
+    this.name = "NonApiResponseError"
+    this.code = "PROVIDER_NON_API_RESPONSE"
+    this.body = text
+  }
+}
+
 /**
  * A provider that accepts the connection but never answers used to freeze the run
  * for the full 15-minute watchdog window ("the agent died"). Fail fast instead -
@@ -131,12 +142,11 @@ function parseRawBody(text) {
   try {
     j = JSON.parse(t)
   } catch {
-    const plain = t.replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 300)
-    throw new Error(`The provider did not return a model reply (HTTP 200, not an event stream). Check the base URL / model / format. It said: ${plain || "(empty)"}`)
+    throw new NonApiResponseError(t)
   }
   const err = j && (j.error || (j.type === "error" && j))
   if (err) throw streamError(typeof err === "string" ? err : err.message || (err.error && err.error.message) || JSON.stringify(err))
   return j
 }
 
-module.exports = { ApiError, postStream, postStreamAdaptive, parseRawBody, streamError }
+module.exports = { ApiError, NonApiResponseError, postStream, postStreamAdaptive, parseRawBody, streamError }

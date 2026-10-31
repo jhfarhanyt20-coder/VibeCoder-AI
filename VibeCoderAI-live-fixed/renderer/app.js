@@ -882,11 +882,16 @@ function showCompaction(status, opts = {}) {
   const meta = el.querySelector(".ctxd-meta")
   const sum = el.querySelector(".ctxd-sum")
   sum.hidden = true
+  sum.classList.remove("waiting")
   el.classList.remove("open")
   if (status === "running") {
     title.textContent = opts.reason === "manual" ? "Compacting context…" : "Context almost full — compacting…"
-    meta.textContent = opts.reason || ""
-    sum.textContent = ""
+    const model = opts.summaryModel || "current session model"
+    meta.textContent = `${opts.reason || ""} · ${model}`
+    sum.textContent = `Waiting for ${model} to write the checkpoint summary…`
+    sum.classList.add("waiting")
+    sum.hidden = false
+    el.classList.add("open")
   } else if (status === "done" || status === "overbudget") {
     title.textContent = status === "overbudget" ? "Checkpoint created — still over context budget" : "Context compacted"
     const source = opts.summarySource ? ` · ${opts.summarySource === "fallback" ? "fallback summary" : "AI summary"}` : ""
@@ -894,11 +899,13 @@ function showCompaction(status, opts = {}) {
     const tokens = Number.isFinite(opts.before) && Number.isFinite(opts.after) ? ` · ${opts.before.toLocaleString()} → ${opts.after.toLocaleString()} tokens` : ""
     meta.textContent = `${opts.reason || "manual"}${source}${model}${tokens}`
     const summary = String(opts.text || opts.summary || "").trim()
-    sum.textContent = [summary, opts.projectContext || "", status === "overbudget" ? `⚠ ${opts.error || "The next request is still estimated to exceed the input budget."}` : ""].filter(Boolean).join("\n\n")
-    sum.hidden = !sum.textContent
+    const complete = [summary, opts.projectContext || "", status === "overbudget" ? `⚠ ${opts.error || "The next request is still estimated to exceed the input budget."}` : ""].filter(Boolean).join("\n\n")
+    if (window.renderMarkdown) sum.innerHTML = window.renderMarkdown(complete)
+    else sum.textContent = complete
+    sum.hidden = !complete
     // Keep the newly generated checkpoint visible immediately; users can still
     // collapse it with the header if they prefer a compact transcript.
-    if (sum.textContent) el.classList.add("open")
+    if (complete) el.classList.add("open")
   } else {
     title.textContent = "Context compaction failed"
     meta.textContent = opts.reason || ""
@@ -960,7 +967,7 @@ async function compactNow({ reason = "manual" } = {}) {
   state.compactTrigger = reason
   state.compactCooldownUntil = 0
   updateRunBadge()
-  showCompaction("running", { reason })
+  showCompaction("running", { reason, summaryModel: state.compactionModel || state.selectedModel || "current session model" })
   if (state.compactWatch) clearTimeout(state.compactWatch)
   state.compactWatch = setTimeout(() => {
     if (!state.compacting) return
@@ -1618,11 +1625,13 @@ function compactionHistoryEl(m) {
   head.querySelector(".ctxd-meta").textContent = `${reason} · ${source}${model}`
   const sum = document.createElement("div")
   sum.className = "ctxd-sum"
-  sum.textContent = [String(m.summary || "").trim(), String(m.projectContext || "").trim()].filter(Boolean).join("\n\n")
-  sum.hidden = !sum.textContent
+  const complete = [String(m.summary || "").trim(), String(m.projectContext || "").trim()].filter(Boolean).join("\n\n")
+  if (window.renderMarkdown) sum.innerHTML = window.renderMarkdown(complete)
+  else sum.textContent = complete
+  sum.hidden = !complete
   head.onclick = () => el.classList.toggle("open")
   el.append(head, sum)
-  if (sum.textContent) el.classList.add("open")
+  if (complete) el.classList.add("open")
   return el
 }
 
@@ -2760,7 +2769,7 @@ vibe.onEvent(async (event) => {
       const why = data.reason === "auto" ? "auto" : (state.compactTrigger || "manual")
       state.compacting = true
       updateRunBadge()
-      showCompaction("running", { reason: why })
+      showCompaction("running", { reason: why, summaryModel: data.summaryModel })
       if (state.compactWatch) clearTimeout(state.compactWatch)
       state.compactWatch = setTimeout(() => {
         if (!state.compacting) return
@@ -2770,8 +2779,17 @@ vibe.onEvent(async (event) => {
       const el = liveCompactEl
       if (el) {
         const sum = el.querySelector(".ctxd-sum")
-        sum.textContent = String(data.text || "")
-        sum.hidden = !sum.textContent
+        const waiting = data.reset && !data.text
+        const text = waiting
+          ? `Waiting for ${data.summaryModel || "the summary model"} to write the checkpoint summary…`
+          : String(data.text || "")
+        sum.classList.toggle("waiting", waiting)
+        if (waiting) sum.textContent = text
+        else if (window.renderMarkdown) sum.innerHTML = window.renderMarkdown(text)
+        else sum.textContent = text
+        sum.hidden = !text
+        const meta = el.querySelector(".ctxd-meta")
+        if (meta && data.summaryModel) meta.textContent = `${data.reason || state.compactTrigger || "compaction"} · ${data.summaryModel}`
       }
     } else if (type === "session.compaction.ended") {
       const why = data.reason === "auto" ? "auto" : (state.compactTrigger || "manual")

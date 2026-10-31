@@ -20,6 +20,10 @@ const PRUNED = "[Old tool output cleared to save context]"
 const MAX_COMPACTIONS = 6
 const MAX_ARCHIVES = 2
 const MESSAGE_OVERHEAD = 4
+// Summary generation has its own shorter silence watchdog. It resets whenever
+// the model sends an event, so a healthy long summary can finish while a dead
+// provider cannot leave manual/auto compaction spinning for minutes.
+const SUMMARY_SILENCE_TIMEOUT_MS = 30000
 const SUMMARY_SYSTEM =
   "You write checkpoint summaries of a coding-agent conversation so that another agent can continue the work without the original messages. Be factual, dense and exact. Never invent details."
 const TEMPLATE = `Write a checkpoint summary of the conversation above. Use exactly these sections:
@@ -388,7 +392,7 @@ function checkpointMessage(session, summary, reason = "auto", summarySource = "l
   }
 }
 
-async function generateSummary({ profile, apiKey, signal, head, previousSummary, targetTokens }) {
+async function generateSummaryWithin({ profile, apiKey, signal, head, previousSummary, targetTokens, onDelta, onActivity }) {
   const normalized = normalizeProfile(profile)
   const { usable } = limits(normalized)
   const budget = Number.isFinite(targetTokens) && targetTokens > 0
@@ -416,9 +420,15 @@ async function generateSummary({ profile, apiKey, signal, head, previousSummary,
     }
     lastValidRequest = messages
     let text = ""
+    if (typeof onDelta === "function") onDelta({ reset: true, text: "", delta: "" })
     for await (const event of llm.stream({ ...normalized, maxOutput }, { apiKey, system: SUMMARY_SYSTEM, messages, tools: [], signal })) {
       if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("Context compaction cancelled")
-      if (event?.type === "text") text += String(event.delta || "")
+      if (typeof onActivity === "function") onActivity()
+      if (event?.type === "text") {
+        const delta = String(event.delta || "")
+        text += delta
+        if (typeof onDelta === "function" && delta) onDelta({ reset: false, text, delta })
+      }
       if (event?.type === "finish") break
     }
     const summary = text.trim()
@@ -465,6 +475,43 @@ async function generateSummary({ profile, apiKey, signal, head, previousSummary,
   return { summary: fallback, source: "fallback", warning: lastError?.message || (sawInvalid ? "The model did not return a valid structured summary." : "") }
 }
 
+/** Run summary generation with a silence timeout that falls back safely. */
+async function generateSummary(options) {
+  const parentSignal = options.signal
+  const timeoutMs = Number(options.timeoutMs) > 0
+    ? Math.max(50, Math.min(120000, Math.floor(Number(options.timeoutMs))))
+    : SUMMARY_SILENCE_TIMEOUT_MS
+  const ctl = new AbortController()
+  let timer = null
+  let timedOut = false
+  const onParentAbort = () => ctl.abort(parentSignal.reason)
+  const arm = () => {
+    clearTimeout(timer)
+    timer = setTimeout(() => {
+      timedOut = true
+      ctl.abort(new Error(`Summary model was silent for ${Math.round(timeoutMs / 1000)}s.`))
+    }, timeoutMs)
+  }
+  if (parentSignal?.aborted) onParentAbort()
+  else parentSignal?.addEventListener("abort", onParentAbort, { once: true })
+  arm()
+  try {
+    return await generateSummaryWithin({ ...options, signal: ctl.signal, onActivity: arm })
+  } catch (error) {
+    if (!timedOut) throw error
+    const fallback = mechanicalSummary(options.head)
+    if (fallback.length < 80) throw error
+    return {
+      summary: fallback,
+      source: "fallback",
+      warning: `The summary model did not send data for ${Math.round(timeoutMs / 1000)}s; a safe fallback checkpoint was created instead.`,
+    }
+  } finally {
+    clearTimeout(timer)
+    parentSignal?.removeEventListener("abort", onParentAbort)
+  }
+}
+
 /**
  * Compact a session in place. History is untouched until the summary is ready.
  *
@@ -486,6 +533,8 @@ async function compact({
   config = null,
   summaryProfile = null,
   summaryApiKey = "",
+  summaryTimeoutMs = 0,
+  onSummaryDelta = null,
   archive = null,
 }) {
   if (!session || !Array.isArray(session.messages)) {
@@ -530,6 +579,14 @@ async function compact({
   // model. The fallback keeps the session model when the profile is unusable.
   const summarizer = summaryProfile ? normalizeProfile(summaryProfile) : normalized
   const summarizerKey = summaryProfile ? summaryApiKey || apiKey : apiKey
+  const sessionModel = profile?.id && profile?.model ? `${profile.id}/${profile.model}` : (session.profile || "")
+  const configuredSummaryModel = summaryProfile
+    ? summaryProfile.summaryModelKey || summaryProfile.id || summaryProfile.model || "custom"
+    : sessionModel
+  let usedSummaryModel = configuredSummaryModel
+  const progressFor = (model) => (update) => {
+    if (typeof onSummaryDelta === "function") onSummaryDelta({ ...update, summaryModel: model })
+  }
   let generated
   try {
     generated = await generateSummary({
@@ -539,7 +596,30 @@ async function compact({
       head,
       previousSummary: session.compactedSummary,
       targetTokens: budgetLimit,
+      timeoutMs: summaryTimeoutMs,
+      onDelta: progressFor(configuredSummaryModel),
     })
+    // A configured low-cost summary model may be down or return malformed text.
+    // Try the active session model once before accepting a mechanical fallback.
+    if (summaryProfile && generated.source === "fallback" && configuredSummaryModel !== sessionModel) {
+      const firstWarning = generated.warning
+      const retry = await generateSummary({
+        profile: normalized,
+        apiKey,
+        signal,
+        head,
+        previousSummary: session.compactedSummary,
+        targetTokens: budgetLimit,
+        timeoutMs: summaryTimeoutMs,
+        onDelta: progressFor(sessionModel),
+      })
+      if (retry.source === "llm") {
+        generated = { ...retry, warning: [firstWarning, `Retried with the session model (${sessionModel}).`].filter(Boolean).join(" ") }
+        usedSummaryModel = sessionModel
+      } else {
+        generated.warning = [firstWarning, retry.warning].filter(Boolean).join(" ")
+      }
+    }
   } catch (error) {
     if (signal?.aborted) throw error
     return { before, after: before, summarized: false, committed: false, fitsBudget: before <= budgetLimit, budgetLimit, reason, error: error?.message || String(error) }
@@ -550,9 +630,7 @@ async function compact({
     return { before, after: before, summarized: false, committed: false, fitsBudget: before <= budgetLimit, budgetLimit, reason, error: "Summary generation returned empty content; original history was preserved." }
   }
 
-  const summaryModel = summaryProfile
-    ? summaryProfile.summaryModelKey || summaryProfile.id || summaryProfile.model || "custom"
-    : (profile?.id && profile?.model ? `${profile.id}/${profile.model}` : (session.profile || ""))
+  const summaryModel = usedSummaryModel
   const nextMessages = [checkpointMessage(session, summary, reason, generated.source || "llm", summaryModel), ...tail]
   const after = requestTokens(system, nextMessages, toolSpecs)
   const fitsBudget = after <= budgetLimit
@@ -654,4 +732,5 @@ module.exports = {
   PRUNED,
   TEMPLATE,
   MAX_COMPACTIONS,
+  SUMMARY_SILENCE_TIMEOUT_MS,
 }

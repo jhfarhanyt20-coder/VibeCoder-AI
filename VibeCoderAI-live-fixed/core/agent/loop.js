@@ -150,7 +150,10 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
   const sys = () => buildSystem({ agentName, cwd: session.dir, extra: [agentSystem, extraSystem, skillText].filter(Boolean).join("\n\n") })
 
   const doCompact = async (reason, targetTokens = 0) => {
-    emit({ type: "compaction.start", reason })
+    const summaryModel = summaryProfile
+      ? summaryProfile.summaryModelKey || summaryProfile.id || summaryProfile.model || "custom"
+      : (profile?.id && profile?.model ? `${profile.id}/${profile.model}` : (session.profile || ""))
+    emit({ type: "compaction.start", reason, summaryModel })
     const system = sys()
     let result
     try {
@@ -166,6 +169,7 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
         config: compactionConfig,
         summaryProfile,
         summaryApiKey,
+        onSummaryDelta: (update) => emit({ type: "compaction.delta", reason, ...update }),
         archive: (entry) => compaction.writeArchive(store.dir, session.id, entry),
       })
     } catch (error) {

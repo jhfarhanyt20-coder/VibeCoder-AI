@@ -42,6 +42,11 @@ const KNOWN = {
   "openrouter.ai": ["https://openrouter.ai/api/v1", "chat"],
   "deepseek.com": ["https://api.deepseek.com/v1", "chat"],
   "platform.deepseek.com": ["https://api.deepseek.com/v1", "chat"],
+  // Agent Router's origin is a React management console. Its OpenAI-compatible
+  // chat + Responses API lives under /v1; posting to the origin returns the
+  // "You need to enable JavaScript" HTML shell with HTTP 200.
+  "agentrouter.org": ["https://agentrouter.org/v1", "responses"],
+  "www.agentrouter.org": ["https://agentrouter.org/v1", "responses"],
 }
 
 const ENDPOINT_SUFFIX = /\/(chat\/completions|completions|responses|messages|models|api\/show)$/i
@@ -56,6 +61,8 @@ const HOST_FORMATS = {
   "api.anthropic.com": ["anthropic"],
   "generativelanguage.googleapis.com": ["chat"],
   "openrouter.ai": ["chat"],
+  "agentrouter.org": ["chat", "responses"],
+  "www.agentrouter.org": ["chat", "responses"],
 }
 
 /**
@@ -77,13 +84,15 @@ function repairBaseUrl(raw, format) {
   const host = u.hostname.toLowerCase()
   const hit = KNOWN[host]
   if (hit) {
+    const supported = HOST_FORMATS[host] || []
+    const chosenFormat = fmtIn && supported.includes(fmtIn) ? fmtIn : hit[1]
     const changed = u.origin + u.pathname.replace(/\/+$/, "") !== hit[0]
     return {
       url: hit[0],
       changed,
-      format: hit[1],
-      engineFormat: TO_ENGINE[hit[1]],
-      hint: `${host} is the console/dashboard - the API base is ${hit[0]} (${hit[1]} format)`,
+      format: chosenFormat,
+      engineFormat: TO_ENGINE[chosenFormat],
+      hint: `${host} is the console/dashboard - the API base is ${hit[0]} (${chosenFormat} format)`,
     }
   }
   // the real API hosts: complete / clean the path the adapters expect

@@ -335,6 +335,13 @@ function onEngineEvent(ev) {
   // session.compaction.ended; that left a successfully saved checkpoint card
   // spinning forever in the renderer.
   delete data.type
+  // Child-run events have their own timeline. Never feed their text/tool deltas
+  // into the parent's streaming state; the renderer routes this envelope to the
+  // clickable subagent view. Permission prompts remain parent-visible below.
+  if (ev.subagentId && ev.type !== "permission.ask") {
+    emitUI("subagent.event", sid, { ...data, eventType: ev.type })
+    return
+  }
   switch (ev.type) {
     case "text.delta": {
       if (!sid) break
@@ -384,7 +391,7 @@ function onEngineEvent(ev) {
       emitUI("session.step.ended", sid, { assistantMessageID: `asst_${Date.now().toString(36)}`, tokens: { input: Number(ev.input) || 0, output: Number(ev.output) || 0, reasoning: 0 } })
       break
     case "permission.ask":
-      emitUI("session.permissions", sid, { permissionId: ev.permissionId, tool: ev.tool, subject: ev.subject })
+      emitUI("session.permissions", sid, { permissionId: ev.permissionId, tool: ev.tool, subject: ev.subject, ...(ev.subagentId ? { subagentId: ev.subagentId } : {}) })
       break
     case "error": {
       const message = String(ev.message || "Agent step failed")
@@ -720,12 +727,18 @@ const handlers = {
   mcpList: async (a = {}) => mcp.listServers(a.directory || currentDirectory),
   mcpAdd: async (a = {}) => mcp.addServer({ ...a, directory: a.directory || currentDirectory }),
   mcpRemove: async (a = {}) => mcp.removeServer({ ...a, directory: a.directory || currentDirectory }),
-  subagentCreate: async (a = {}) => { const id = idOf(a); requireSession(id); if (!subagentsEnabled || !engine.subagentsEnabled) throw new Error("Sub-agents are disabled"); return engine.createSubagent({ sessionId: id, type: a.type || "general", task: a.task, name: a.name, maxSteps: a.maxSteps }) },
+  subagentCreate: async (a = {}) => { const id = idOf(a); requireSession(id); if (!subagentsEnabled || !engine.subagentsEnabled) throw new Error("Sub-agents are disabled"); return engine.createSubagent({ sessionId: id, type: a.type || "general", agent: a.agent, task: a.task, name: a.name, maxSteps: a.maxSteps, background: a.background !== false }) },
   subagentList: async (a = {}) => ({ subagents: engine.listSubagents(a.sessionID || a.sessionId || activeSessionId) }),
   subagentStatus: async (a = {}) => engine.subagentStatus(a.id || a.subagentID),
   subagentResult: async (a = {}) => engine.subagentResult(a.id || a.subagentID),
+  subagentDetails: async (a = {}) => {
+    const details = engine.subagentDetails(a.id || a.subagentID)
+    if (!details) throw new Error("Subagent not found")
+    return { ...details, messages: internalMessagesToUI(engine.getSession(details.childSessionId)) }
+  },
+  subagentResume: async (a = {}) => engine.resumeSubagent(a.id || a.subagentID, a.text || a.prompt || "Continue and report the result.", { maxSteps: a.maxSteps }),
   subagentStop: async (a = {}) => ({ stopped: await engine.stopSubagent(a.id || a.subagentID) }),
-  subagentToggle: async (a = {}) => { subagentsEnabled = a.enabled === undefined ? !subagentsEnabled : !!a.enabled; engine.subagentsEnabled = subagentsEnabled; return { enabled: subagentsEnabled } },
+  subagentToggle: async (a = {}) => { if (a.enabled !== undefined) subagentsEnabled = !!a.enabled; engine.subagentsEnabled = subagentsEnabled; return { enabled: subagentsEnabled } },
   pluginList: async (a = {}) => plugins.listPlugins(a.directory || currentDirectory),
   pluginAdd: async (a = {}) => plugins.installPlugin({ ...a, directory: a.directory || currentDirectory }),
   pluginRemove: async (a = {}) => plugins.removePlugin({ ...a, name: a.name || a.spec, directory: a.directory || currentDirectory }),
@@ -812,7 +825,7 @@ const preloadNames = [
   "listSessions","createSession","getMessages","renameSession","deleteSession","revertSession","prompt","resumeRun","interrupt","compactSession","getCompactionSettings","setCompactionSettings",
   "listShells","shellOutput","backgroundSession","backgroundShell","cancelShell","setPermissions","listPermissionRequests","replyPermission","listForms","replyForm","cancelForm",
   "listModels","listAllModels","listModelLimits","setModel","providerCatalog","providerList","providerSave","providerRemove","providerDisabled","providerKey","providerModels","providerModel","providerMeta",
-  "cwd","setDirectory","getDirectory","gitBranch","pickProject","pickAttachments","readAttachment","ensureAgent","switchAgent","listAgents","setAgentDisabled","mcpList","mcpAdd","mcpRemove","subagentCreate","subagentList","subagentStatus","subagentResult","subagentStop","subagentToggle",
+  "cwd","setDirectory","getDirectory","gitBranch","pickProject","pickAttachments","readAttachment","ensureAgent","switchAgent","listAgents","setAgentDisabled","mcpList","mcpAdd","mcpRemove","subagentCreate","subagentList","subagentStatus","subagentResult","subagentDetails","subagentResume","subagentStop","subagentToggle",
   "pluginList","pluginAdd","pluginRemove","builtins","installBuiltinPlugin","removeBuiltinPlugin","marketplace","installSkill","removeSkill","installCustomSkill","removeCustomSkill","importGitHubSkills","registryAdd","registryRemove","memoryPath","memoryList","memoryAdd","memoryRemove","openMemoryFile","todoList","todoSave","cliInfo","cliInstallTested","cliUpdateCheck","authStatus","authConnect","authDisconnect","upgradeInfo","startUpgrade","ownerScan","ownerVerify","notify","openExternal","restartEvents","logError","openErrorLog"
 ]
 

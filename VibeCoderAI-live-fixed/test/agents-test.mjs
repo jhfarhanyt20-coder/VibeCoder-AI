@@ -215,6 +215,28 @@ test("V-07: agent.steps caps the run", async () => {
   assert.ok(done, "the run finishes")
 })
 
+test("V-11: a subagent definition supplies its model, name, steps and permissions", async () => {
+  const home = tmp()
+  const dir = tmp()
+  const main = await mock(() => ({ chunks: [...chat.text("wrong main model"), ...chat.end()] }))
+  const alt = await mock(() => ({ chunks: [...chat.text("specialist result"), ...chat.end()] }))
+  const vibe = createVibe({ home, permission: "allow" })
+  await vibe.profiles.upsert({ id: "main", format: "openai-chat", baseURL: `http://127.0.0.1:${main.port}/v1`, model: "m", noAuth: true, contextLimit: 128000 })
+  await vibe.profiles.upsert({ id: "alt", format: "openai-chat", baseURL: `http://127.0.0.1:${alt.port}/v1`, model: "a", noAuth: true, contextLimit: 128000 })
+  writeAgent(path.join(dir, ".vibe", "agents"), "specialist.md", `---\nname: Specialist\nmode: subagent\nmodel: alt\nsteps: 3\npermissions: bash:**=deny\n---\nWork as the specialist.\n`)
+  const parent = await vibe.session.create({ dir, profile: "main" })
+  const created = await vibe.subagents.create({ sessionId: parent.id, agent: "specialist", type: "general", task: "answer once", background: true })
+  await vibe.engine.subagents.wait(created.id)
+  const result = await vibe.subagents.result(created.id)
+  main.close()
+  alt.close()
+  assert.equal(created.name, "Specialist")
+  assert.equal(created.agent, "specialist")
+  assert.equal(result.result, "specialist result")
+  assert.equal(main.requests.length, 0)
+  assert.equal(alt.requests.length, 1)
+})
+
 let failed = 0
 for (const [name, fn] of tests) {
   try {

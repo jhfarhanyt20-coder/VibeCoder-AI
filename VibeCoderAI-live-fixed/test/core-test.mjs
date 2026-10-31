@@ -1227,6 +1227,8 @@ test("engine exposes subagent + browser + todo APIs", async () => {
   const e = vibe.engine
   assert.equal(typeof e.subagentResult, "function")
   assert.equal(typeof e.subagentStatus, "function")
+  assert.equal(typeof e.subagentDetails, "function")
+  assert.equal(typeof e.resumeSubagent, "function")
   assert.equal(typeof e.stopSubagent, "function")
   assert.equal(typeof e.browserListTabs, "function")
   assert.equal(typeof e.browserCreateTab, "function")
@@ -1309,6 +1311,92 @@ test("subagent spawn + result round-trip against a mock LLM", async () => {
   assert.equal(res.error, "")
   assert.equal(res.result, "subagent answer")
   assert.equal(m.requests.length, 1, "subagent should make a real mock LLM request")
+  m.close()
+})
+
+test("V-11: foreground subagent returns inline, exposes metadata, and cannot recurse", async () => {
+  const m = await mock(() => ({ chunks: [...chat.text("foreground final result"), ...chat.end(5, 2)] }))
+  const home = tmp()
+  const dir = tmp()
+  const vibe = createVibe({ home, permission: "allow" })
+  await vibe.profiles.upsert({ id: "mock", format: "openai-chat", baseURL: `http://127.0.0.1:${m.port}/v1`, model: "m", noAuth: true, contextLimit: 128000 })
+  const parent = await vibe.session.create({ dir, profile: "mock" })
+  const tool = vibe.engine.subagentTool()
+  assert.equal(tool.perm({ agent: "explore" }).subject, "explore")
+  assert.ok(tool.parameters.properties.agent && tool.parameters.properties.background)
+  const ctx = { session: vibe.engine.getSession(parent.id), stats: {} }
+  const output = await tool.run({ agent: "general", task: "return a result", name: "Result finder", background: false }, ctx)
+  assert.match(output, /foreground final result/)
+  assert.ok(ctx.stats.subagentId && ctx.stats.subagentSessionId)
+  assert.equal(ctx.stats.subagentName, "Result finder")
+  assert.equal(ctx.stats.subagentStatus, "done")
+  const requestTools = m.requests[0].body.tools || []
+  assert.equal(requestTools.some((entry) => (entry.function?.name || entry.name) === "subagent"), false, "a child cannot spawn another child")
+  const child = vibe.engine.getSession(ctx.stats.subagentSessionId)
+  assert.equal(child.messages[0].parts[0].text, "return a result")
+  assert.equal(child.subagentResult, "foreground final result")
+  m.close()
+})
+
+test("V-11: background progress/result persist, recover after restart, and reach the parent next turn", async () => {
+  let parentSawResult = false
+  const m = await mock(({ body }) => {
+    const text = JSON.stringify(body.messages || [])
+    if (text.includes("[Subagent completed:")) {
+      parentSawResult = true
+      return { chunks: [...chat.text("parent received child result"), ...chat.end()] }
+    }
+    return { chunks: [...chat.text("durable child result"), ...chat.end()] }
+  })
+  const home = tmp()
+  const dir = tmp()
+  const vibe = createVibe({ home, permission: "allow" })
+  await vibe.profiles.upsert({ id: "mock", format: "openai-chat", baseURL: `http://127.0.0.1:${m.port}/v1`, model: "m", noAuth: true, contextLimit: 128000 })
+  const parent = await vibe.session.create({ dir, profile: "mock" })
+  const events = []
+  const off = vibe.event.subscribe((event) => { if (event.subagentId) events.push(event) })
+  const created = await vibe.subagents.create({ sessionId: parent.id, type: "general", name: "Durable researcher", task: "research once", background: true })
+  await vibe.engine.subagents.wait(created.id)
+  off()
+  const details = await vibe.subagents.details(created.id)
+  assert.equal(details.status, "done")
+  assert.equal(details.result, "durable child result")
+  assert.ok(details.progress.some((event) => event.type === "subagent.start"), "start event type must not be overwritten by the agent type")
+  assert.ok(details.progress.some((event) => event.type === "text.delta"))
+  assert.ok(events.some((event) => event.type === "subagent.result" && event.result === "durable child result"))
+
+  const restarted = createVibe({ home, permission: "allow" })
+  const recovered = await restarted.subagents.details(created.id)
+  assert.equal(recovered.result, "durable child result")
+  assert.equal(recovered.childSessionId, created.sessionID)
+
+  const parentEvents = await collect(vibe.session.prompt(parent.id, "use the finished research"))
+  assert.equal(parentSawResult, true, "the next safe parent request receives the completed child result")
+  assert.match(parentEvents.filter((event) => event.type === "text.delta").map((event) => event.delta).join(""), /parent received child result/)
+  m.close()
+})
+
+test("V-11: subagentResume continues the same child session", async () => {
+  const m = await mock(({ body }) => {
+    const text = JSON.stringify(body.messages || [])
+    return text.includes("follow-up request")
+      ? { chunks: [...chat.text("follow-up result"), ...chat.end()] }
+      : { chunks: [...chat.text("first result"), ...chat.end()] }
+  })
+  const home = tmp()
+  const dir = tmp()
+  const vibe = createVibe({ home, permission: "allow" })
+  await vibe.profiles.upsert({ id: "mock", format: "openai-chat", baseURL: `http://127.0.0.1:${m.port}/v1`, model: "m", noAuth: true, contextLimit: 128000 })
+  const parent = await vibe.session.create({ dir, profile: "mock" })
+  const created = await vibe.subagents.create({ sessionId: parent.id, type: "general", task: "first request", background: true })
+  await vibe.engine.subagents.wait(created.id)
+  const resumed = await vibe.subagents.resume(created.id, "follow-up request")
+  assert.equal(resumed.childSessionId, created.sessionID)
+  await vibe.engine.subagents.wait(created.id)
+  const result = await vibe.subagents.result(created.id)
+  assert.equal(result.result, "follow-up result")
+  const child = vibe.engine.getSession(created.sessionID)
+  assert.ok(child.messages.some((message) => message.role === "user" && message.parts.some((part) => part.subagentFollowup && part.text === "follow-up request")))
   m.close()
 })
 

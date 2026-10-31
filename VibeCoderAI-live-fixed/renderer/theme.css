@@ -1060,6 +1060,39 @@ body {
 
 /* ============ CHAT ============ */
 
+.subagent-viewbar {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+  margin: 10px 16px 0; padding: 9px 12px; border: 1px solid var(--border);
+  border-radius: 10px; background: var(--panel-2); color: var(--text);
+}
+.subagent-back { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 4px 7px; border-radius: 6px; font: inherit; }
+.subagent-back:hover { background: var(--hover); color: var(--text); }
+.subagent-view-ic { font-size: 16px; }
+.subagent-view-copy { display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 1px; }
+.subagent-view-copy strong { font-size: 13px; }
+.subagent-view-copy span { color: var(--muted); font-size: 11px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.subagent-view-status { padding: 2px 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+.subagent-view-status.running { color: var(--accent); }
+.subagent-view-status.done { color: var(--ok); }
+.subagent-view-status.error { color: var(--danger); }
+.subagent-stop { padding: 4px 9px; font-size: 11px; }
+.subagent-composer {
+  flex: 0 0 auto; display: flex; align-items: flex-end; gap: 8px;
+  margin: 0 auto 14px; width: min(760px, calc(100% - 32px)); padding: 9px;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--panel);
+}
+.subagent-composer textarea { flex: 1; min-height: 42px; max-height: 160px; resize: vertical; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; line-height: 1.45; }
+.act.subagent-tool { cursor: pointer; }
+.act.subagent-tool > .act-head { display: flex; }
+.act.subagent-tool > .act-body { display: block; max-height: 76px; overflow: hidden; color: var(--muted); border-top: 1px solid var(--border); }
+.act.subagent-tool .act-head:hover { background: var(--hover); }
+.act.subagent-tool .act-body { white-space: pre-wrap; }
+.act.subagent-tool.running .act-state { color: var(--accent); }
+.act.subagent-tool.done .act-state { color: var(--ok); }
+.act.subagent-tool.failed .act-state { color: var(--danger); }
+.subagent-settings-row { cursor: pointer; }
+.subagent-settings-row:hover { background: var(--hover); }
+
 .msg {
   display: flex;
   flex-direction: column;

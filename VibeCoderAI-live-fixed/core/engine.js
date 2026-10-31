@@ -54,8 +54,7 @@ class Engine {
     return {
       name: "subagent",
       description:
-        "Spawn a background subagent to do focused work (research, read files, write/edit, run commands, call MCP/plugin tools). " +
-        "It runs independently and reports back when finished. Use it for long background tasks so the main chat keeps going.",
+        "Run a focused subagent in its own visible child session. By default this waits and returns the final result inline; set background:true to keep the main agent moving while the user watches the child progress.",
       parameters: {
         type: "object",
         properties: {
@@ -64,24 +63,51 @@ class Engine {
             enum: ["general", "web", "read", "write", "bash", "mcp", "plugin"],
             description: "Kind of subagent",
           },
+          agent: { type: "string", description: "Agent definition id (for example explore or general). Overrides type while type remains backward-compatible." },
           task: { type: "string", description: "What the subagent should accomplish" },
           name: { type: "string", description: "Optional name" },
           maxSteps: { type: "integer", description: "Max steps, default 25" },
+          background: { type: "boolean", description: "true = return immediately; false/default = wait and return the final result" },
         },
-        required: ["type", "task"],
+        required: ["task"],
       },
-      perm: () => ({ tool: "subagent", subject: "spawn" }),
+      perm: (a) => ({ tool: "subagent", subject: String(a.agent || a.type || "general") }),
       paths: () => [],
       run: async (a, c) => {
         const r = this.subagents.create({
           sessionId: c.session && c.session.id,
           name: a.name,
           type: a.type,
+          agent: a.agent,
           task: a.task,
           maxSteps: a.maxSteps,
+          background: a.background === true,
+          parentToolCallId: c.toolCallId,
+        })
+        if (c.stats) Object.assign(c.stats, {
+          subagentId: r.id,
+          subagentSessionId: r.childSessionId || r.sessionID,
+          subagentName: r.name,
+          subagentType: r.type,
+          subagentAgent: r.agent,
+          subagentTask: r.task,
+          subagentStatus: r.status,
+          background: r.background,
+          parentToolCallId: r.parentToolCallId || c.toolCallId,
         })
         const id = r.id
-        const name = a.name || a.type
+        const name = r.name || a.name || a.agent || a.type || "subagent"
+        if (a.background !== true) {
+          const onAbort = () => this.subagents.stop(id)
+          c.signal?.addEventListener("abort", onAbort, { once: true })
+          let final
+          try { final = await this.subagents.wait(id) }
+          finally { c.signal?.removeEventListener("abort", onAbort) }
+          if (!final) throw new Error(`Subagent "${id}" disappeared before returning a result.`)
+          if (c.stats) Object.assign(c.stats, { subagentStatus: final.status, subagentResult: final.result, subagentError: final.error, completedAt: final.completedAt })
+          if (final.status === "error") throw new Error(`Subagent "${name}" failed: ${final.error || "unknown error"}`)
+          return `Subagent "${name}" completed.\n\n${final.result}`
+        }
         const parts = [
           `Subagent "${name}" started (id: ${id}). It runs in the background.`,
           "",
@@ -91,7 +117,7 @@ class Engine {
               "avoid working with the same files or topics it is using. " +
               "Work on non-overlapping tasks, or briefly tell the user what you launched and end your response.",
           "",
-          "When it finishes, use `subagentResult` (pass its id) to fetch the final output, then report it to the user.",
+          "Its final result will be attached automatically and shown in the clickable subagent row.",
         ]
         return parts.join("\n")
       },
@@ -368,6 +394,22 @@ class Engine {
     return session
   }
 
+  _takeSubagentResultParts(session) {
+    const legacy = Array.isArray(session.pendingSubagentResults) ? session.pendingSubagentResults : []
+    const completed = this.subagents && typeof this.subagents.takeResults === "function" ? this.subagents.takeResults(session.id) : []
+    const pending = [...legacy, ...completed]
+    if (!pending.length) return []
+    session.pendingSubagentResults = []
+    return pending.map((item) => ({
+      type: "text",
+      agentOnly: true,
+      subagentResultId: item.id,
+      text: item.status === "done"
+        ? `[Subagent completed: ${item.name} (${item.id})]\n${item.result || "(no text produced)"}`
+        : `[Subagent failed: ${item.name} (${item.id})]\n${item.error || "Unknown error"}`,
+    }))
+  }
+
   /** Send a prompt; async-iterate the events. Breaking out of the loop interrupts the run. */
   async *prompt(id, text, opts = {}) {
     if (this.runs.has(id)) throw new Error("Session is busy")
@@ -380,6 +422,7 @@ class Engine {
       // agentOnly prompts (the automatic background-run nudge) reach the model
       // but are not shown as a chat bubble.
       const parts = opts.agentOnly ? [{ type: "text", text: String(text), agentOnly: true }] : [{ type: "text", text: String(text) }]
+      parts.unshift(...this._takeSubagentResultParts(session))
       // image files arrive as { mime, data } (base64) and become canonical image parts
       for (const f of Array.isArray(opts.files) ? opts.files : []) {
         if (f && f.data && String(f.mime || "").startsWith("image/")) parts.push({ type: "image", mime: f.mime, data: f.data })
@@ -409,6 +452,12 @@ class Engine {
     const profile = profiles.getProfile(session.profile, this.home)
     const apiKey = profiles.getKey(profile, this.home)
     repairHistory(session.messages)
+    const subagentParts = this._takeSubagentResultParts(session)
+    if (subagentParts.length) {
+      const last = session.messages[session.messages.length - 1]
+      if (last?.role === "user" && (last.parts || []).some((part) => part.type === "tool_result")) last.parts.push(...subagentParts)
+      else session.messages.push({ role: "user", parts: subagentParts })
+    }
     if (!session.messages.length) throw new Error("Nothing to resume - this session has no messages yet.")
     this.store.save(session) // persist the repaired history (interrupted tool calls get error results)
     const ctl = this._begin(id, opts)
@@ -588,8 +637,8 @@ class Engine {
   }
 
   /** Create a subagent inside a session. Returns { id, status }. */
-  createSubagent({ sessionId, name, type = "general", task, maxSteps } = {}) {
-    return this.subagents.create({ sessionId, name, type, task, maxSteps })
+  createSubagent({ sessionId, name, type = "general", agent, task, maxSteps, background = true } = {}) {
+    return this.subagents.create({ sessionId, name, type, agent, task, maxSteps, background })
   }
   /** All subagents (optionally scoped to one session). */
   listSubagents(sessionId) {
@@ -602,6 +651,12 @@ class Engine {
   /** Subagent final result once done. */
   subagentResult(id) {
     return this.subagents.result(id)
+  }
+  subagentDetails(id) {
+    return this.subagents.details(id)
+  }
+  resumeSubagent(id, text, opts) {
+    return this.subagents.resume(id, text, opts)
   }
   /** Abort a running subagent. */
   stopSubagent(id) {

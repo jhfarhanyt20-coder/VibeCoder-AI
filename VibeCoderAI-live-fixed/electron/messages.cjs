@@ -52,7 +52,19 @@ function convertMessages(session) {
       else if (p.type === "tool_call") {
         const res = results.get(p.id)
         // carry the stored write/edit diff stats so the +N/-M card survives a reload
-        const stats = res && res.stats && (res.stats.additions != null || res.stats.deletions != null) ? res.stats : null
+        const stats = res && res.stats && typeof res.stats === "object" && Object.keys(res.stats).length ? res.stats : null
+        const metadata = stats
+          ? (stats.file || stats.additions != null || stats.deletions != null
+              ? { [stats.file || (p.args && p.args.path) || "file"]: {
+                  patch: stats.patch,
+                  additions: stats.additions,
+                  deletions: stats.deletions,
+                  hunks: stats.hunks,
+                  oldLines: stats.oldLines,
+                  newLines: stats.newLines,
+                } }
+              : { ...stats })
+          : null
         parts.push({
           type: "tool",
           id: p.id,
@@ -66,14 +78,7 @@ function convertMessages(session) {
                 ? [{ type: "image", mime: String(res.screenshot.mime || "image/png"), dataUrl: `data:${String(res.screenshot.mime || "image/png")};base64,${res.screenshot.data}`, url: String(res.screenshot.url || ""), title: String(res.screenshot.title || ""), tabID: String(res.screenshot.tabID || "") }]
                 : []),
             ] : [],
-            ...(stats ? { metadata: { [stats.file || (p.args && p.args.path) || "file"]: {
-              patch: stats.patch,
-              additions: stats.additions,
-              deletions: stats.deletions,
-              hunks: stats.hunks,
-              oldLines: stats.oldLines,
-              newLines: stats.newLines,
-            } } } : {}),
+            ...(metadata ? { metadata } : {}),
           },
         })
       }

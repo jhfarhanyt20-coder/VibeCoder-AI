@@ -696,8 +696,7 @@ const memory = {
 const subagentResult = {
   name: "subagentResult",
   description:
-    "Fetch the final output of a previously spawned subagent by its ID. " +
-    "Use this after the subagent finishes to get its answer. If it is still running, returns status 'running'.",
+    "Fetch a subagent's persisted final output by ID. Foreground calls already return it inline and background calls attach it automatically; use this for explicit recovery, not polling.",
   parameters: {
     type: "object",
     properties: {
@@ -714,7 +713,7 @@ const subagentResult = {
     }
     const r = engine.subagentResult(a.subagentId)
     if (!r) return `No subagent found with id: ${a.subagentId}. Use the id returned by the subagent tool.`
-    if (r.status === "running") return `Subagent "${r.id}" is still running. Wait and call subagentResult again later.`
+    if (r.status === "running") return `Subagent "${r.id}" is still running. Do not poll; its completion event and clickable row will deliver the result automatically.`
     if (r.status === "error") return `Subagent "${r.id}" failed: ${r.error || "unknown error"}`
     return r.result || "(no text produced)"
   },

@@ -348,7 +348,7 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
         }
         consecutiveGuardHits = 0
 
-        const ctx = { cwd: session.dir, signal, session, emit, stats: {}, engine }
+        const ctx = { cwd: session.dir, signal, session, emit, stats: {}, engine, toolCallId: c.id, toolName: shown }
         for (const p of tool.paths(c.args, ctx)) {
           if (!isInside(session.dir, p) && !(await askPermission({ tool: "external_directory", subject: p })))
             throw new Error(`Permission denied: ${p} is outside the workspace. Do not retry; ask the user.`)
@@ -386,7 +386,7 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
         } else {
           out = tools.clip(String(toolValue ?? ""))
         }
-        if (ctx.stats && ctx.stats.file) stats = ctx.stats // write/edit report +N/-M diff stats
+        if (ctx.stats && Object.keys(ctx.stats).length) stats = ctx.stats // file diffs + structured tool metadata (subagents, screenshots, ...)
       } catch (e) {
         out = String((e && e.message) || e)
         isError = true

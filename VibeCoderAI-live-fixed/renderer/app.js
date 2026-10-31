@@ -106,6 +106,8 @@ var vibe = window.vibe ?? {
   subagentList: async () => ({ ok: true, data: { subagents: [] } }),
   subagentStatus: async () => ({ ok: true, data: { id: "", status: "done", error: "" } }),
   subagentResult: async () => ({ ok: true, data: { id: "", status: "done", result: "", error: "" } }),
+  subagentDetails: async () => ({ ok: true, data: { id: "", name: "Subagent", status: "done", messages: [], progress: [] } }),
+  subagentResume: async () => ({ ok: true, data: { status: "running" } }),
   subagentStop: async () => ({ ok: true, data: { stopped: true } }),
   subagentToggle: async () => ({ ok: true, data: { enabled: true } }),
   // browser tools (the agent's browser.* tools call these through the engine)
@@ -1123,6 +1125,7 @@ async function refreshSessions() {
 function resetActiveSessionForWorkspace() {
   if (!state.activeSessionID || state.running) return
   if (state.sessions.some((s) => (s.id ?? s.sessionID) === state.activeSessionID)) return
+  if (state.subagentView) leaveSubagentView(false)
   state.activeSessionID = null
   $("messages").innerHTML = ""
   resetCompactionUi()
@@ -1131,6 +1134,7 @@ function resetActiveSessionForWorkspace() {
 }
 
 async function newTask() {
+  if (state.subagentView) leaveSubagentView(false)
   const res = await vibe.createSession({ directory: projectDir })
   if (!res.ok) return alert(res.error)
   const s = res.data?.data ?? res.data
@@ -1439,6 +1443,47 @@ function toolCardEl(name, input = {}, output = "") {
   return row
 }
 
+function subagentMeta(state = {}, input = {}) {
+  const md = state?.metadata && typeof state.metadata === "object" ? state.metadata : {}
+  const known = md.subagentId && typeof subAgentsById !== "undefined" ? subAgentsById.get(md.subagentId) : null
+  return {
+    id: md.subagentId || "",
+    sessionID: known?.childSessionId || md.subagentSessionId || "",
+    name: known?.name || md.subagentName || input.name || input.agent || input.type || "Subagent",
+    type: known?.type || md.subagentType || input.agent || input.type || "general",
+    task: known?.task || md.subagentTask || input.task || "",
+    status: known?.status || md.subagentStatus || (state.status === "error" ? "error" : "running"),
+    result: known?.result || md.subagentResult || "",
+    error: known?.error || md.subagentError || "",
+  }
+}
+
+function syncSubagentCard(el, info) {
+  if (!el || !info) return
+  el.classList.add("subagent-tool")
+  if (info.id) el.dataset.subagentId = info.id
+  el.dataset.subagentStatus = info.status || "running"
+  el.classList.remove("running", "done", "failed")
+  const status = info.status || "running"
+  el.classList.add(status === "done" ? "done" : status === "error" ? "failed" : "running")
+  el.querySelector(".act-title").textContent = info.name || "Subagent"
+  el.querySelector(".act-sub").textContent = `${info.type || "general"}${info.task ? ` · ${info.task}` : ""}`
+  const stateEl = el.querySelector(".act-state")
+  stateEl.textContent = status === "done" ? "✓" : status === "error" ? "✕" : "●"
+  const body = el.querySelector(".act-body")
+  body.textContent = info.result || info.error || info.task || "Open to watch progress"
+  body.hidden = false
+  const group = el.closest(".used-group")
+  if (group) {
+    const labels = [...group.querySelectorAll(".used-list .act-title")].map((node) => node.textContent).filter(Boolean)
+    if (labels.length) group.querySelector(".used-names").textContent = labels.join(", ")
+  }
+  el.querySelector(".act-head").onclick = (event) => {
+    event.stopPropagation()
+    if (info.id) openSubagentView(info.id)
+  }
+}
+
 function renderToolDetails(el, name, input = {}, state = {}) {
   // subtitle (file path / command)
   const sub = toolSubtitle(name, input)
@@ -1447,6 +1492,11 @@ function renderToolDetails(el, name, input = {}, state = {}) {
   const files = toolFiles(state, input)
   const body = el.querySelector(".act-body")
   const out = el.querySelector(".act-out")
+
+  if (name === "subagent" || name === "task") {
+    syncSubagentCard(el, subagentMeta(state, input))
+    return
+  }
 
   el.querySelectorAll(".file-rows").forEach((n) => n.remove())
 
@@ -1557,6 +1607,7 @@ function toolRow(part) {
   if (st.status === "error" || st.status === "failed") actDone(key, false)
   else if (st.status === "completed" || st.status === "success") actDone(key, true)
   else el.classList.add("running")
+  if (name === "subagent" || name === "task") syncSubagentCard(el, subagentMeta(st, input))
   return el
 }
 
@@ -1564,7 +1615,10 @@ function toolRow(part) {
 function toolGroupEl(tools) {
   const wrap = document.createElement("div")
   wrap.className = "used-group"
-  const names = tools.map((t) => toolRowLabel(t.part.name))
+  const names = tools.map((t) => {
+    if (t.part.name === "subagent" || t.part.name === "task") return subagentMeta(t.part.state, t.part.state?.input).name
+    return toolRowLabel(t.part.name)
+  })
   const head = document.createElement("div")
   head.className = "used-head"
   head.innerHTML = `<span class="used-n"></span><span class="used-names"></span><span class="used-chev">▾</span>`
@@ -1644,12 +1698,8 @@ function compactionHistoryEl(m) {
   return el
 }
 
-async function renderSessionHistory(sessionID) {
-  const res = await vibe.getMessages({ sessionID, limit: 200 })
-  if (!res.ok) return
-  if (sessionID !== state.activeSessionID) return // user switched while loading
-  const msgs = Array.isArray(res.data) ? res.data : (res.data?.data ?? [])
-  setUsageFromMessages(msgs)
+function renderHistoryMessages(msgs, { editable = true, usageRing = true, retryRow = true, assistantName = "VibeCoder" } = {}) {
+  if (usageRing) setUsageFromMessages(msgs)
   $("messages").innerHTML = ""
   liveCompactEl = null
   clearActs()
@@ -1658,7 +1708,11 @@ async function renderSessionHistory(sessionID) {
     if (m.type === "user") {
       const text = m.metadata?.displayText ?? m.content?.text ?? m.text ?? ""
       const images = userMessageImages(m)
-      if (text || images.length) attachUserActions(addMsg("user", text, "", images), text, m.id)
+      if (text || images.length) {
+        const bubble = addMsg("user", text, "", images)
+        if (editable) attachUserActions(bubble, text, m.id)
+        else bubble.closest(".msg")?.querySelector(".who")?.replaceChildren(document.createTextNode("Task"))
+      }
     } else if (m.type === "assistant") {
       renderAssistantMessage(m)
     } else if (m.type === "compaction") {
@@ -1671,9 +1725,20 @@ async function renderSessionHistory(sessionID) {
       actDone(key, m.status === "exited")
     }
   }
+  if (assistantName !== "VibeCoder") {
+    $("messages").querySelectorAll(".msg.assistant .who").forEach((node) => { node.textContent = assistantName })
+  }
   scrollChat(true)
-  restoreRetryRow()
-  renderAutoCompact()
+  if (retryRow) restoreRetryRow()
+  if (usageRing) renderAutoCompact()
+}
+
+async function renderSessionHistory(sessionID) {
+  const res = await vibe.getMessages({ sessionID, limit: 200 })
+  if (!res.ok) return
+  if (sessionID !== state.activeSessionID || state.subagentView) return // user switched while loading
+  const msgs = Array.isArray(res.data) ? res.data : (res.data?.data ?? [])
+  renderHistoryMessages(msgs)
 }
 
 /* ---------- edit & resend a sent user message ---------- */
@@ -1863,6 +1928,7 @@ async function editAndResend(msg, text) {
 }
 
 function openSession(id) {
+  if (state.subagentView) leaveSubagentView(false)
   state.activeSessionID = id
   resetCompactionUi()
   setMainEmpty(false)
@@ -1873,6 +1939,7 @@ function openSession(id) {
   )
   item?.classList.add("active")
   renderSessionHistory(id)
+  refreshSubagentIndex(id)
   refreshForms()
   // the running-commands list belongs to one session: drop the old rows, then
   // pull the commands this session still has running (they live in the backend)
@@ -2759,6 +2826,16 @@ vibe.onEvent(async (event) => {
     applyCompactionSettings(data.compaction || data)
     return
   }
+
+  if (type === "subagent.event") {
+    handleSubagentEvent(data)
+    return
+  }
+
+  // While inspecting a child, keep the parent's run state current but do not
+  // paint parent text/tools into the child timeline. Back re-renders the parent
+  // canonically from disk.
+  if (state.subagentView && sid === state.activeSessionID && /^session\.(text|reasoning|tool|compaction)\./.test(type)) return
 
   // The question tool surfaces as a session "form". Render it as an interactive
   // card — the agent is paused until the user answers or dismisses it.
@@ -5839,6 +5916,218 @@ $("model-modal")?.addEventListener("click", (e) => {
 
 /* ---------- subagents (enable / disable the agents OpenCode offers) ---------- */
 let agentList = []
+let subAgentsById = new Map()
+let subagentPoll = null
+let subagentRenderSignature = ""
+
+async function refreshSubagentIndex(sessionID) {
+  if (!vibe.subagentList || !sessionID) return
+  try {
+    const res = await vibe.subagentList({ sessionID })
+    if (!res || res.ok === false) return
+    const list = res.data?.subagents || []
+    for (const agent of list) subAgentsById.set(agent.id, agent)
+    if (state.activeSessionID === sessionID && !state.subagentView) renderSessionHistory(sessionID)
+  } catch {}
+}
+
+function subagentSignature(details) {
+  const messages = Array.isArray(details?.messages) ? details.messages : []
+  return JSON.stringify([details?.status, details?.result?.length || 0, details?.error, details?.liveText?.length || 0, messages.map((message) => [message.id, message.status, (message.content || []).length])])
+}
+
+function setSubagentHeader(details) {
+  $("subagent-view-name").textContent = details.name || details.agent || details.type || "Subagent"
+  $("subagent-view-task").textContent = `${details.type || "general"}${details.task ? ` · ${details.task}` : ""}`
+  const status = details.status || "running"
+  const badge = $("subagent-view-status")
+  badge.textContent = status
+  badge.className = `subagent-view-status ${status}`
+  $("subagent-view-stop").hidden = status !== "running"
+  $("subagent-send").disabled = status === "running"
+  $("subagent-input").disabled = status === "running"
+  $("subagent-input").placeholder = status === "running" ? "This subagent is still working…" : "Send a follow-up to this subagent…"
+}
+
+function renderSubagentDetails(details) {
+  if (!state.subagentView || state.subagentView.id !== details.id) return
+  setSubagentHeader(details)
+  renderHistoryMessages(Array.isArray(details.messages) ? details.messages : [], {
+    editable: false,
+    usageRing: false,
+    retryRow: false,
+    assistantName: details.name || "Subagent",
+  })
+  if (details.liveReasoning) addThought(details.liveReasoning, 0, true)
+  if (details.liveText) {
+    const bubble = addMsg("assistant", details.liveText)
+    bubble.closest(".msg")?.querySelector(".who")?.replaceChildren(document.createTextNode(details.name || "Subagent"))
+    state.subagentView.liveBubble = bubble
+    state.subagentView.liveText = details.liveText
+  } else {
+    state.subagentView.liveBubble = null
+    state.subagentView.liveText = ""
+  }
+  const serialized = JSON.stringify(details.messages || [])
+  if (details.result && !serialized.includes(details.result)) {
+    const result = addMsg("assistant", details.result)
+    result.closest(".msg")?.querySelector(".who")?.replaceChildren(document.createTextNode(details.name || "Subagent"))
+  }
+  if (details.error) {
+    const error = addMsg("assistant", `⚠ ${details.error}`, "thinking")
+    error.closest(".msg")?.querySelector(".who")?.replaceChildren(document.createTextNode(details.name || "Subagent"))
+  }
+  scrollChat(true)
+}
+
+async function refreshSubagentView(force = false) {
+  const view = state.subagentView
+  if (!view || !vibe.subagentDetails) return
+  const res = await vibe.subagentDetails({ id: view.id })
+  if (!res || res.ok === false || !res.data) {
+    if (force) showError("Could not open the subagent", res?.error || "Subagent not found", { key: "subagent-view" })
+    return
+  }
+  const details = res.data
+  subAgentsById.set(details.id, details)
+  const signature = subagentSignature(details)
+  if (force || signature !== subagentRenderSignature) {
+    subagentRenderSignature = signature
+    renderSubagentDetails(details)
+  } else setSubagentHeader(details)
+  updateSubagentCards(details)
+}
+
+async function openSubagentView(id) {
+  if (!id) return
+  clearInterval(subagentPoll)
+  subagentRenderSignature = ""
+  state.subagentView = { id, parentSessionID: state.activeSessionID, liveBubble: null, liveText: "" }
+  $("subagent-viewbar").hidden = false
+  $("subagent-composer").hidden = false
+  $("composer").hidden = true
+  $("todo-panel").hidden = true
+  $("retry-inline").hidden = true
+  setMainEmpty(false)
+  await refreshSubagentView(true)
+  subagentPoll = setInterval(() => refreshSubagentView(false).catch(() => {}), 1000)
+}
+
+function leaveSubagentView(renderParent = true) {
+  clearInterval(subagentPoll)
+  subagentPoll = null
+  subagentRenderSignature = ""
+  state.subagentView = null
+  $("subagent-viewbar").hidden = true
+  $("subagent-composer").hidden = true
+  $("composer").hidden = false
+  $("subagent-input").value = ""
+  hideError("subagent-view")
+  renderTodos()
+  if (renderParent && state.activeSessionID) renderSessionHistory(state.activeSessionID)
+}
+
+function updateSubagentCards(details) {
+  if (!details?.id) return
+  const info = {
+    id: details.id,
+    sessionID: details.childSessionId,
+    name: details.name,
+    type: details.type,
+    task: details.task,
+    status: details.status,
+    result: details.result,
+    error: details.error,
+  }
+  document.querySelectorAll(`.act[data-subagent-id="${details.id}"]`).forEach((element) => syncSubagentCard(element, info))
+}
+
+function handleSubagentEvent(data) {
+  const id = data.subagentId
+  if (!id) return
+  const current = subAgentsById.get(id) || { id, status: "running" }
+  const eventType = data.eventType || ""
+  const next = {
+    ...current,
+    id,
+    childSessionId: data.subagentSessionId || current.childSessionId,
+    parentToolCallId: data.parentToolCallId || current.parentToolCallId,
+    name: data.subagentName || data.name || current.name || "Subagent",
+    type: data.agentType || current.type || "general",
+    task: data.task || current.task || "",
+  }
+  if (eventType === "subagent.start" || eventType === "subagent.resume") next.status = "running"
+  if (eventType === "subagent.error") { next.status = "error"; next.error = data.error || "Subagent failed" }
+  if (eventType === "subagent.end" || eventType === "subagent.result") {
+    next.status = data.status || next.status || "done"
+    if (data.result) next.result = data.result
+    if (data.error) next.error = data.error
+  }
+  subAgentsById.set(id, next)
+  const index = agentList.findIndex((agent) => agent.id === id)
+  if (index >= 0) agentList[index] = { ...agentList[index], ...next }
+  else agentList.unshift(next)
+  updateSubagentCards(next)
+  if (next.parentToolCallId) {
+    const parentCard = actEls.get(`tool:${next.parentToolCallId}`)
+    if (parentCard) syncSubagentCard(parentCard, {
+      id: next.id,
+      sessionID: next.childSessionId,
+      name: next.name,
+      type: next.type,
+      task: next.task,
+      status: next.status,
+      result: next.result,
+      error: next.error,
+    })
+  }
+  if (index < 0 || ["subagent.start", "subagent.resume", "subagent.error", "subagent.end", "subagent.result"].includes(eventType)) renderAgentList()
+
+  const view = state.subagentView
+  if (!view || view.id !== id) return
+  setSubagentHeader(next)
+  if (eventType === "text.delta" && data.delta) {
+    if (!view.liveBubble) {
+      view.liveBubble = addMsg("assistant", "")
+      view.liveBubble.closest(".msg")?.querySelector(".who")?.replaceChildren(document.createTextNode(next.name || "Subagent"))
+      view.liveText = ""
+    }
+    view.liveText += String(data.delta)
+    if (window.renderMarkdown) view.liveBubble.innerHTML = window.renderMarkdown(view.liveText)
+    else view.liveBubble.textContent = view.liveText
+    scrollChat()
+    return
+  }
+  if (["tool.start", "tool.end", "subagent.start", "subagent.resume", "subagent.error", "subagent.end", "subagent.result", "done"].includes(eventType)) {
+    setTimeout(() => refreshSubagentView(true).catch(() => {}), 50)
+  }
+}
+
+async function sendSubagentFollowup() {
+  const view = state.subagentView
+  const input = $("subagent-input")
+  const text = input.value.trim()
+  if (!view || !text) return
+  const res = await vibe.subagentResume({ id: view.id, text })
+  if (!res || res.ok === false) {
+    showError("Could not resume the subagent", res?.error || "Unknown error", { key: "subagent-view" })
+    return
+  }
+  input.value = ""
+  await refreshSubagentView(true)
+}
+
+$("subagent-back").onclick = () => leaveSubagentView(true)
+$("subagent-view-stop").onclick = async () => {
+  const id = state.subagentView?.id
+  if (!id) return
+  await vibe.subagentStop({ id })
+  refreshSubagentView(true)
+}
+$("subagent-send").onclick = sendSubagentFollowup
+$("subagent-input").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); sendSubagentFollowup() }
+})
 
 async function loadAgents() {
   if (!vibe.subagentList) return
@@ -5882,7 +6171,7 @@ function renderAgentList() {
   if (!agentList.length) {
     const empty = document.createElement("div")
     empty.className = "cfg-empty"
-    empty.textContent = "No running subagents."
+    empty.textContent = "No subagents yet."
     list.appendChild(empty)
     return
   }
@@ -5905,6 +6194,9 @@ function renderAgentList() {
     tag.textContent = a.type || "subagent"
     right.append(tag)
     row.append(main, right)
+    row.classList.add("subagent-settings-row")
+    row.title = "Open this subagent's conversation"
+    row.onclick = () => openSubagentView(a.id)
     list.appendChild(row)
   }
 }

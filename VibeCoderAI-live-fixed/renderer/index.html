@@ -78,6 +78,17 @@
         </div>
       </div>
 
+      <div class="subagent-viewbar" id="subagent-viewbar" hidden>
+        <button class="subagent-back" id="subagent-back" type="button">← Main agent</button>
+        <span class="subagent-view-ic">🤖</span>
+        <div class="subagent-view-copy">
+          <strong id="subagent-view-name">Subagent</strong>
+          <span id="subagent-view-task"></span>
+        </div>
+        <span class="subagent-view-status" id="subagent-view-status">running</span>
+        <button class="danger-btn subagent-stop" id="subagent-view-stop" type="button">Stop</button>
+      </div>
+
       <!-- Splash screen (logo + pulse on app start) -->
       <div class="splash" id="splash" role="status" aria-label="Loading">
         <!-- the app logo (the brand "V"): every colour comes from the theme -->
@@ -160,6 +171,10 @@
       </button>
 
       <!-- SINGLE composer -->
+      <div class="subagent-composer" id="subagent-composer" hidden>
+        <textarea id="subagent-input" rows="2" placeholder="Send a follow-up to this subagent…"></textarea>
+        <button class="send" id="subagent-send" type="button" title="Resume subagent">↑</button>
+      </div>
       <div class="composer" id="composer">
         <div class="composer-chips">
           <button class="chip" id="chip-project" title="Choose a project directory">
@@ -779,7 +794,7 @@
           <div class="s-desc cfg-note subagent-mt-8">When on, the agent may spawn subagents on its own for long background tasks.</div>
 
           <div class="s-row s-row-flat subagent-mt-16">
-            <div class="s-name">Running subagents</div>
+            <div class="s-name">Subagent sessions</div>
             <span class="s-count" id="subagent-count">–</span>
           </div>
           <div id="subagent-list"></div>

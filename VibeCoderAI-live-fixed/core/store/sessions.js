@@ -88,7 +88,7 @@ class SessionStore {
     const idH = str("id")
     if (idH !== id || str("dir") == null || num("createdAt") == null || num("messageCount") == null) {
       const s = this.get(id) // old single-line format: one full parse
-      return { id, title: s.title, dir: s.dir, profile: s.profile, createdAt: s.createdAt, updatedAt: s.updatedAt, messages: s.messages.length, kind: s.kind, parentId: s.parentId }
+      return { id, title: s.title, dir: s.dir, profile: s.profile, createdAt: s.createdAt, updatedAt: s.updatedAt, messages: s.messages.length, kind: s.kind, parentId: s.parentId, agentId: s.agentId }
     }
     const live = this.cache.get(id) // a cached (live) session knows its real message count
     return {
@@ -101,6 +101,7 @@ class SessionStore {
       messages: live ? live.messages.length : num("messageCount") || 0,
       kind: str("kind"),
       parentId: str("parentId"),
+      agentId: str("agentId"),
     }
   }
   list({ dir, includeSubagents = false } = {}) {

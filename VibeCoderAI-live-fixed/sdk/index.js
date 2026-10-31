@@ -39,6 +39,8 @@ function createVibe(opts = {}) {
       list: async (sessionId) => e.listSubagents(sessionId),
       status: async (id) => e.subagentStatus(id),
       result: async (id) => e.subagentResult(id),
+      details: async (id) => e.subagentDetails(id),
+      resume: async (id, text, o) => e.resumeSubagent(id, text, o),
       stop: async (id) => e.stopSubagent(id),
     },
     browser: {

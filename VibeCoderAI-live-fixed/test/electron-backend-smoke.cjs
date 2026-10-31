@@ -152,6 +152,27 @@ async function main() {
   const liveCompaction = sent.find(([channel, payload]) => channel === "vibe:event" && payload?.type === "session.compaction.delta" && payload?.text === "live checkpoint")
   assert.ok(liveCompaction, "compaction summary deltas must reach the renderer while the model writes")
   assert.ok(sent.some(([channel, payload]) => channel === "vibe:event" && payload?.type === "session.compaction.ended" && payload?.summarized === true), "a completed checkpoint must stop the renderer's compacting state")
+  const beforeChildEvent = sent.length
+  backend.engine._emit(session.id, { type: "text.delta", delta: "child-only text", subagentId: "subagent_smoke", subagentSessionId: "ses_aaaaaaaaaaaaaaaa", subagentName: "Smoke researcher", agentType: "general" })
+  const childEvents = sent.slice(beforeChildEvent).map((entry) => entry[1])
+  assert.ok(childEvents.some((payload) => payload?.type === "subagent.event" && payload?.eventType === "text.delta" && payload?.delta === "child-only text"), "child progress must use the subagent event channel")
+  assert.equal(childEvents.some((payload) => payload?.type === "session.text.delta"), false, "child text must never pollute the parent assistant stream")
+
+  const child = backend.engine.store.create({ dir: process.cwd(), profile: session.profile, title: "subagent: smoke", kind: "subagent", parentId: session.id, agentId: "subagent_smoke" })
+  child.subagentName = "Smoke researcher"
+  child.subagentType = "general"
+  child.subagentTask = "inspect smoke behavior"
+  child.subagentStatus = "done"
+  child.subagentResult = "smoke result"
+  child.messages.push({ role: "user", parts: [{ type: "text", text: "inspect smoke behavior" }] }, { role: "assistant", parts: [{ type: "text", text: "smoke result" }] })
+  backend.engine.store.save(child)
+  const childDetails = await invoke("subagentDetails", { id: "subagent_smoke" })
+  assert.equal(childDetails.result, "smoke result")
+  assert.equal(childDetails.childSessionId, child.id)
+  assert.ok(Array.isArray(childDetails.messages) && childDetails.messages.some((message) => message.type === "assistant"))
+  const toggleBefore = await invoke("subagentToggle", {})
+  const toggleAgain = await invoke("subagentToggle", {})
+  assert.equal(toggleAgain.enabled, toggleBefore.enabled, "reading the subagent toggle must not flip it")
 
   // A renamed/recreated provider may leave one stale provider ID in the UI for
   // a single event-loop turn. Resolve only if the model ID maps to one current

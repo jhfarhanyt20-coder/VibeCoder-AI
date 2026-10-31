@@ -110,6 +110,8 @@ const api = {
   subagentList: call("subagentList"),
   subagentStatus: call("subagentStatus"),
   subagentResult: call("subagentResult"),
+  subagentDetails: call("subagentDetails"),
+  subagentResume: call("subagentResume"),
   subagentStop: call("subagentStop"),
   subagentToggle: call("subagentToggle"),
   pluginList: call("pluginList"),

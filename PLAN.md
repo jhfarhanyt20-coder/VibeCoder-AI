@@ -467,9 +467,9 @@ verify-and-build.bat
 | V-15 | Accessibility-tree snapshots | P2 | ⬜ | |
 | V-16 | Browser dialog handling | P2 | ⬜ | |
 | V-17 | Browser perf trace | P2 | ⬜ | optional |
-| V-18 | Configurable compaction | P3 | ⬜ | |
-| V-19 | Compacted-history archive | P3 | ⬜ | |
-| V-20 | Separate summary model | P3 | ⬜ | |
+| V-18 | Configurable compaction | P3 | ✅ | `~/.vibe/config.json` `compaction` block: auto/keep.tokens/buffer/maxRuns(0=unlimited)/model; hard cap removed |
+| V-19 | Compacted-history archive | P3 | ✅ | replaced head written to `<session>.archive.json` (newest 2); model never sees it |
+| V-20 | Separate summary model | P3 | ✅ | `compaction.model` profile writes the checkpoint; bad id falls back with a warning |
 | V-21 | Background compaction | P3 | ⬜ | flagged |
 | V-22 | Native compaction (responses) | P3 | ⬜ | optional |
 | V-23 | File snapshots + `/undo` | P4 | ⬜ | |
@@ -491,6 +491,7 @@ verify-and-build.bat
 
 | Date | Task | Agent | Summary |
 |---|---|---|---|
+| 2026-10-31 | V-18/19/20 | assistant | Compaction parity: new `core/config.js` (`~/.vibe/config.json` compaction block), `keep.tokens`/`buffer`/`maxRuns` (0 = unlimited, old 6-cap removed), the replaced head is archived to `<session>.archive.json` (newest 2, never sent to a model), and `compaction.model` can name a separate summary profile (falls back with a warning). Auto-compact toggle and "Compact now" already exist in the context menu. Tests: 74 core + 6 skills + Electron + compaction UI green. |
 | 2026-10-30 | V-03 | assistant | Browser element refs moved to the main process with generation stamps; snapshot bumps generation, click/fill reject a stale generation with a guided error, and page lookup uses `[data-vibe-ref]` instead of the `window.__vibeElementRefs` global. Tests: 69 core + smoke green. |
 | 2026-10-30 | V-06 | assistant | On the final step the loop drops tools and asks the model for a closing summary in text; `done` gains `summarized:true`. Tests: 69 core green. |
 | 2026-10-30 | V-02 | assistant | `mcp`/`plugin` subagent types now receive tools from the engine's full catalog (prefix filter `selectTools`); before, they started with zero tools. Plugin-type subagent runs a real plugin tool in a test. Tests: 68 core green. |

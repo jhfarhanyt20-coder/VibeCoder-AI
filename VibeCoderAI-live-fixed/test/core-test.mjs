@@ -1423,6 +1423,127 @@ test("V-06: the final step drops tools and asks for a closing summary", async ()
   m.close()
 })
 
+test("V-18: compaction.keep.tokens keeps more of the recent tail", async () => {
+  const compaction = require("../core/agent/compaction")
+  const m = await mock(() => ({ chunks: [...chat.text("## Goal\ndo the thing\n\n## Accomplished\nsome work"), ...chat.end(10, 5)] }))
+  const profile = { id: "p", format: "openai-chat", baseURL: `http://127.0.0.1:${m.port}/v1`, model: "m", noAuth: true, contextLimit: 8000, maxOutput: 1000 }
+  const makeSession = () => ({
+    id: "ses_aaaaaaaaaaaaaaaa",
+    dir: "C:/tmp",
+    profile: "p",
+    messages: Array.from({ length: 12 }, (_, i) => ({
+      role: i % 2 ? "assistant" : "user",
+      parts: [{ type: "text", text: `message ${i} ` + "z".repeat(3000) }],
+    })),
+  })
+  const small = await compaction.compact({ session: makeSession(), profile, apiKey: "", reason: "manual", config: { keep: { tokens: 800 } } })
+  const big = await compaction.compact({ session: makeSession(), profile, apiKey: "", reason: "manual", config: { keep: { tokens: 4000 } } })
+  m.close()
+  assert.ok(small.summarized && big.summarized, "both checkpoints commit")
+  assert.ok(big.after > small.after, `a bigger keep budget retains more history (${big.after} > ${small.after})`)
+})
+
+test("V-18: maxRuns 0 is unlimited; a positive maxRuns still guards", async () => {
+  const compaction = require("../core/agent/compaction")
+  const m = await mock(() => ({ chunks: [...chat.text("## Goal\nx\n\n## Accomplished\ny"), ...chat.end()] }))
+  const profile = { id: "p", format: "openai-chat", baseURL: `http://127.0.0.1:${m.port}/v1`, model: "m", noAuth: true, contextLimit: 8000, maxOutput: 1000 }
+  const makeSession = () => ({
+    id: "ses_bbbbbbbbbbbbbbbb",
+    dir: "C:/tmp",
+    profile: "p",
+    compactions: 6,
+    messages: Array.from({ length: 8 }, (_, i) => ({
+      role: i % 2 ? "assistant" : "user",
+      parts: [{ type: "text", text: `m${i} ` + "q".repeat(2000) }],
+    })),
+  })
+  const unlimited = await compaction.compact({ session: makeSession(), profile, apiKey: "", reason: "auto", config: { maxRuns: 0 } })
+  const capped = await compaction.compact({ session: makeSession(), profile, apiKey: "", reason: "auto", config: { maxRuns: 3 } })
+  m.close()
+  assert.equal(unlimited.committed, true, "maxRuns 0 must not stop compaction after the old hard cap of 6")
+  assert.equal(capped.committed, false)
+  assert.match(capped.error, /stopped after 3/)
+})
+
+test("V-19: the replaced head is archived on disk and never sent to the model", async () => {
+  const compaction = require("../core/agent/compaction")
+  const m = await mock(() => ({ chunks: [...chat.text("## Goal\narchived goal\n\n## Accomplished\narchived work"), ...chat.end()] }))
+  const profile = { id: "p", format: "openai-chat", baseURL: `http://127.0.0.1:${m.port}/v1`, model: "m", noAuth: true, contextLimit: 8000, maxOutput: 1000 }
+  const dir = path.join(tmp(), "sessions")
+  fs.mkdirSync(dir, { recursive: true })
+  const session = {
+    id: "ses_cccccccccccccccc",
+    dir: "C:/tmp",
+    profile: "p",
+    messages: Array.from({ length: 10 }, (_, i) => ({
+      role: i % 2 ? "assistant" : "user",
+      parts: [{ type: "text", text: `archived-${i} ` + "a".repeat(2500) }],
+    })),
+  }
+  const r = await compaction.compact({ session, profile, apiKey: "", reason: "manual", archive: (entry) => compaction.writeArchive(dir, session.id, entry) })
+  m.close()
+  assert.equal(r.committed, true)
+  const archives = compaction.readArchives(dir, session.id)
+  assert.equal(archives.length, 1)
+  assert.ok(archives[0].messages.length >= 1, "the original head is recoverable")
+  assert.match(archives[0].summary, /archived goal/)
+  assert.equal(archives[0].reason, "manual")
+  // archive data lives in a sibling file, never in the history sent to a model
+  assert.ok(!Object.prototype.hasOwnProperty.call(session, "archives"))
+  assert.ok(session.messages.every((msg) => !msg.archive))
+})
+
+test("V-20: a separate summary model writes the checkpoint with its own key", async () => {
+  const compaction = require("../core/agent/compaction")
+  const main = await mock(() => ({ chunks: [...chat.text("session model must not be called"), ...chat.end()] }))
+  const summarizer = await mock(() => ({ chunks: [...chat.text("## Goal\nsummarised by the second model\n\n## Accomplished\ndone"), ...chat.end()] }))
+  const sessionProfile = { id: "main", format: "openai-chat", baseURL: `http://127.0.0.1:${main.port}/v1`, model: "m", noAuth: true, contextLimit: 8000, maxOutput: 1000 }
+  const summaryProfile = { id: "summary-model", format: "openai-chat", baseURL: `http://127.0.0.1:${summarizer.port}/v1`, model: "s", contextLimit: 8000, maxOutput: 1000 }
+  const session = {
+    id: "ses_dddddddddddddddd",
+    dir: "C:/tmp",
+    profile: "main",
+    messages: Array.from({ length: 10 }, (_, i) => ({
+      role: i % 2 ? "assistant" : "user",
+      parts: [{ type: "text", text: `m${i} ` + "b".repeat(2500) }],
+    })),
+  }
+  const r = await compaction.compact({
+    session,
+    profile: sessionProfile,
+    apiKey: "SESSION-KEY",
+    reason: "manual",
+    summaryProfile,
+    summaryApiKey: "SUMMARY-KEY",
+  })
+  main.close()
+  summarizer.close()
+  assert.equal(r.committed, true)
+  assert.equal(main.requests.length, 0, "the session model is not used for the summary")
+  assert.ok(summarizer.requests.length >= 1, "the configured summary model is called")
+  assert.equal(summarizer.requests[0].headers.authorization, "Bearer SUMMARY-KEY")
+  assert.match(r.summary, /second model/)
+  assert.equal(r.summaryModel, "summary-model")
+})
+
+test("V-20: an unknown summary model id falls back to the session model and warns", async () => {
+  const { m, vibe, s, home } = await setup(({ body }) => {
+    if (/checkpoint summar/i.test(body.messages[0].content || "")) {
+      return { chunks: [...chat.text("## Goal\nanswer the user question\n\n## Accomplished\nwork was completed"), ...chat.end()] }
+    }
+    return { chunks: [...chat.text("ok"), ...chat.end()] }
+  })
+  fs.writeFileSync(path.join(home, "config.json"), JSON.stringify({ compaction: { model: "does-not-exist" } }))
+  const session = vibe.engine.getSession(s.id)
+  for (let i = 0; i < 8; i++) {
+    session.messages.push({ role: i % 2 ? "assistant" : "user", parts: [{ type: "text", text: `m${i} ` + "w".repeat(3000) }] })
+  }
+  const r = await vibe.session.compact(s.id)
+  m.close()
+  assert.equal(r.committed, true, "a broken summary id must not stop the checkpoint")
+  assert.match(String(r.warning || ""), /unavailable/i)
+})
+
 // ---------- runner ----------
 let failed = 0
 for (const [name, fn] of tests) {

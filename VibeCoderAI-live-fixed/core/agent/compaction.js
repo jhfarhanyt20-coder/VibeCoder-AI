@@ -9,11 +9,16 @@
  * is false; estimated token counts cannot guarantee provider acceptance.
  */
 
+const fs = require("node:fs")
+const path = require("node:path")
 const llm = require("../llm")
 const { estimateTokens, sleep } = require("../util")
 
 const PRUNED = "[Old tool output cleared to save context]"
+// Kept for compatibility with older configs/tests. config.json's
+// `compaction.maxRuns` (0 = unlimited) replaces the hard cap.
 const MAX_COMPACTIONS = 6
+const MAX_ARCHIVES = 2
 const MESSAGE_OVERHEAD = 4
 const SUMMARY_SYSTEM =
   "You write checkpoint summaries of a coding-agent conversation so that another agent can continue the work without the original messages. Be factual, dense and exact. Never invent details."
@@ -89,32 +94,37 @@ function normalizeProfile(profile) {
   return { ...p, contextLimit, maxOutput }
 }
 
-function limits(profile) {
+/**
+ * Budget for one model request.
+ * `config` is the optional `config.json` -> compaction block. `buffer` overrides
+ * the maxOutput reserve; it is always capped at 25% of the window so a small
+ * context model still has usable input room.
+ */
+function limits(profile, config) {
   const normalized = normalizeProfile(profile)
   const limit = normalized.contextLimit
-  // Keep a minimum generation reserve where possible; never reserve more than
-  // 25% of context so small-context models still have a usable input budget.
-  const desiredReserve = Math.max(2048, normalized.maxOutput)
+  const customBuffer = config && Number(config.buffer) > 0 ? Math.floor(Number(config.buffer)) : 0
+  const desiredReserve = customBuffer > 0 ? customBuffer : Math.max(2048, normalized.maxOutput)
   const reserve = Math.min(desiredReserve, Math.floor(limit * 0.25), limit - 1)
   const usable = Math.max(1, limit - reserve)
   return { limit, reserve, usable, threshold: usable }
 }
 
-function usableForMessages(profile, system, toolSpecs) {
-  const { usable } = limits(profile)
+function usableForMessages(profile, system, toolSpecs, config) {
+  const { usable } = limits(profile, config)
   return Math.max(0, usable - tokenCount(system || "") - tokenCount(safeStringify(toolSpecs || [])))
 }
 
-function needsCompaction({ system, messages, toolSpecs, lastInput, profile }) {
-  const { threshold } = limits(profile)
+function needsCompaction({ system, messages, toolSpecs, lastInput, profile, config }) {
+  const { threshold } = limits(profile, config)
   const measured = Number.isFinite(lastInput) && lastInput > 0 ? lastInput : 0
   return Math.max(requestTokens(system, messages, toolSpecs), measured) >= threshold
 }
 
 /** Clear old tool outputs in a provided message array. Caller decides whether to commit the array. */
-function prune(messages, profile) {
+function prune(messages, profile, config) {
   if (!Array.isArray(messages)) return 0
-  const { limit } = limits(profile)
+  const { limit } = limits(profile, config)
   const protect = Math.min(40000, Math.floor(limit * 0.3))
   const minSave = Math.min(20000, Math.floor(limit * 0.1))
   let seen = 0
@@ -454,28 +464,55 @@ async function generateSummary({ profile, apiKey, signal, head, previousSummary,
   return { summary: fallback, source: "fallback", warning: lastError?.message || (sawInvalid ? "The model did not return a valid structured summary." : "") }
 }
 
-/** Compact a session in place. History is untouched until the summary is ready. */
-async function compact({ session, profile, apiKey, signal, reason = "auto", system = "", toolSpecs = [], targetTokens = 0 }) {
+/**
+ * Compact a session in place. History is untouched until the summary is ready.
+ *
+ * Options beyond the session:
+ *   config          config.json -> compaction block (auto/keep/buffer/maxRuns)
+ *   summaryProfile  optional profile that writes the checkpoint (V-20)
+ *   summaryApiKey   key for that profile
+ *   archive         optional (entry) => void; called with the replaced head (V-19)
+ */
+async function compact({
+  session,
+  profile,
+  apiKey,
+  signal,
+  reason = "auto",
+  system = "",
+  toolSpecs = [],
+  targetTokens = 0,
+  config = null,
+  summaryProfile = null,
+  summaryApiKey = "",
+  archive = null,
+}) {
   if (!session || !Array.isArray(session.messages)) {
     return { before: 0, after: 0, summarized: false, committed: false, fitsBudget: false, reason, error: "Invalid session: messages must be an array." }
   }
 
   const before = requestTokens(system, session.messages, toolSpecs)
   const normalized = normalizeProfile(profile)
-  const { usable } = limits(normalized)
+  const { usable } = limits(normalized, config)
   const budgetLimit = Number.isFinite(targetTokens) && targetTokens > 0
     ? Math.min(usable, Math.max(1, Math.floor(targetTokens)))
     : usable
 
-  if (reason === "auto" && (Number(session.compactions) || 0) >= MAX_COMPACTIONS) {
-    return { before, after: before, summarized: false, committed: false, fitsBudget: before <= budgetLimit, budgetLimit, reason, error: `Automatic compaction stopped after ${MAX_COMPACTIONS} successful compactions; the request may still exceed budget.` }
+  // maxRuns: 0 (the default) means unlimited. A positive value still guards
+  // against a provider that keeps rejecting an already compacted history.
+  const maxRuns = config && Number(config.maxRuns) > 0 ? Math.floor(Number(config.maxRuns)) : 0
+  if (reason === "auto" && maxRuns > 0 && (Number(session.compactions) || 0) >= maxRuns) {
+    return { before, after: before, summarized: false, committed: false, fitsBudget: before <= budgetLimit, budgetLimit, reason, error: `Automatic compaction stopped after ${maxRuns} successful compactions; the request may still exceed budget.` }
   }
 
   // Work on clones. prune() is allowed to shrink the candidate history, but a
   // failed summary must leave the actual session messages byte-for-byte intact.
   const candidateMessages = cloneMessages(session.messages)
-  const prunedTokens = prune(candidateMessages, normalized)
-  const keepTokens = Math.min(20000, Math.floor(budgetLimit * 0.2))
+  const prunedTokens = prune(candidateMessages, normalized, config)
+  const configuredKeep = config && config.keep && Number(config.keep.tokens) > 0 ? Math.floor(Number(config.keep.tokens)) : 0
+  const keepTokens = configuredKeep > 0
+    ? Math.min(configuredKeep, Math.max(1, budgetLimit - 1))
+    : Math.min(20000, Math.floor(budgetLimit * 0.2))
   const cut = pickSafeCut(candidateMessages, keepTokens)
 
   if (cut <= 0) {
@@ -488,11 +525,15 @@ async function compact({ session, profile, apiKey, signal, reason = "auto", syst
     return { before, after: before, summarized: false, committed: false, fitsBudget: before <= budgetLimit, budgetLimit, reason, error: "Cannot compact because a safe split produced an empty head." }
   }
 
+  // V-20: the checkpoint can be written by a separate (usually cheaper/faster)
+  // model. The fallback keeps the session model when the profile is unusable.
+  const summarizer = summaryProfile ? normalizeProfile(summaryProfile) : normalized
+  const summarizerKey = summaryProfile ? summaryApiKey || apiKey : apiKey
   let generated
   try {
     generated = await generateSummary({
-      profile: normalized,
-      apiKey,
+      profile: summarizer,
+      apiKey: summarizerKey,
       signal,
       head,
       previousSummary: session.compactedSummary,
@@ -512,6 +553,23 @@ async function compact({ session, profile, apiKey, signal, reason = "auto", syst
   const after = requestTokens(system, nextMessages, toolSpecs)
   const fitsBudget = after <= budgetLimit
 
+  // V-19: write the replaced head to an archive before it is dropped. A failed
+  // archive write must never block compaction, so it is best-effort.
+  if (typeof archive === "function") {
+    try {
+      archive({
+        at: Date.now(),
+        reason,
+        summary,
+        messages: head,
+        before,
+        after,
+        summarySource: generated.source || "llm",
+        summarizer: summaryProfile ? summaryProfile.id || summaryProfile.model || "custom" : (session.profile || ""),
+      })
+    } catch {}
+  }
+
   // Atomic commit point: no user history mutation occurred before this line.
   session.messages = nextMessages
   session.compactions = (session.compactions || 0) + 1
@@ -530,6 +588,7 @@ async function compact({ session, profile, apiKey, signal, reason = "auto", syst
     summarySource: generated.source || "llm",
     reason,
   }
+  if (summaryProfile) result.summaryModel = summaryProfile.id || summaryProfile.model || "custom"
   if (generated.warning) result.warning = generated.warning
   if (!fitsBudget) {
     result.error = `Checkpoint committed, but the resulting request remains over budget (${after} estimated input tokens; budget ${budgetLimit}). Do not send another model request without recovery.`
@@ -537,8 +596,41 @@ async function compact({ session, profile, apiKey, signal, reason = "auto", syst
   return result
 }
 
+/**
+ * V-19: append a compacted head to <dir>/<sessionId>.archive.json.
+ * The two newest checkpoints are kept on disk; the model never sees this file.
+ */
+function writeArchive(dir, sessionId, entry) {
+  if (!dir || !sessionId) return null
+  const file = path.join(dir, String(sessionId) + ".archive.json")
+  let list = []
+  try {
+    list = JSON.parse(fs.readFileSync(file, "utf8"))
+  } catch {}
+  if (!Array.isArray(list)) list = []
+  list.unshift(entry)
+  const kept = list.slice(0, MAX_ARCHIVES)
+  const tmp = file + "." + process.pid + ".tmp"
+  fs.writeFileSync(tmp, JSON.stringify(kept))
+  fs.renameSync(tmp, file)
+  return { file, count: kept.length }
+}
+
+/** Read the kept archives for a session (newest first). */
+function readArchives(dir, sessionId) {
+  if (!dir || !sessionId) return []
+  try {
+    const list = JSON.parse(fs.readFileSync(path.join(dir, String(sessionId) + ".archive.json"), "utf8"))
+    return Array.isArray(list) ? list : []
+  } catch {
+    return []
+  }
+}
+
 module.exports = {
   compact,
+  writeArchive,
+  readArchives,
   prune,
   needsCompaction,
   requestTokens,

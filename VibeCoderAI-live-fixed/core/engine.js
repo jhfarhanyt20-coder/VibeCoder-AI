@@ -6,6 +6,7 @@ const profiles = require("./llm/profiles")
 const { DEFAULT_RULES, decide } = require("./perm/rules")
 const { runLoop, repairHistory } = require("./agent/loop")
 const compaction = require("./agent/compaction")
+const config = require("./config")
 const { buildSystem } = require("./agent/prompt")
 const tools = require("./tools")
 const jobs = require("./jobs")
@@ -390,6 +391,31 @@ class Engine {
     yield* this._drive(session, profile, apiKey, ctl, opts)
   }
 
+  /**
+   * V-20: resolve the optional dedicated summary profile from config.json.
+   * `profile: null` means "use the session model". A broken profile id must
+   * never stop compaction - it falls back and reports a warning.
+   */
+  _summaryTarget(cfg) {
+    const id = cfg && cfg.model
+    if (!id) return { profile: null, apiKey: "", warning: "" }
+    try {
+      const profile = profiles.getProfile(id, this.home)
+      return { profile, apiKey: profiles.getKey(profile, this.home), warning: "" }
+    } catch (e) {
+      return {
+        profile: null,
+        apiKey: "",
+        warning: `Compaction summary model "${id}" is unavailable (${e.message}); using the session model.`,
+      }
+    }
+  }
+
+  /** V-19: archive callback shared by runLoop and manual compaction. */
+  _archiveFor(session) {
+    return (entry) => compaction.writeArchive(this.store.dir, session.id, entry)
+  }
+
   _begin(id, opts) {
     const ctl = new AbortController()
     if (opts.signal) opts.signal.addEventListener("abort", () => ctl.abort(), { once: true })
@@ -417,6 +443,12 @@ class Engine {
       kick()
     }
 
+    // V-18/V-20: read the compaction block once per run so a config edit takes
+    // effect on the next prompt without restarting the app.
+    const compactionConfig = config.compactionConfig(this.home)
+    const summary = this._summaryTarget(compactionConfig)
+    if (summary.warning) emit({ type: "notice", text: summary.warning })
+
     const done = runLoop({
       session,
       store: this.store,
@@ -432,6 +464,10 @@ class Engine {
       waitExtraTools: (sig) => this._waitMcp(sig || ctl.signal),
       isOrphan: () => !!ctl.orphaned,
       engine: this,
+      compactionConfig,
+      summaryProfile: summary.profile,
+      summaryApiKey: summary.apiKey,
+      summaryWarning: summary.warning,
     })
       .catch((e) => {
         emit({
@@ -611,7 +647,23 @@ class Engine {
       this._emit(id, { type: "compaction.start", reason: "manual" })
       const toolSpecs = tools.specs([...tools.ALL, ...this.extraTools(session.dir)])
       const system = buildSystem({ agentName: this.agentName, cwd: session.dir, extra: this.extraSystem })
-      const r = await compaction.compact({ session, profile, apiKey, signal: opts.signal || ctl.signal, reason: "manual", system, toolSpecs })
+      const compactionConfig = config.compactionConfig(this.home)
+      const summary = this._summaryTarget(compactionConfig)
+      if (summary.warning) this._emit(id, { type: "notice", text: summary.warning })
+      const r = await compaction.compact({
+        session,
+        profile,
+        apiKey,
+        signal: opts.signal || ctl.signal,
+        reason: "manual",
+        system,
+        toolSpecs,
+        config: compactionConfig,
+        summaryProfile: summary.profile,
+        summaryApiKey: summary.apiKey,
+        archive: this._archiveFor(session),
+      })
+      if (summary.warning && r.committed && !r.warning) r.warning = summary.warning
       if (r.committed) this.store.save(session)
       this._emit(id, { type: "compaction.end", reason: "manual", ...r, summary: r.summary || "", text: r.summary || "" })
       return r

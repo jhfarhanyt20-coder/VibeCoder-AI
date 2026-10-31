@@ -135,7 +135,7 @@ function splitCommand(cmd) {
   return out.length ? out : [s.trim()]
 }
 
-async function runLoop({ session, store, profile, apiKey, emit, signal, askPermission, agentName, extraSystem, maxSteps = 100, extraTools = () => [], waitExtraTools = null, isOrphan = () => false, engine = null }) {
+async function runLoop({ session, store, profile, apiKey, emit, signal, askPermission, agentName, extraSystem, maxSteps = 100, extraTools = () => [], waitExtraTools = null, isOrphan = () => false, engine = null, compactionConfig = null, summaryProfile = null, summaryApiKey = "", summaryWarning = "" }) {
   const recent = []
   let emptyRetries = 0 // consecutive empty model replies (retried before we call it an error)
   let overflowRetried = false
@@ -151,7 +151,20 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
     const system = sys()
     let result
     try {
-      result = await compaction.compact({ session, profile, apiKey, signal, reason, system, toolSpecs, targetTokens })
+      result = await compaction.compact({
+        session,
+        profile,
+        apiKey,
+        signal,
+        reason,
+        system,
+        toolSpecs,
+        targetTokens,
+        config: compactionConfig,
+        summaryProfile,
+        summaryApiKey,
+        archive: (entry) => compaction.writeArchive(store.dir, session.id, entry),
+      })
     } catch (error) {
       emit({ type: "compaction.end", reason, summarized: false, committed: false, fitsBudget: false, error: error?.message || String(error) })
       throw error
@@ -159,6 +172,8 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
     // Save a checkpoint only when the compactor actually committed it. A failed
     // compaction must not rewrite otherwise untouched history on disk.
     if (result.committed) store.save(session)
+    // V-20: surface a broken summary-model id without blocking the checkpoint.
+    if (summaryWarning && result.committed && !result.warning) result.warning = summaryWarning
     emit({
       type: "compaction.end",
       ...result,
@@ -197,7 +212,9 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
     const system = sys()
     toolSpecs = tools.specs(allTools())
 
-    if (compaction.needsCompaction({ system, messages: session.messages, toolSpecs, lastInput: session.usage.lastInput, profile })) await doCompact("auto")
+    // V-18: `compaction.auto: false` disables the pre-request checkpoint only.
+    // Explicit /compact and overflow recovery still run.
+    if (compactionConfig?.auto !== false && compaction.needsCompaction({ system, messages: session.messages, toolSpecs, lastInput: session.usage.lastInput, profile, config: compactionConfig })) await doCompact("auto")
 
     // V-06: on the final step we drop the tools and ask the model to write a
     // closing summary in plain text, instead of ending with a silent max_steps.

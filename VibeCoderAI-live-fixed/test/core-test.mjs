@@ -1087,6 +1087,15 @@ test("OpenCode-style compaction summarizes meaningful history even when everythi
   assert.equal(session.messages[1].parts[0].text, "Now verify the exact tools and techniques")
 })
 
+test("compaction prompt preserves user language and evidence uncertainty", () => {
+  const { TEMPLATE } = require("../core/agent/compaction")
+  assert.match(TEMPLATE, /user's primary language/i)
+  assert.match(TEMPLATE, /Never call something a verified root cause/i)
+  assert.match(TEMPLATE, /assistant hypotheses/i)
+  assert.match(TEMPLATE, /failed commands, and conflicting evidence/i)
+  assert.match(TEMPLATE, /Put unresolved verification in Active or Blocked/i)
+})
+
 test("agent blocks follow-up requests when a committed checkpoint still exceeds budget", async () => {
   const m = await mock(({ body }) => {
     const system = String(body.messages?.[0]?.content || "")

@@ -25,7 +25,7 @@ const MESSAGE_OVERHEAD = 4
 // provider cannot leave manual/auto compaction spinning for minutes.
 const SUMMARY_SILENCE_TIMEOUT_MS = 30000
 const SUMMARY_SYSTEM =
-  "You write checkpoint summaries of a coding-agent conversation so that another agent can continue the work without the original messages. Be factual, dense and exact. Never invent details."
+  "You write checkpoint summaries so another agent can continue without the original messages. Be factual, evidence-aware, dense and exact. Never invent details or turn a suspicion into a confirmed finding."
 const TEMPLATE = `Summarize only what the user and assistant said and did. Newer history overrides stale or contradicted information.
 
 Use exactly these sections (omit only sections that truly do not apply):
@@ -56,7 +56,16 @@ Use exactly these sections (omit only sections that truly do not apply):
 ## Important Context
 - Facts the next agent cannot continue without and cannot easily rediscover, including exact URLs, commands, identifiers, and unresolved errors; otherwise "(none)".
 
-Rules: keep sections concise; use terse single-line bullets; preserve only current/unresolved work; do not mention compaction or the summary process; do not continue the task or call tools. Return only the structured summary.`
+Rules:
+- Keep the headings exactly as written, but write their bullet content in the user's primary language.
+- Keep sections concise and use terse single-line bullets.
+- Preserve only current or unresolved work; newer evidence overrides stale claims and completed next steps.
+- Preserve epistemic status exactly: distinguish observed facts, user-reported facts, assistant hypotheses, and unverified possibilities.
+- Never call something a verified root cause, completed diagnosis, successful fix, or confirmed result unless the conversation contains direct conclusive evidence.
+- Put unresolved verification in Active or Blocked, including missing permissions, unavailable logs/dumps, failed commands, and conflicting evidence.
+- Preserve important contradictions (for example, a disk event error alongside a later healthy status) rather than selecting one as certain.
+- Do not mention compaction or the summary process; do not continue the task or call tools.
+- Return only the structured summary.`
 const CHECKPOINT_PREFIX = "[Checkpoint: the earlier part of this conversation was compacted. Continue from this summary.]"
 
 function tokenCount(value) {

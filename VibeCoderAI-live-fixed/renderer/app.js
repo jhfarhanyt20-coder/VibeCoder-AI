@@ -1275,13 +1275,21 @@ function toolFiles(state, input = {}) {
     const out = []
     for (const [k, v] of Object.entries(md)) {
       if (v && typeof v === "object" && (v.patch || v.additions !== undefined)) {
-        out.push({ file: k, patch: v.patch, additions: v.additions, deletions: v.deletions })
+        out.push({ file: k, patch: v.patch, additions: v.additions, deletions: v.deletions, hunks: v.hunks, oldLines: v.oldLines, newLines: v.newLines })
       }
     }
     if (out.length) return out
   }
   const p = input.path ?? input.filePath
-  if (p) return [{ file: p, patch: state?.metadata?.patch ?? input.patch }]
+  if (p) return [{
+    file: p,
+    patch: state?.metadata?.patch ?? input.patch,
+    additions: state?.metadata?.additions,
+    deletions: state?.metadata?.deletions,
+    hunks: state?.metadata?.hunks,
+    oldLines: state?.metadata?.oldLines,
+    newLines: state?.metadata?.newLines,
+  }]
   return []
 }
 
@@ -1313,6 +1321,40 @@ function fileBadge(file) {
   const ext = name.split(".").pop().toLowerCase()
   const b = FILE_BADGES[ext] || { t: (ext || "?").slice(0, 2).toUpperCase(), c: "var(--code-gray)" }
   return b
+}
+
+function appendDiffLine(container, line = {}) {
+  const type = line.type === "add" || line.type === "del" || line.type === "meta" ? line.type : "context"
+  const row = document.createElement("div")
+  row.className = `dl ${type === "context" ? "" : type}`.trim()
+  const oldNo = document.createElement("span")
+  oldNo.className = "dl-no old"
+  oldNo.textContent = line.oldLine == null ? "" : String(line.oldLine)
+  const newNo = document.createElement("span")
+  newNo.className = "dl-no new"
+  newNo.textContent = line.newLine == null ? "" : String(line.newLine)
+  const mark = document.createElement("span")
+  mark.className = "dl-mark"
+  mark.textContent = type === "add" ? "+" : type === "del" ? "−" : type === "meta" ? "…" : ""
+  const code = document.createElement("span")
+  code.className = "dl-code"
+  code.textContent = String(line.text ?? "") || " "
+  row.append(oldNo, newNo, mark, code)
+  container.appendChild(row)
+}
+
+function appendStructuredDiff(container, file) {
+  const hunks = Array.isArray(file.hunks) ? file.hunks : []
+  let previousOldEnd = 0
+  for (const hunk of hunks) {
+    const oldStart = Number(hunk.oldStart) || 1
+    const omitted = Math.max(0, oldStart - previousOldEnd - 1)
+    if (omitted) appendDiffLine(container, { type: "meta", text: `${omitted} unchanged line${omitted === 1 ? "" : "s"}` })
+    for (const line of Array.isArray(hunk.lines) ? hunk.lines : []) appendDiffLine(container, line)
+    previousOldEnd = Math.max(previousOldEnd, oldStart + Math.max(0, Number(hunk.oldCount) || 0) - 1)
+  }
+  const trailing = Math.max(0, (Number(file.oldLines) || 0) - previousOldEnd)
+  if (trailing) appendDiffLine(container, { type: "meta", text: `${trailing} unchanged line${trailing === 1 ? "" : "s"}` })
 }
 
 function fileRowEl(f, input = {}, toolName = "") {
@@ -1347,14 +1389,14 @@ function fileRowEl(f, input = {}, toolName = "") {
 
   const pre = row.querySelector(".fr-diff")
   const patch = String(f.patch ?? "")
-  if (patch) {
+  if (Array.isArray(f.hunks) && f.hunks.length) {
+    appendStructuredDiff(pre, f)
+  } else if (patch) {
     for (const line of patch.split(/\r?\n/)) {
-      const d = document.createElement("div")
-      if (line.startsWith("+") && !line.startsWith("+++")) d.className = "dl add"
-      else if (line.startsWith("-") && !line.startsWith("---")) d.className = "dl del"
-      else d.className = "dl"
-      d.textContent = line || " "
-      pre.appendChild(d)
+      if (line.startsWith("@@")) appendDiffLine(pre, { type: "meta", text: line })
+      else if (line.startsWith("+") && !line.startsWith("+++")) appendDiffLine(pre, { type: "add", text: line.slice(1) })
+      else if (line.startsWith("-") && !line.startsWith("---")) appendDiffLine(pre, { type: "del", text: line.slice(1) })
+      else appendDiffLine(pre, { type: "context", text: line.startsWith(" ") ? line.slice(1) : line })
     }
   } else {
     row.querySelector(".fr-expand").hidden = true

@@ -45,5 +45,8 @@ assert.match(backend, /delete data\.type/)
 assert.match(renderer, /Waiting for \$\{data\.summaryModel \|\| "the summary model"\} to write the checkpoint summary/)
 assert.match(renderer, /type === "session\.compaction\.delta"/)
 assert.match(renderer, /window\.renderMarkdown\(text\)/)
+assert.match(renderer, /function appendStructuredDiff\(container, file\)/)
+assert.match(renderer, /line\.oldLine/)
+assert.match(renderer, /line\.newLine/)
 
 console.log("PASS compaction UI regression: failure handling, persisted controls, live summary progress, and checkpoint rendering are wired end-to-end")

@@ -66,7 +66,14 @@ function convertMessages(session) {
                 ? [{ type: "image", mime: String(res.screenshot.mime || "image/png"), dataUrl: `data:${String(res.screenshot.mime || "image/png")};base64,${res.screenshot.data}`, url: String(res.screenshot.url || ""), title: String(res.screenshot.title || ""), tabID: String(res.screenshot.tabID || "") }]
                 : []),
             ] : [],
-            ...(stats ? { metadata: { [stats.file || (p.args && p.args.path) || "file"]: { patch: stats.patch, additions: stats.additions, deletions: stats.deletions } } } : {}),
+            ...(stats ? { metadata: { [stats.file || (p.args && p.args.path) || "file"]: {
+              patch: stats.patch,
+              additions: stats.additions,
+              deletions: stats.deletions,
+              hunks: stats.hunks,
+              oldLines: stats.oldLines,
+              newLines: stats.newLines,
+            } } } : {}),
           },
         })
       }

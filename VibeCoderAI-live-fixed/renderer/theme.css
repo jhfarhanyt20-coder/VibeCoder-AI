@@ -1881,15 +1881,27 @@ body {
   border-radius: 8px;
   font-family: Consolas, monospace;
   font-size: calc(11.5px * var(--fs-scale, 1));
-  white-space: pre-wrap;
-  word-break: break-word;
+  white-space: normal;
+  word-break: normal;
   max-height: 340px;
   overflow: auto;
 }
 .file-row.open .fr-diff { display: block; }
-.fr-diff .dl { color: var(--muted); padding: 0 4px; border-radius: 3px; }
+.fr-diff .dl {
+  display: grid; grid-template-columns: 42px 42px 18px minmax(0, 1fr);
+  min-height: 19px; color: var(--muted); border-radius: 2px;
+}
+.fr-diff .dl-no {
+  padding: 0 7px 0 3px; color: color-mix(in srgb, var(--muted) 72%, transparent);
+  text-align: right; user-select: none; border-right: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+.fr-diff .dl-mark { text-align: center; user-select: none; }
+.fr-diff .dl-code { min-width: 0; padding: 0 5px; white-space: pre; overflow: visible; }
 .fr-diff .dl.add { color: var(--ok-soft); background: var(--ok-weak); }
 .fr-diff .dl.del { color: var(--danger-soft); background: var(--danger-soft-bg); }
+.fr-diff .dl.meta { color: var(--muted); background: color-mix(in srgb, var(--panel-2) 72%, transparent); font-style: italic; }
+.fr-diff .dl.meta .dl-no { border-right-color: transparent; }
 
 /* file tools show only their cards (tool name lives in the group header) */
 .act.file-tool { border: 0; background: none; margin: 0; overflow: visible; }

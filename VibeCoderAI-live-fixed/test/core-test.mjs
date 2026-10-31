@@ -422,11 +422,37 @@ test("write/edit report real +N/-M diff stats for the tool cards", async () => {
   assert.equal(ends[1].stats.additions, 2)
   assert.equal(ends[1].stats.deletions, 1)
   assert.match(ends[1].stats.patch, /^\+B1$/m)
+  assert.ok(Array.isArray(ends[1].stats.hunks) && ends[1].stats.hunks.length === 1)
+  assert.ok(ends[1].stats.hunks[0].lines.some((line) => line.type === "del" && line.oldLine === 2))
+  assert.ok(ends[1].stats.hunks[0].lines.some((line) => line.type === "add" && line.newLine === 2))
   assert.ok(ends[1].stats.file.endsWith("x.txt"))
   // stats persist on the tool_result part -> the +N/-M card survives a reload
   const saved = vibe.engine.getSession(s.id)
   const results = saved.messages.flatMap((msg) => msg.parts.filter((p) => p.type === "tool_result"))
   assert.equal(results[1].stats.additions, 2)
+  const { convertMessages } = require("../electron/messages.cjs")
+  const uiTool = convertMessages(saved).flatMap((message) => message.content || []).find((part) => part.type === "tool" && part.id === "w2")
+  const persistedDiff = Object.values(uiTool.state.metadata)[0]
+  assert.ok(Array.isArray(persistedDiff.hunks) && persistedDiff.hunks[0].lines.some((line) => line.oldLine === 2), "numbered hunks survive session reload")
+})
+
+test("edit diff aligns unchanged lines and creates separate numbered hunks", () => {
+  const { diffStats } = require("../core/tools/fsutil")
+  const before = Array.from({ length: 100 }, (_, i) => `line ${i + 1}`).join("\n")
+  const after = before.replace("line 20", "LINE TWENTY").replace("line 80", "LINE EIGHTY")
+  const stats = diffStats(before, after)
+  assert.equal(stats.additions, 2)
+  assert.equal(stats.deletions, 2)
+  assert.equal(stats.hunks.length, 2, "far-apart edits should not become one giant red/green block")
+  assert.deepEqual(
+    stats.hunks.map((hunk) => hunk.lines.filter((line) => line.type !== "equal").map((line) => [line.type, line.oldLine, line.newLine, line.text])),
+    [
+      [["del", 20, null, "line 20"], ["add", null, 20, "LINE TWENTY"]],
+      [["del", 80, null, "line 80"], ["add", null, 80, "LINE EIGHTY"]],
+    ],
+  )
+  assert.match(stats.patch, /@@ -17,7 \+17,7 @@/)
+  assert.match(stats.patch, /@@ -77,7 \+77,7 @@/)
 })
 
 test("tool aliases: 'shell' / 'write_file' run the real tools (no Unknown-tool storm)", async () => {

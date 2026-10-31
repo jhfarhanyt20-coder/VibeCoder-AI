@@ -1544,6 +1544,63 @@ test("V-20: an unknown summary model id falls back to the session model and warn
   assert.match(String(r.warning || ""), /unavailable/i)
 })
 
+test("V-08: new-style permission rules decide exactly like the old shape", () => {
+  const { decide, normalizeRule, normalizeRules } = require("../core/perm/rules")
+  const oldRules = [
+    { tool: "*", pattern: "*", action: "ask" },
+    { tool: "read", pattern: "*", action: "allow" },
+    { tool: "edit", pattern: "**", action: "deny" },
+    { tool: "edit", pattern: "src/**", action: "allow" },
+  ]
+  const newRules = [
+    { action: "*", resource: "*", effect: "ask" },
+    { action: "read", resource: "*", effect: "allow" },
+    { action: "edit", resource: "**", effect: "deny" },
+    { action: "edit", resource: "src/**", effect: "allow" },
+  ]
+  const cases = [
+    ["read", "C:/a/b.txt"],
+    ["edit", "C:/x/y.js"],
+    ["edit", "C:/repo/src/a.js"],
+    ["bash", "ls"],
+  ]
+  for (const [tool, subject] of cases) {
+    assert.equal(decide(newRules, tool, subject), decide(oldRules, tool, subject), `${tool} ${subject}`)
+  }
+  assert.deepEqual(normalizeRule({ action: "edit", resource: "src/**", effect: "deny" }), { tool: "edit", pattern: "src/**", action: "deny" })
+  assert.equal(normalizeRules([{ tool: "read", pattern: "*", action: "allow" }])[0].tool, "read")
+})
+
+test("V-08: a bash pattern ending in ' *' also matches the bare command", () => {
+  const { decide } = require("../core/perm/rules")
+  const rules = [{ tool: "bash", pattern: "git *", action: "allow" }]
+  assert.equal(decide(rules, "bash", "git"), "allow", "bare command matches")
+  assert.equal(decide(rules, "bash", "git status"), "allow")
+  assert.equal(decide(rules, "bash", "gitx status"), "ask")
+})
+
+test("V-08: grep rules match the search pattern, not a path", () => {
+  const { decide } = require("../core/perm/rules")
+  const rules = [{ tool: "grep", pattern: "TODO", action: "deny" }]
+  assert.equal(decide(rules, "grep", "TODO"), "deny")
+  assert.equal(decide(rules, "grep", "src/a.js"), "ask")
+})
+
+test("V-08: rules.json written in the new shape is loaded by the engine", () => {
+  const home = tmp()
+  fs.writeFileSync(
+    path.join(home, "rules.json"),
+    JSON.stringify([
+      { action: "bash", resource: "*npm install*", effect: "deny" },
+      { action: "read", resource: "*", effect: "allow" },
+    ]),
+  )
+  const vibe = createVibe({ home, permission: "ask" })
+  const ask = vibe.engine._ask({ rules: [] }, new AbortController().signal, () => {})
+  assert.equal(ask({ tool: "bash", subject: "npm install left-pad" }), false)
+  assert.equal(ask({ tool: "read", subject: "C:/x" }), true)
+})
+
 // ---------- runner ----------
 let failed = 0
 for (const [name, fn] of tests) {

@@ -64,6 +64,41 @@ const DEFAULT_RULES = [
   { tool: "bash", pattern: "*irm *|*iex*", action: "deny" },
 ]
 
+/**
+ * V-08: two authoring shapes are accepted.
+ *   old: { tool, pattern, action: "allow"|"ask"|"deny" }
+ *   new: { action, resource, effect }   (OpenCode style - `action` is the tool)
+ * normalizeRule() converts either one to the engine shape, so decide() and the
+ * session approval writer only ever deal with {tool, pattern, action}.
+ */
+const ACTIONS = new Set(["allow", "ask", "deny"])
+const actionOf = (value) => {
+  const a = String(value == null ? "" : value).trim().toLowerCase()
+  return ACTIONS.has(a) ? a : "ask"
+}
+
+function normalizeRule(rule) {
+  const r = rule && typeof rule === "object" ? rule : {}
+  const hasEngineShape = typeof r.tool === "string" && typeof r.action === "string" && ACTIONS.has(String(r.action).toLowerCase())
+  if (hasEngineShape) {
+    return {
+      ...r,
+      tool: r.tool,
+      pattern: String(r.pattern == null ? "*" : r.pattern),
+      action: actionOf(r.action),
+      ...(r.exact ? { exact: true } : {}),
+    }
+  }
+  return {
+    tool: String(r.tool || r.action || "*"),
+    pattern: String(r.pattern || r.resource || "*"),
+    action: actionOf(r.effect || r.permission),
+    ...(r.exact ? { exact: true } : {}),
+  }
+}
+
+const normalizeRules = (list) => (Array.isArray(list) ? list.map(normalizeRule) : [])
+
 const cache = new Map()
 const re = (p) => {
   let r = cache.get(p)
@@ -81,13 +116,22 @@ const reLoose = (p) => {
 function decide(rules, tool, subject) {
   const s = toPosix(subject == null ? "" : subject)
   let action = "ask"
-  for (const r of rules) {
+  for (const raw of Array.isArray(rules) ? rules : []) {
+    // Fast path: rules loaded by the engine are already normalized. Anything
+    // still carrying the new shape is normalized here so both work everywhere.
+    const r = raw && typeof raw.tool === "string" && ACTIONS.has(String(raw.action || "").toLowerCase()) ? raw : normalizeRule(raw)
     if (r.tool !== "*" && r.tool !== tool) continue
     const matcher = r.tool === "bash" ? reLoose : re
-    const hit = r.exact ? s === toPosix(r.pattern) : r.pattern === "*" || matcher(r.pattern).test(s)
+    let hit = r.exact ? s === toPosix(r.pattern) : r.pattern === "*" || matcher(r.pattern).test(s)
+    // OpenCode's "git *" also matches the bare "git" command.
+    if (!hit && r.tool === "bash" && typeof r.pattern === "string" && r.pattern.endsWith(" *")) {
+      hit = s === toPosix(r.pattern.slice(0, -2).trim())
+    }
+    // Note: for `grep` the subject is the search pattern, not a file path, so a
+    // rule like {tool:"grep", pattern:"TODO"} guards the text being searched.
     if (hit) action = r.action
   }
   return action
 }
 
-module.exports = { DEFAULT_RULES, decide }
+module.exports = { DEFAULT_RULES, decide, normalizeRule, normalizeRules }

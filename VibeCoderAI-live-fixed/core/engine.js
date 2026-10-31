@@ -3,7 +3,7 @@ const fs = require("fs")
 const path = require("path")
 const { SessionStore } = require("./store/sessions")
 const profiles = require("./llm/profiles")
-const { DEFAULT_RULES, decide } = require("./perm/rules")
+const { DEFAULT_RULES, decide, normalizeRules } = require("./perm/rules")
 const { runLoop, repairHistory } = require("./agent/loop")
 const compaction = require("./agent/compaction")
 const agents = require("./agents")
@@ -31,7 +31,8 @@ class Engine {
     try {
       user = JSON.parse(fs.readFileSync(path.join(this.home, "rules.json"), "utf8"))
     } catch {}
-    this.rules = [...DEFAULT_RULES, ...(Array.isArray(user) ? user : []), ...(opts.rules || [])]
+    // V-08: normalize both rule shapes at load time; last match still wins.
+    this.rules = [...DEFAULT_RULES, ...normalizeRules(user), ...normalizeRules(opts.rules)]
     // async, ONE background PowerShell call total: upgrades pre-encryption
     // auth.json and warms the key cache - the UI hot path never spawns.
     profiles.migrateAuthKeys(this.home)

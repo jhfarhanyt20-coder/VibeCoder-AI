@@ -456,7 +456,7 @@ verify-and-build.bat
 | V-04 | `browser.evaluate` never persists | P0 | ✅ | neverPersist flag; read/write still persist "always" |
 | V-05 | Close shell permission hole | P0 | ✅ | npm run/make/mvn/gradle no longer auto-allowed; per-segment split; hard denies; fixed `*`-crosses-`/` matcher for bash |
 | V-06 | Last-step summarisation | P0 | ✅ | final step drops tools, asks for closing summary, done.summarized |
-| V-07 | Agent definition loader | P1 | ⬜ | |
+| V-07 | Agent definition loader | P1 | ✅ | `core/agents/index.js`: global + project `.vibe/agents/*.md`, nested ids, frontmatter, builtins build/plan/explore/general, model/steps/permissions applied, `engine.agents.list/get` |
 | V-08 | Permission rule shape upgrade | P1 | ⬜ | |
 | V-09 | `browser.wait` + navigate readiness | P1 | ⬜ | |
 | V-10 | `question` tool | P1 | ⬜ | |
@@ -491,6 +491,7 @@ verify-and-build.bat
 
 | Date | Task | Agent | Summary |
 |---|---|---|---|
+| 2026-10-31 | V-07 | assistant | New `core/agents/index.js` (built on the skills frontmatter parser): discovers `~/.vibe/agents/*.md` and `<dir>/.vibe/agents/*.md`, nested folders become ids, project overrides global, builtins build/plan/explore/general. `engine.agents.list/get`, `createSession({agent})`, agent `model`/`steps`/`permissions` applied in the run; agent rules outrank stored approvals. New `test/agents-test.mjs` (10 tests). Tests: 74 core + 10 agents + 6 skills + Electron + compaction UI green. |
 | 2026-10-31 | V-18/19/20 | assistant | Compaction parity: new `core/config.js` (`~/.vibe/config.json` compaction block), `keep.tokens`/`buffer`/`maxRuns` (0 = unlimited, old 6-cap removed), the replaced head is archived to `<session>.archive.json` (newest 2, never sent to a model), and `compaction.model` can name a separate summary profile (falls back with a warning). Auto-compact toggle and "Compact now" already exist in the context menu. Tests: 74 core + 6 skills + Electron + compaction UI green. |
 | 2026-10-30 | V-03 | assistant | Browser element refs moved to the main process with generation stamps; snapshot bumps generation, click/fill reject a stale generation with a guided error, and page lookup uses `[data-vibe-ref]` instead of the `window.__vibeElementRefs` global. Tests: 69 core + smoke green. |
 | 2026-10-30 | V-06 | assistant | On the final step the loop drops tools and asks the model for a closing summary in text; `done` gains `summarized:true`. Tests: 69 core green. |

@@ -6,6 +6,7 @@ const profiles = require("./llm/profiles")
 const { DEFAULT_RULES, decide } = require("./perm/rules")
 const { runLoop, repairHistory } = require("./agent/loop")
 const compaction = require("./agent/compaction")
+const agents = require("./agents")
 const config = require("./config")
 const { buildSystem } = require("./agent/prompt")
 const tools = require("./tools")
@@ -41,6 +42,11 @@ class Engine {
     this._mcpSync = null // in-flight connect promise (dedupe)
     this.subagents = new SubAgentManager(this)
     this.subagentsEnabled = opts.subagentsEnabled !== false // on by default
+    // V-07 convenience API: engine.agents.list(dir) / engine.agents.get(id, dir)
+    this.agents = {
+      list: (dir, listOpts) => this.listAgents(dir, listOpts),
+      get: (id, dir) => this.getAgent(id, dir),
+    }
   }
 
   subagentTool() {
@@ -137,10 +143,25 @@ class Engine {
     profiles.setKey(id, key, this.home)
   }
 
+  // ---- agents (V-07) ----
+  listAgents(dir, { includeHidden = false } = {}) {
+    return agents.listAgents({ home: this.home, dir }).filter((agent) => includeHidden || !agent.hidden)
+  }
+  getAgent(id, dir) {
+    return agents.getAgent(id, { home: this.home, dir })
+  }
+
   // ---- sessions ----
-  createSession({ dir, profile, title } = {}) {
+  createSession({ dir, profile, title, agent } = {}) {
     profiles.getProfile(profile, this.home)
-    return this.store.create({ dir, profile, title })
+    const session = this.store.create({ dir, profile, title })
+    if (agent) {
+      const found = this.getAgent(agent, session.dir)
+      if (!found) throw new Error(`Unknown agent "${agent}". Add <dir>/.vibe/agents/${agent}.md or ${this.home}/agents/${agent}.md`)
+      session.agent = found.id
+      this.store.save(session)
+    }
+    return session
   }
   listSessions(q) {
     return this.store.list(q)
@@ -192,12 +213,14 @@ class Engine {
    * rules are matched against engine rules + inherited rules + own rules, while
    * a new "always" approval is still stored on `session` (the run that asked).
    */
-  _ask(session, signal, emit, inherits = null) {
+  _ask(session, signal, emit, inherits = null, agentRules = []) {
     return (perm) => {
       const tool = String(perm?.tool ?? "")
       const subject = perm?.subject == null ? "" : perm.subject
       const neverPersist = !!perm?.neverPersist
-      const action = decide([...this.rules, ...(inherits?.rules || []), ...session.rules], tool, subject)
+      // V-07: an agent definition's rules sit last, so a "deny" in a read-only
+      // agent cannot be overridden by an older "always allow" approval.
+      const action = decide([...this.rules, ...(inherits?.rules || []), ...session.rules, ...(Array.isArray(agentRules) ? agentRules : [])], tool, subject)
       if (action === "allow") return true
       if (action === "deny") return false
       if (this.permissionMode === "allow") return true
@@ -449,17 +472,33 @@ class Engine {
     const summary = this._summaryTarget(compactionConfig)
     if (summary.warning) emit({ type: "notice", text: summary.warning })
 
+    // V-07: resolve the session's agent definition (prompt, steps, permissions,
+    // optional model override). A missing definition falls back to the default.
+    const agent = session.agent ? this.getAgent(session.agent, session.dir) : null
+    if (session.agent && !agent) emit({ type: "notice", text: `Agent "${session.agent}" is no longer installed; using the default agent.` })
+    let runProfile = profile
+    let runApiKey = apiKey
+    if (agent?.model) {
+      try {
+        runProfile = profiles.getProfile(agent.model, this.home)
+        runApiKey = profiles.getKey(runProfile, this.home)
+      } catch (e) {
+        emit({ type: "notice", text: `Agent model "${agent.model}" is unavailable (${e.message}); using ${session.profile}.` })
+      }
+    }
+
     const done = runLoop({
       session,
       store: this.store,
-      profile,
-      apiKey,
+      profile: runProfile,
+      apiKey: runApiKey,
       emit,
       signal: ctl.signal,
-      askPermission: this._ask(session, ctl.signal, emit),
+      askPermission: this._ask(session, ctl.signal, emit, null, agent?.rules || []),
       agentName: this.agentName,
+      agent,
       extraSystem: this.extraSystem,
-      maxSteps: opts.maxSteps,
+      maxSteps: opts.maxSteps || agent?.steps || undefined,
       extraTools: () => this.extraTools(session.dir),
       waitExtraTools: (sig) => this._waitMcp(sig || ctl.signal),
       isOrphan: () => !!ctl.orphaned,

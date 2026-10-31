@@ -135,7 +135,10 @@ function splitCommand(cmd) {
   return out.length ? out : [s.trim()]
 }
 
-async function runLoop({ session, store, profile, apiKey, emit, signal, askPermission, agentName, extraSystem, maxSteps = 100, extraTools = () => [], waitExtraTools = null, isOrphan = () => false, engine = null, compactionConfig = null, summaryProfile = null, summaryApiKey = "", summaryWarning = "" }) {
+async function runLoop({ session, store, profile, apiKey, emit, signal, askPermission, agentName, agent = null, extraSystem, maxSteps = 100, extraTools = () => [], waitExtraTools = null, isOrphan = () => false, engine = null, compactionConfig = null, summaryProfile = null, summaryApiKey = "", summaryWarning = "" }) {
+  // V-07: an agent definition can cap the run. An explicit maxSteps wins.
+  if (agent && Number(agent.steps) > 0 && maxSteps === 100) maxSteps = Math.floor(Number(agent.steps))
+  const agentSystem = agent && typeof agent.system === "string" ? agent.system.trim() : ""
   const recent = []
   let emptyRetries = 0 // consecutive empty model replies (retried before we call it an error)
   let overflowRetried = false
@@ -144,7 +147,7 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
   let toolSpecs = tools.specs(allTools())
   const resolve = (name) => allTools().find((t) => t.name === name) || allTools().find((t) => t.name === TOOL_ALIASES[String(name || "").toLowerCase()])
   const skillText = skills.systemText(session.dir)
-  const sys = () => buildSystem({ agentName, cwd: session.dir, extra: [extraSystem, skillText].filter(Boolean).join("\n\n") })
+  const sys = () => buildSystem({ agentName, cwd: session.dir, extra: [agentSystem, extraSystem, skillText].filter(Boolean).join("\n\n") })
 
   const doCompact = async (reason, targetTokens = 0) => {
     emit({ type: "compaction.start", reason })

@@ -13,7 +13,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node test/core-test.mjs && node test/skills-test.mjs && node test/electron-backend-smoke.cjs && node test/compaction-ui-regression.mjs",
+    "test": "node test/core-test.mjs && node test/agents-test.mjs && node test/skills-test.mjs && node test/electron-backend-smoke.cjs && node test/compaction-ui-regression.mjs",
     "serve": "node cli/vibe.js serve",
     "app": "electron electron/main.cjs",
     "dev": "electron electron/main.cjs --dev",

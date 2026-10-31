@@ -1065,7 +1065,12 @@ body {
   margin: 10px 16px 0; padding: 9px 12px; border: 1px solid var(--border);
   border-radius: 10px; background: var(--panel-2); color: var(--text);
 }
-.subagent-back { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 4px 7px; border-radius: 6px; font: inherit; }
+.subagent-back {
+  position: absolute; right: calc(100% + 12px); bottom: 11px;
+  border: 1px solid var(--border); background: var(--panel-2); color: var(--muted);
+  cursor: pointer; padding: 7px 10px; border-radius: 8px; font: inherit;
+  white-space: nowrap; box-shadow: 0 8px 22px var(--shadow);
+}
 .subagent-back:hover { background: var(--hover); color: var(--text); }
 .subagent-view-ic { font-size: 16px; }
 .subagent-view-copy { display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 1px; }
@@ -1077,7 +1082,7 @@ body {
 .subagent-view-status.error { color: var(--danger); }
 .subagent-stop { padding: 4px 9px; font-size: 11px; }
 .subagent-composer {
-  flex: 0 0 auto; display: flex; align-items: flex-end; gap: 8px;
+  position: relative; flex: 0 0 auto; display: flex; align-items: flex-end; gap: 8px;
   margin: 0 auto 14px; width: min(760px, calc(100% - 32px)); padding: 9px;
   border: 1px solid var(--border); border-radius: 12px; background: var(--panel);
 }
@@ -1092,6 +1097,9 @@ body {
 .act.subagent-tool.failed .act-state { color: var(--danger); }
 .subagent-settings-row { cursor: pointer; }
 .subagent-settings-row:hover { background: var(--hover); }
+@media (max-width: 980px) {
+  .subagent-back { right: auto; left: 0; bottom: calc(100% + 8px); }
+}
 
 .msg {
   display: flex;

@@ -1443,12 +1443,15 @@ function toolCardEl(name, input = {}, output = "") {
   return row
 }
 
-function subagentMeta(state = {}, input = {}) {
+function subagentMeta(state = {}, input = {}, toolCallId = "") {
   const md = state?.metadata && typeof state.metadata === "object" ? state.metadata : {}
   const output = (Array.isArray(state?.content) ? state.content : []).filter((item) => item?.type === "text").map((item) => item.text || "").join("\n")
   const legacyId = /\b(?:id|sessionID):\s*(subagent_[0-9a-f]+)\b/i.exec(output)?.[1] || ""
-  const subagentId = md.subagentId || legacyId
-  const known = subagentId && typeof subAgentsById !== "undefined" ? subAgentsById.get(subagentId) : null
+  const knownByCall = toolCallId && typeof subAgentsById !== "undefined"
+    ? [...subAgentsById.values()].find((agent) => agent.parentToolCallId === toolCallId)
+    : null
+  const subagentId = md.subagentId || legacyId || knownByCall?.id || ""
+  const known = (subagentId && typeof subAgentsById !== "undefined" ? subAgentsById.get(subagentId) : null) || knownByCall
   return {
     id: subagentId,
     sessionID: known?.childSessionId || md.subagentSessionId || "",
@@ -1487,7 +1490,7 @@ function syncSubagentCard(el, info) {
   }
 }
 
-function renderToolDetails(el, name, input = {}, state = {}) {
+function renderToolDetails(el, name, input = {}, state = {}, toolCallId = "") {
   // subtitle (file path / command)
   const sub = toolSubtitle(name, input)
   if (sub) el.querySelector(".act-sub").textContent = sub
@@ -1497,7 +1500,7 @@ function renderToolDetails(el, name, input = {}, state = {}) {
   const out = el.querySelector(".act-out")
 
   if (name === "subagent" || name === "task") {
-    syncSubagentCard(el, subagentMeta(state, input))
+    syncSubagentCard(el, subagentMeta(state, input, toolCallId))
     return
   }
 
@@ -1606,11 +1609,11 @@ function toolRow(part) {
   const input = st.input ?? {}
   const name = part.name || "tool"
   const el = toolAct(key, name, input)
-  renderToolDetails(el, name, input, st)
+  renderToolDetails(el, name, input, st, part.id)
   if (st.status === "error" || st.status === "failed") actDone(key, false)
   else if (st.status === "completed" || st.status === "success") actDone(key, true)
   else el.classList.add("running")
-  if (name === "subagent" || name === "task") syncSubagentCard(el, subagentMeta(st, input))
+  if (name === "subagent" || name === "task") syncSubagentCard(el, subagentMeta(st, input, part.id))
   return el
 }
 
@@ -1619,7 +1622,7 @@ function toolGroupEl(tools) {
   const wrap = document.createElement("div")
   wrap.className = "used-group"
   const names = tools.map((t) => {
-    if (t.part.name === "subagent" || t.part.name === "task") return subagentMeta(t.part.state, t.part.state?.input).name
+    if (t.part.name === "subagent" || t.part.name === "task") return subagentMeta(t.part.state, t.part.state?.input, t.part.id).name
     return toolRowLabel(t.part.name)
   })
   const head = document.createElement("div")
@@ -3135,6 +3138,15 @@ vibe.onEvent(async (event) => {
   }
   if (type === "session.execution.started") {
     if (sid !== state.activeSessionID) return
+    setRunning(true)
+    if (data.source === "subagent-result" && !state.subagentView) {
+      state.userStopped = false
+      state.interruptReason = null
+      state.lastRealError = null
+      const pending = addMsg("assistant", "Using the completed subagent result…", "thinking")
+      state.pendingBubble = pending
+      state.liveTextEl = pending
+    }
   }
   if (type === "session.execution.failed" || type === "session.execution.interrupted") {
     if (sid !== state.activeSessionID) return
@@ -3144,6 +3156,12 @@ vibe.onEvent(async (event) => {
     typingFlush()
     setRunning(false)
     hideBranchChip()
+    if (type === "session.execution.failed" && data.source === "subagent-result") {
+      const msg = realErrorText(data.error) || "The main agent could not report the completed subagent result."
+      showRunFailureInline(msg, lastAssistantBubble())
+      notifyAgent("Could not report subagent result", msg)
+      return
+    }
     if (type === "session.execution.failed" && (state.compactionBlockedRun || isTerminalCompactionError(data.error) || (data.retryable === false && /compaction|context window|over budget/i.test(String(data.error?.message || data.error || ""))))) {
       // The checkpoint card is the sole UI for this terminal failure. Do not
       // duplicate it as an assistant bubble or start another model retry.
@@ -3298,7 +3316,7 @@ vibe.onEvent(async (event) => {
     }
     toolArgs.set(key, { name, input })
     const el = toolAct(key, name, input)
-    renderToolDetails(el, name, input, { metadata: data.metadata })
+    renderToolDetails(el, name, input, { metadata: data.metadata }, data.id)
     if (name === "todowrite" && Array.isArray(input?.todos)) {
       // remember the agent's plan -> tells us if work is still open
       autoCont.todos = input.todos
@@ -3332,7 +3350,7 @@ vibe.onEvent(async (event) => {
       renderToolDetails(el, info.name, info.input, {
         content: data.content,
         metadata: data.metadata,
-      })
+      }, data.id)
     }
     // keep the finished tool visible in the status line until the next one
   }

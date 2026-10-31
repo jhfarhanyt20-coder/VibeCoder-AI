@@ -4,6 +4,7 @@
 // native Electron shell is substituted; SDK/core modules are the real project code.
 const assert = require("node:assert/strict")
 const fs = require("node:fs")
+const http = require("node:http")
 const os = require("node:os")
 const path = require("node:path")
 const EventEmitter = require("node:events")
@@ -173,6 +174,41 @@ async function main() {
   const toggleBefore = await invoke("subagentToggle", {})
   const toggleAgain = await invoke("subagentToggle", {})
   assert.equal(toggleAgain.enabled, toggleBefore.enabled, "reading the subagent toggle must not flip it")
+
+  // A completed background child should trigger one safe main-agent turn that
+  // consumes the persisted result and reports it to the user.
+  const continuationRequests = []
+  const llmServer = http.createServer((req, res) => {
+    const chunks = []
+    req.on("data", (chunk) => chunks.push(chunk))
+    req.on("end", () => {
+      continuationRequests.push(JSON.parse(Buffer.concat(chunks).toString() || "{}"))
+      res.writeHead(200, { "content-type": "text/event-stream" })
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "main reports child result" } }] })}\n\n`)
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}\n\n`)
+      res.end("data: [DONE]\n\n")
+    })
+  })
+  await new Promise((resolve) => llmServer.listen(0, "127.0.0.1", resolve))
+  await invoke("providerSave", {
+    id: "subagent-main-model",
+    name: "Subagent main model",
+    baseURL: `http://127.0.0.1:${llmServer.address().port}/v1`,
+    apiFormat: "chat",
+    apiKey: "test-only-key",
+    models: [{ id: "main-model", context: 128000, output: 4096 }],
+  })
+  await invoke("setModel", { sessionID: session.id, providerID: "subagent-main-model", modelID: "main-model" })
+  const continuationSentAt = sent.length
+  backend.engine._emit(session.id, { type: "subagent.result", subagentId: "subagent_smoke", subagentSessionId: child.id, subagentName: "Smoke researcher", agentType: "general", subagentBackground: true, status: "done", result: "smoke result" })
+  const continuationDeadline = Date.now() + 4000
+  while (Date.now() < continuationDeadline && !sent.slice(continuationSentAt).some(([channel, payload]) => channel === "vibe:event" && payload?.type === "session.execution.succeeded" && payload?.sessionID === session.id)) {
+    await new Promise((resolve) => setTimeout(resolve, 30))
+  }
+  llmServer.close()
+  assert.ok(continuationRequests.length >= 1, "the main model should run automatically after a background result")
+  assert.match(JSON.stringify(continuationRequests[0].messages), /Subagent completed: Smoke researcher/)
+  assert.ok(sent.slice(continuationSentAt).some(([channel, payload]) => channel === "vibe:event" && payload?.type === "session.text.delta" && payload?.delta === "main reports child result"), "the automatic main-agent report should stream into the parent chat")
 
   // A renamed/recreated provider may leave one stale provider ID in the UI for
   // a single event-loop turn. Resolve only if the model ID maps to one current

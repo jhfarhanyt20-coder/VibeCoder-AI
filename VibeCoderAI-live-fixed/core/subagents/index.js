@@ -314,7 +314,7 @@ class SubAgentManager {
     agent.progress.push(clean)
     if (agent.progress.length > 500) agent.progress.splice(0, agent.progress.length - 500)
     try {
-      this.engine._emit(agent.sessionId, { ...ev, subagentId: agent.id, subagentSessionId: agent.childSessionId, subagentName: agent.name, agentType: agent.type, parentToolCallId: agent.parentToolCallId })
+      this.engine._emit(agent.sessionId, { ...ev, subagentId: agent.id, subagentSessionId: agent.childSessionId, subagentName: agent.name, agentType: agent.type, subagentBackground: agent.background, parentToolCallId: agent.parentToolCallId })
     } catch {}
   }
 

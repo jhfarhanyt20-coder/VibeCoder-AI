@@ -1324,12 +1324,14 @@ test("V-11: foreground subagent returns inline, exposes metadata, and cannot rec
   const tool = vibe.engine.subagentTool()
   assert.equal(tool.perm({ agent: "explore" }).subject, "explore")
   assert.ok(tool.parameters.properties.agent && tool.parameters.properties.background)
-  const ctx = { session: vibe.engine.getSession(parent.id), stats: {} }
+  const ctx = { session: vibe.engine.getSession(parent.id), stats: {}, toolCallId: "parent_call_1" }
   const output = await tool.run({ agent: "general", task: "return a result", name: "Result finder", background: false }, ctx)
   assert.match(output, /foreground final result/)
   assert.ok(ctx.stats.subagentId && ctx.stats.subagentSessionId)
   assert.equal(ctx.stats.subagentName, "Result finder")
   assert.equal(ctx.stats.subagentStatus, "done")
+  assert.equal(ctx.stats.parentToolCallId, "parent_call_1")
+  assert.equal((await vibe.subagents.details(ctx.stats.subagentId)).parentToolCallId, "parent_call_1")
   const requestTools = m.requests[0].body.tools || []
   assert.equal(requestTools.some((entry) => (entry.function?.name || entry.name) === "subagent"), false, "a child cannot spawn another child")
   const child = vibe.engine.getSession(ctx.stats.subagentSessionId)

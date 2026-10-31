@@ -48,7 +48,9 @@ let activeAgent = "VibeCoder AI"
 let subagentsEnabled = true
 const pickedAttachmentPaths = new Set()
 const runState = new Map()
+const subagentContinuations = new Map()
 const disabledAgents = new Set()
+let backendClosing = false
 
 function readJson(file, fallback) {
   try { return JSON.parse(fs.readFileSync(file, "utf8")) } catch { return fallback }
@@ -311,6 +313,39 @@ function stopProviderWatcher() {
   providerWatcher = null
   providerWatcherStarted = false
 }
+const waitMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+function scheduleSubagentContinuation(sessionID, event) {
+  const subagentID = event.subagentId
+  if (!sessionID || !subagentID || event.subagentBackground === false || subagentContinuations.has(subagentID)) return
+  const job = (async () => {
+    const deadline = Date.now() + 5 * 60 * 1000
+    while (!backendClosing && Date.now() < deadline) {
+      if (engine.isBusy(sessionID)) { await waitMs(120); continue }
+      const details = engine.subagentDetails(subagentID)
+      if (!details) return
+      try {
+        const child = engine.getSession(details.childSessionId)
+        if (child.subagentResultDeliveredAt) return
+      } catch { return }
+      try {
+        runState.set(sessionID, { assistantMessageID: `asst_${Date.now().toString(36)}`, ordinal: 0, text: "", reasoningStarted: false, failed: null })
+        emitUI("session.execution.started", sessionID, { source: "subagent-result", subagentID })
+        const prompt = "A background subagent has finished. Review the attached subagent result, report the useful answer to the user now, and continue any work that depended on it. Do not say you are still waiting."
+        for await (const _event of vibe.session.prompt(sessionID, prompt, { agentOnly: true, summaryModel: "session" })) {}
+        return
+      } catch (error) {
+        if (/Session is busy/i.test(String(error?.message || error))) { await waitMs(120); continue }
+        const state = runState.get(sessionID)
+        if (state) state.failed = String(error?.message || error)
+        flushText(sessionID); flushReasoning(sessionID)
+        emitUI("session.execution.failed", sessionID, { error: { message: String(error?.message || error) }, persisted: true, source: "subagent-result", subagentID })
+        runState.delete(sessionID)
+        return
+      }
+    }
+  })().finally(() => subagentContinuations.delete(subagentID))
+  subagentContinuations.set(subagentID, job)
+}
 function flushText(sessionID) {
   const s = runState.get(sessionID)
   if (!s || !s.text) return
@@ -340,6 +375,7 @@ function onEngineEvent(ev) {
   // clickable subagent view. Permission prompts remain parent-visible below.
   if (ev.subagentId && ev.type !== "permission.ask") {
     emitUI("subagent.event", sid, { ...data, eventType: ev.type })
+    if (ev.type === "subagent.result") scheduleSubagentContinuation(sid, ev)
     return
   }
   switch (ev.type) {
@@ -830,6 +866,7 @@ const preloadNames = [
 ]
 
 function initBackend(targetWin, { port = Number(process.env.VIBE_SERVE_PORT || 4096), serve = process.env.VIBE_SERVE !== "0" } = {}) {
+  backendClosing = false
   win = targetWin
   if (!registered) {
     registered = true
@@ -875,6 +912,7 @@ function initBackend(targetWin, { port = Number(process.env.VIBE_SERVE_PORT || 4
   }
 }
 function shutdownBackend() {
+  backendClosing = true
   stopProviderWatcher()
   try { eventOff?.() } catch {}
   eventOff = null

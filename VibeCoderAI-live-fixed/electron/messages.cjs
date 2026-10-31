@@ -10,6 +10,14 @@ function convertMessages(session) {
     for (const p of m.parts) if (p.type === "tool_result") results.set(p.id, p)
   }
   const out = []
+  const deferredCompactions = []
+  const flushCompactions = (internalIndex) => {
+    for (let j = 0; j < deferredCompactions.length;) {
+      if (deferredCompactions[j].target > internalIndex) { j++; continue }
+      out.push(deferredCompactions[j].row)
+      deferredCompactions.splice(j, 1)
+    }
+  }
   session.messages.forEach((m, i) => {
     if (m.role === "user" && m.summary) {
       const raw = String((m.parts[0] && m.parts[0].text) || "")
@@ -19,7 +27,7 @@ function convertMessages(session) {
       const contextAt = checkpoint.lastIndexOf(contextMarker)
       const projectContext = contextAt >= 0 ? checkpoint.slice(contextAt + 2).trim() : ""
       if (contextAt >= 0) checkpoint = checkpoint.slice(0, contextAt).trim()
-      out.push({
+      const row = {
         id: `cmp-${i}`,
         type: "compaction",
         status: "completed",
@@ -29,7 +37,11 @@ function convertMessages(session) {
         summarySource: m.summarySource || "llm",
         summaryModel: m.summaryModel || "",
         time: { created: session.updatedAt },
-      })
+      }
+      if (Number.isInteger(m.displayAfter) && m.displayAfter >= 0) {
+        deferredCompactions.push({ target: i + m.displayAfter, row })
+        flushCompactions(i)
+      } else out.push(row)
       return
     }
     if (m.role === "user") {
@@ -37,13 +49,14 @@ function convertMessages(session) {
       // go to the model but must never show up as a chat bubble.
       const texts = m.parts.filter((p) => p.type === "text" && !p.agentOnly).map((p) => p.text)
       const images = m.parts.filter((p) => p.type === "image" && p.data)
-      if (!texts.length && !images.length) return // tool-result-only / notice-only: no bubble
+      if (!texts.length && !images.length) { flushCompactions(i); return } // tool-result-only / notice-only: no bubble
       const text = texts.join("\n")
       const content = []
       if (text) content.push({ type: "text", text })
       // media parts so renderSessionHistory() can show the sent images as thumbnails
       for (const im of images) content.push({ type: "media", mime: im.mime, dataUrl: `data:${im.mime};base64,${im.data}` })
       out.push({ id: `msg-${i}`, type: "user", content, metadata: { displayText: text }, time: { created: session.updatedAt } })
+      flushCompactions(i)
       return
     }
     const parts = []
@@ -94,7 +107,9 @@ function convertMessages(session) {
       ...(model ? { model } : {}),
       time: { created: session.updatedAt },
     })
+    flushCompactions(i)
   })
+  for (const pending of deferredCompactions) out.push(pending.row)
   return out
 }
 

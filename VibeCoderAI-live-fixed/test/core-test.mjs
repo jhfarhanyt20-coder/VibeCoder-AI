@@ -1002,6 +1002,23 @@ test("compaction checkpoint is surfaced separately from project context in histo
   assert.match(ui[0].projectContext, /Working directory: \/workspace/)
 })
 
+test("a new compaction checkpoint renders where compaction happened, not at chat index zero", () => {
+  const { convertMessages } = require("../electron/messages.cjs")
+  const prefix = "[Checkpoint: the earlier part of this conversation was compacted. Continue from this summary.]"
+  const ui = convertMessages({
+    updatedAt: 123,
+    messages: [
+      { role: "user", summary: true, displayAfter: 2, compactionReason: "manual", summarySource: "llm", parts: [{ type: "text", text: `${prefix}\n\n## Goal\nKeep position\n\n## Accomplished\nCheckpoint done` }] },
+      { role: "assistant", parts: [{ type: "tool_call", id: "read-1", name: "read", args: { path: "a.js" } }] },
+      { role: "user", parts: [{ type: "tool_result", id: "read-1", name: "read", output: "1\told tail" }] },
+      { role: "user", parts: [{ type: "text", text: "message sent after compaction" }] },
+    ],
+  })
+  assert.deepEqual(ui.map((message) => message.type), ["assistant", "compaction", "user"])
+  assert.match(ui[1].summary, /Keep position/)
+  assert.equal(ui[2].metadata.displayText, "message sent after compaction")
+})
+
 test("compaction safe-cut refuses cross-boundary tool-result IDs and ID-less ambiguity", () => {
   const { cutIsSafe, pickSafeCut } = require("../core/agent/compaction")
   const messages = [

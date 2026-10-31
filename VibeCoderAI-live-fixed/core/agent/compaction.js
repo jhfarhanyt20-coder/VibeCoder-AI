@@ -380,13 +380,14 @@ function pickSafeCut(messages, keepTokens) {
   return 0
 }
 
-function checkpointMessage(session, summary, reason = "auto", summarySource = "llm", summaryModel = "") {
+function checkpointMessage(session, summary, reason = "auto", summarySource = "llm", summaryModel = "", displayAfter = 0) {
   const sourceNote = summarySource === "fallback" ? "[Automatic fallback summary; the LLM summary was unavailable.]\n\n" : ""
   return {
     role: "user",
     summary: true,
     compactionReason: reason,
     summarySource,
+    displayAfter: Math.max(0, Number(displayAfter) || 0),
     ...(summaryModel ? { summaryModel } : {}),
     parts: [{ type: "text", text: `${CHECKPOINT_PREFIX}\n\n${sourceNote}${summary}\n\n${projectContext(session)}` }],
   }
@@ -631,7 +632,10 @@ async function compact({
   }
 
   const summaryModel = usedSummaryModel
-  const nextMessages = [checkpointMessage(session, summary, reason, generated.source || "llm", summaryModel), ...tail]
+  // The model must read the checkpoint first, but the chat timeline should show
+  // it where compaction happened: after the retained pre-compaction tail and
+  // before messages created later.
+  const nextMessages = [checkpointMessage(session, summary, reason, generated.source || "llm", summaryModel, tail.length), ...tail]
   const after = requestTokens(system, nextMessages, toolSpecs)
   const fitsBudget = after <= budgetLimit
 

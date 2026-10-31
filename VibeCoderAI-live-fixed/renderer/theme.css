@@ -1943,6 +1943,15 @@ body {
 .fr-diff .dl.del { color: var(--danger-soft); background: var(--danger-soft-bg); }
 .fr-diff .dl.meta { color: var(--muted); background: color-mix(in srgb, var(--panel-2) 72%, transparent); font-style: italic; }
 .fr-diff .dl.meta .dl-no { border-right-color: transparent; }
+.fr-diff .code-row { display: grid; grid-template-columns: 52px minmax(0, 1fr); min-height: 19px; }
+.fr-diff .code-no { padding: 0 10px 0 4px; color: color-mix(in srgb, var(--muted) 72%, transparent); text-align: right; user-select: none; border-right: 1px solid color-mix(in srgb, var(--border) 70%, transparent); font-variant-numeric: tabular-nums; }
+.fr-diff .code-text { min-width: 0; padding: 0 8px; color: var(--text); white-space: pre; }
+.fr-diff .code-row.meta .code-text { color: var(--muted); font-style: italic; }
+.tok-comment { color: var(--muted); font-style: italic; }
+.tok-pre { color: var(--code-purple); }
+.tok-string { color: var(--code-green); }
+.tok-number { color: var(--code-orange); }
+.tok-keyword { color: var(--code-pink); }
 
 /* file tools show only their cards (tool name lives in the group header) */
 .act.file-tool { border: 0; background: none; margin: 0; overflow: visible; }

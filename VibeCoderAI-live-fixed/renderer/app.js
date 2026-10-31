@@ -1152,8 +1152,8 @@ $("show-more").onclick = () => ($("session-list").style.maxHeight = "none")
 
 /* ---------- chat ---------- */
 /* Stick to the bottom while streaming, but let the user scroll up freely.
-   The floating arrow appears only when the agent is running and the user
-   scrolled away from the live output. */
+   The floating arrow appears whenever the user is away from the newest chat,
+   including after a run has finished. */
 function nearBottom(slack = 90) {
   const el = $("messages")
   return el.scrollHeight - el.scrollTop - el.clientHeight <= slack
@@ -1162,12 +1162,16 @@ function nearBottom(slack = 90) {
 function scrollChat(force = false) {
   const el = $("messages")
   if (force || nearBottom()) el.scrollTop = el.scrollHeight
+  requestAnimationFrame(updateJumpButton)
 }
 
 function updateJumpButton() {
   const btn = $("jump-live")
   if (!btn) return
-  btn.hidden = !(state.running && !nearBottom())
+  const away = !nearBottom()
+  btn.hidden = !away
+  const label = btn.querySelector(".jump-label")
+  if (label) label.textContent = state.running ? "Agent working" : "Jump to latest"
 }
 
 $("messages").addEventListener("scroll", updateJumpButton, { passive: true })
@@ -1279,12 +1283,45 @@ const FILE_BADGES = {
   json: { t: "{}", c: "var(--code-yellow)" },
   md: { t: "M", c: "var(--code-steel)" },
   py: { t: "Py", c: "var(--code-navy)" },
+  c: { t: "C", c: "var(--code-blue)" },
+  cc: { t: "C++", c: "var(--code-blue)" },
+  cpp: { t: "C++", c: "var(--code-blue)" },
+  h: { t: "H", c: "var(--code-purple)" },
+  hpp: { t: "H++", c: "var(--code-purple)" },
+  java: { t: "J", c: "var(--code-orange)" },
+  go: { t: "Go", c: "var(--code-cyan)" },
+  rs: { t: "Rs", c: "var(--code-orange)" },
   bat: { t: "B", c: "var(--code-green)" },
   cmd: { t: "B", c: "var(--code-green)" },
   sh: { t: "$", c: "var(--code-green)" },
   yml: { t: "Y", c: "var(--code-red)" },
   yaml: { t: "Y", c: "var(--code-red)" },
   txt: { t: "T", c: "var(--code-gray)" },
+}
+
+const CODE_KEYWORDS = /^(?:async|await|break|case|catch|class|const|continue|default|delete|do|else|enum|export|extends|false|finally|for|from|function|if|import|in|instanceof|interface|let|namespace|new|null|private|protected|public|return|static|struct|switch|template|this|throw|true|try|type|typedef|typeof|undefined|using|var|virtual|void|while|yield)$/
+const CODE_TOKEN = /(\/\/.*$|#\s*(?:include|define|if|ifdef|ifndef|endif|pragma|using)\b.*$|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b(?:async|await|break|case|catch|class|const|continue|default|delete|do|else|enum|export|extends|false|finally|for|from|function|if|import|in|instanceof|interface|let|namespace|new|null|private|protected|public|return|static|struct|switch|template|this|throw|true|try|type|typedef|typeof|undefined|using|var|virtual|void|while|yield)\b|\b\d+(?:\.\d+)?\b)/g
+
+function renderCodeText(node, value) {
+  const text = String(value ?? "")
+  let at = 0
+  CODE_TOKEN.lastIndex = 0
+  let match
+  while ((match = CODE_TOKEN.exec(text))) {
+    if (match.index > at) node.appendChild(document.createTextNode(text.slice(at, match.index)))
+    const token = document.createElement("span")
+    const raw = match[0]
+    token.className = raw.startsWith("//") ? "tok-comment"
+      : raw.startsWith("#") ? "tok-pre"
+        : /^["'`]/.test(raw) ? "tok-string"
+          : /^\d/.test(raw) ? "tok-number"
+            : CODE_KEYWORDS.test(raw) ? "tok-keyword" : ""
+    token.textContent = raw
+    node.appendChild(token)
+    at = match.index + raw.length
+  }
+  if (at < text.length) node.appendChild(document.createTextNode(text.slice(at)))
+  if (!text) node.appendChild(document.createTextNode(" "))
 }
 
 function fileBadge(file) {
@@ -1309,9 +1346,27 @@ function appendDiffLine(container, line = {}) {
   mark.textContent = type === "add" ? "+" : type === "del" ? "−" : type === "meta" ? "…" : ""
   const code = document.createElement("span")
   code.className = "dl-code"
-  code.textContent = String(line.text ?? "") || " "
+  if (type === "meta") code.textContent = String(line.text ?? "") || " "
+  else renderCodeText(code, line.text)
   row.append(oldNo, newNo, mark, code)
   container.appendChild(row)
+}
+
+function appendReadCode(container, output) {
+  for (const raw of String(output || "").split(/\r?\n/).slice(0, 2000)) {
+    const match = /^(\d+)\t(.*)$/.exec(raw)
+    const row = document.createElement("div")
+    row.className = match ? "code-row" : "code-row meta"
+    const number = document.createElement("span")
+    number.className = "code-no"
+    number.textContent = match ? match[1] : ""
+    const code = document.createElement("span")
+    code.className = "code-text"
+    if (match) renderCodeText(code, match[2])
+    else code.textContent = raw || " "
+    row.append(number, code)
+    container.appendChild(row)
+  }
 }
 
 function appendStructuredDiff(container, file) {
@@ -1426,12 +1481,8 @@ function toolCardEl(name, input = {}, output = "") {
 
   const pre = row.querySelector(".fr-diff")
   if (output) {
-    for (const line of output.split(/\r?\n/).slice(0, 400)) {
-      const d = document.createElement("div")
-      d.className = "dl"
-      d.textContent = line || " "
-      pre.appendChild(d)
-    }
+    if (name === "read") appendReadCode(pre, output)
+    else for (const line of output.split(/\r?\n/).slice(0, 400)) appendDiffLine(pre, { type: "context", text: line })
   } else {
     row.querySelector(".fr-expand").hidden = true
     pre.remove()

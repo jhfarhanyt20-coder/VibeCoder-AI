@@ -12,6 +12,7 @@ const { resolvePath, walk, looksBinary, diffStats } = require("./fsutil")
 const { globToRegExp, toPosix, homeDir } = require("../util")
 const jobs = require("../jobs")
 const skillStore = require("../skills")
+const forms = require("../forms")
 
 const MAX_OUT = 30000
 const clip = (s, n = MAX_OUT) => (s.length <= n ? s : s.slice(0, n / 2) + `\n\n... [${s.length - n} chars truncated] ...\n\n` + s.slice(-n / 2))
@@ -765,7 +766,56 @@ const subagentStop = {
   },
 }
 
-const ALL = [read, write, edit, bash, grep, glob, todowrite, webfetch, skill, memory, subagentResult, subagentStatus, subagentStop]
+/* ---------- question (V-10) ---------- */
+/* The agent pauses and asks the user a real question. The renderer draws the
+   form card; the answer comes back as the tool result. */
+const question = {
+  name: "question",
+  description:
+    "Ask the user a question and wait for the answer. Use it only when a decision, preference or missing detail is genuinely needed from the user. Each question can offer options and also accepts a typed answer; the user may dismiss the form.",
+  parameters: {
+    type: "object",
+    properties: {
+      questions: {
+        type: "array",
+        description: "One to eight questions to ask now",
+        minItems: 1,
+        maxItems: 8,
+        items: {
+          type: "object",
+          properties: {
+            question: { type: "string", description: "The full question text" },
+            header: { type: "string", description: "Short label shown as the card title" },
+            multiple: { type: "boolean", description: "Allow selecting more than one option" },
+            options: {
+              type: "array",
+              description: "Suggested answers (optional)",
+              items: {
+                type: "object",
+                properties: { label: { type: "string" }, description: { type: "string" } },
+                required: ["label"],
+              },
+            },
+          },
+          required: ["question"],
+        },
+      },
+    },
+    required: ["questions"],
+  },
+  perm: () => ({ tool: "question", subject: "" }),
+  paths: () => [],
+  async run(a, c) {
+    if (!c.engine || typeof c.engine.askQuestions !== "function") throw new Error("Questions are not available in this context.")
+    const normalized = forms.normalizeQuestions(a.questions)
+    const answers = await c.engine.askQuestions({ session: c.session, questions: normalized, signal: c.signal, emit: c.emit })
+    if (!answers) return "The user dismissed the question without answering. Continue without that answer, or ask a different question."
+    if (c.stats) c.stats.answers = answers
+    return forms.resultText(normalized, answers)
+  },
+}
+
+const ALL = [read, write, edit, bash, grep, glob, todowrite, question, webfetch, skill, memory, subagentResult, subagentStatus, subagentStop]
 
 // Browser tools (optional - require electron backend)
 try {

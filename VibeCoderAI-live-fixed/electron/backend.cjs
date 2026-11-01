@@ -464,6 +464,12 @@ function onEngineEvent(ev) {
     case "compaction.start": emitUI("compaction.start", sid, data); emitUI("session.compaction.started", sid, data); break
     case "compaction.delta": emitUI("compaction.delta", sid, data); emitUI("session.compaction.delta", sid, data); break
     case "compaction.end": emitUI("compaction.end", sid, data); emitUI("session.compaction.ended", sid, data); break
+    // V-10: `question` -> the renderer's interactive form card. The renderer
+    // refreshes the pending list; these events make it instant instead of
+    // waiting for the 1.5 s poll.
+    case "question.ask": emitUI("form.created", sid, { form: ev.form }); break
+    case "question.replied": emitUI("form.replied", sid, { form: ev.form, answers: ev.answers }); break
+    case "question.cancelled": emitUI("form.cancelled", sid, { form: ev.form, message: ev.message }); break
     case "shell.backgrounded": emitUI("session.shell.backgrounded", sid, { shell: ev.shell }); break
     case "todo.update": emitUI("todo.updated", sid, data); break
     default: emitUI(ev.type || "engine.event", sid, data)
@@ -609,9 +615,18 @@ const handlers = {
   },
   listPermissionRequests: async () => [...engine.pending.entries()].map(([id, p]) => ({ id, permissionId: id, sessionID: p.session?.id, action: p.tool, tool: p.tool, resource: p.subject, resources: p.subject ? [p.subject] : [] })),
   replyPermission: async (a = {}) => { const id = a.requestID || a.permissionId || a.id; const decision = a.decision === "reject" ? "deny" : a.decision; if (!engine.replyPermission(id, decision)) throw new Error("Permission request is no longer pending."); emitUI("session.permissions", a.sessionID, { resolved: true, requestID: id, decision }); return { replied: true } },
-  listForms: async () => [],
-  replyForm: async () => { throw new Error("Interactive question forms are not supported by this engine build.") },
-  cancelForm: async () => ({ cancelled: true }),
+  listForms: async (a = {}) => engine.listForms(a.sessionID || a.sessionId || null),
+  replyForm: async (a = {}) => {
+    const id = String(a.formID || a.formId || a.id || "").trim()
+    if (!id) throw new Error("formID is required")
+    if (!engine.replyForm(id, a.answer ?? a.answers)) throw new Error("This question is no longer waiting for an answer.")
+    return { replied: true }
+  },
+  cancelForm: async (a = {}) => {
+    const id = String(a.formID || a.formId || a.id || "").trim()
+    if (!id) throw new Error("formID is required")
+    return { cancelled: engine.cancelForm(id, a.message ? String(a.message) : undefined) }
+  },
 
   listModels: async () => modelRows(),
   listAllModels: async () => modelRows(),

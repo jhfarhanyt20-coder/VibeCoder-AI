@@ -357,8 +357,9 @@ class SubAgentManager {
         } catch {}
         const seen = new Map()
         for (const t of [...builtin, ...ext]) if (t && t.name) seen.set(t.name, t)
-        // Hard depth=1: no child catalog ever contains the spawn tool.
-        return selectTools(agent.type, [...seen.values()]).filter((tool) => tool.name !== "subagent")
+        // Hard depth=1: no child catalog ever contains the spawn tool. Children
+        // also never own the user's attention: questions belong to the parent.
+        return selectTools(agent.type, [...seen.values()]).filter((tool) => tool.name !== "subagent" && tool.name !== "question")
       }
       const system = buildSystem({
         agentName: agent.name,

@@ -62,6 +62,13 @@ function createServer(engine, { token = crypto.randomBytes(24).toString("hex") }
         const b = await readBody(req)
         return sendJson(res, 200, { ok: engine.replyPermission(p[1], b.decision) })
       }
+      if (p[0] === "form") {
+        if (!p[1] && m === "GET") return sendJson(res, 200, engine.listForms(url.searchParams.get("sessionID") || null))
+        if (p[1] && p[2] === "reply" && m === "POST")
+          return sendJson(res, 200, { replied: engine.replyForm(p[1], (await readBody(req)).answer) })
+        if (p[1] && p[2] === "cancel" && m === "POST")
+          return sendJson(res, 200, { cancelled: engine.cancelForm(p[1], (await readBody(req)).message) })
+      }
       if (p[0] === "session") {
         if (!p[1]) {
           if (m === "GET") return sendJson(res, 200, engine.listSessions({ dir: url.searchParams.get("dir") || undefined }))

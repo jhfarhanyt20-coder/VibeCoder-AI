@@ -1067,16 +1067,16 @@ test("OpenCode-style compaction summarizes meaningful history even when everythi
     { role: "user", parts: [{ type: "text", text: "Now verify the exact tools and techniques" }] },
     { role: "assistant", parts: [{ type: "text", text: "Current exchange remains verbatim" }] },
   ]
-  assert.equal(compaction.pickSummaryCut(messages, 100000), 6, "only the latest user exchange should remain verbatim")
+  assert.equal(compaction.pickSummaryCut(messages, 20000), 6, "even a generous allowance keeps the latest exchange verbatim and summarizes meaningful older history")
 
   let summaryInput = ""
   const m = await mock(({ body }) => {
     summaryInput = String(body.messages?.at(-1)?.content || "")
     return { chunks: [...chat.text("## Objective\n- Continue the Binance and YouTube research accurately.\n\n## Work State\n### Completed\n- YouTube and Binance research collected.\n### Active\n- Verify tools and techniques.\n### Blocked\n- (none)\n\n## Next Move\n1. Verify sources."), ...chat.end()] }
   })
-  const profile = { id: "summary", format: "openai-chat", baseURL: `http://127.0.0.1:${m.port}/v1`, model: "m", noAuth: true, contextLimit: 16000, maxOutput: 1000 }
+  const profile = { id: "summary", format: "openai-chat", baseURL: `http://127.0.0.1:${m.port}/v1`, model: "m", noAuth: true, contextLimit: 8000, maxOutput: 1000 }
   const session = { id: "ses_1212121212121212", dir: "C:/tmp", profile: "summary", messages: structuredClone(messages), usage: { lastInput: 0 } }
-  const result = await compaction.compact({ session, profile, apiKey: "", reason: "manual", config: { keep: { tokens: 100000 } } })
+  const result = await compaction.compact({ session, profile, apiKey: "", reason: "manual", config: { keep: { tokens: 400 } } })
   m.close()
   assert.equal(result.committed, true)
   assert.match(summaryInput, /Arijit Singh songs on YouTube/)
@@ -1180,6 +1180,116 @@ test("subagentResult / subagentStatus / subagentStop tools exist and delegate to
   // no engine on the ctx -> actionable message, not a crash
   const res = await byName("subagentResult").run({ subagentId: "x" }, { cwd: process.cwd(), emit: () => {} })
   assert.match(String(res), /not available/i)
+})
+
+test("question tool: form model maps questions, options and answers", () => {
+  const forms = require("../core/forms")
+  const questions = forms.normalizeQuestions([
+    { header: "Language", question: "Which language should the reply use?", options: [{ label: "Bengali", description: "default" }, { label: "English" }] },
+    { header: "Files", question: "Which files?", multiple: true, options: [{ label: "a.js" }, { label: "b.js" }] },
+  ])
+  assert.equal(questions.length, 2)
+  assert.equal(questions[0].multiple, false)
+  assert.equal(questions[1].multiple, true)
+  const form = forms.formPayload("ses_1", "form_1", questions)
+  assert.equal(form.id, "form_1")
+  assert.equal(form.sessionID, "ses_1")
+  assert.equal(form.fields[0].key, "q0")
+  assert.equal(form.fields[0].title, "Language")
+  assert.equal(form.fields[0].description, "Which language should the reply use?")
+  assert.equal(form.fields[1].type, "multiselect")
+  assert.equal(form.fields[0].custom, true, "typing a free-form answer is always allowed")
+  assert.deepEqual(form.fields[0].options.map((o) => o.value), ["Bengali", "English"])
+  // renderer object -> ordered answers of string arrays
+  assert.deepEqual(forms.answerValues(questions, { q0: "Bengali", q1: ["a.js", "b.js"] }), [["Bengali"], ["a.js", "b.js"]])
+  // array form + skipped question + free text
+  assert.deepEqual(forms.answerValues(questions, ["নিজের উত্তর", []]), [["নিজের উত্তর"], []])
+  assert.match(forms.resultText(questions, [["Bengali"], ["a.js"]]), /1\. Language — Bengali/)
+  assert.throws(() => forms.normalizeQuestions([]), /at least one question/)
+  assert.throws(() => forms.normalizeQuestions([{ header: "x" }]), /no text/)
+})
+
+test("question tool asks the user, waits, and returns the answer to the model", async () => {
+  const asked = []
+  const m = await mock(({ n }) =>
+    n === 0
+      ? { chunks: [...chat.tool("q1", "question", { questions: [{ header: "Language", question: "Which language should I answer in?", options: [{ label: "Bengali" }, { label: "English" }] }] }), ...chat.end(1, 1, "tool_calls")] }
+      : { chunks: [...chat.text("Got it: Bengali"), ...chat.end()] },
+  )
+  const home = tmp()
+  const dir = tmp()
+  // "deny" proves the question tool is not blocked by the permission gate.
+  const vibe = createVibe({ home, permission: "deny" })
+  await vibe.profiles.upsert({ id: "mock", format: "openai-chat", baseURL: `http://127.0.0.1:${m.port}/v1`, model: "m", noAuth: true, contextLimit: 128000 })
+  const s = await vibe.session.create({ dir, profile: "mock" })
+  const events = []
+  const off = vibe.engine.on((ev) => {
+    events.push(ev)
+    if (ev.type !== "question.ask") return
+    asked.push(ev.form)
+    const pending = vibe.engine.listForms(s.id)
+    assert.equal(pending.length, 1, "the pending form is listable while the agent waits")
+    assert.equal(pending[0].fields[0].title, "Language")
+    assert.equal(vibe.engine.replyForm(pending[0].id, { q0: "Bengali" }), true)
+    assert.equal(vibe.engine.replyForm(pending[0].id, { q0: "Bengali" }), false, "a form is answered once")
+  })
+  const out = await collect(vibe.session.prompt(s.id, "ask me something"))
+  off()
+  m.close()
+
+  assert.equal(asked.length, 1)
+  assert.ok(events.some((ev) => ev.type === "question.replied"))
+  assert.ok(out.some((ev) => ev.type === "text.delta" && /Got it: Bengali/.test(ev.delta)))
+  const toolEnd = out.find((ev) => ev.type === "tool.end" && ev.name === "question")
+  assert.ok(toolEnd, "the question call finished with a tool result")
+  assert.match(String(toolEnd.output), /Bengali/)
+  assert.match(String(toolEnd.output), /1\. Language/)
+  assert.doesNotMatch(String(toolEnd.output), /dismissed/i)
+
+  const session = vibe.engine.getSession(s.id)
+  const result = session.messages.flatMap((msg) => msg.parts).find((part) => part.type === "tool_result" && part.id === "q1")
+  assert.deepEqual(result.stats.answers, [["Bengali"]], "answers are persisted for the chat history card")
+  assert.equal(vibe.engine.listForms(s.id).length, 0, "no form is left pending after a run")
+})
+
+test("question tool: dismissal, cancellation and history rendering", async () => {
+  const m = await mock(() => ({
+    chunks: [...chat.tool("q2", "ask_user", { questions: [{ question: "Delete the file?", options: [{ label: "Yes" }, { label: "No" }] }] }), ...chat.end(1, 1, "tool_calls")],
+  }))
+  const home = tmp()
+  const dir = tmp()
+  const vibe = createVibe({ home, permission: "allow" })
+  await vibe.profiles.upsert({ id: "mock", format: "openai-chat", baseURL: `http://127.0.0.1:${m.port}/v1`, model: "m", noAuth: true, contextLimit: 128000 })
+  const s = await vibe.session.create({ dir, profile: "mock" })
+  let cancelled = 0
+  const off = vibe.engine.on((ev) => {
+    if (ev.type !== "question.ask") return
+    // the alias `ask_user` resolves to the question tool, so this form exists
+    assert.equal(vibe.engine.cancelForm(ev.form.id, "User dismissed the question"), true)
+    cancelled++
+  })
+  // second model request would ask again; end the run after one prompt instead
+  const out = await collect(vibe.session.prompt(s.id, "delete it?", { maxSteps: 1 }))
+  off()
+  m.close()
+  assert.equal(cancelled, 1)
+  const toolEnd = out.find((ev) => ev.type === "tool.end" && ev.name === "question")
+  assert.ok(toolEnd, "the aliased question call is stored under the canonical name")
+  assert.match(String(toolEnd.output), /dismissed/i)
+
+  const { convertMessages } = require("../electron/messages.cjs")
+  const converted = convertMessages({
+    updatedAt: 1,
+    messages: [
+      { role: "assistant", parts: [{ type: "tool_call", id: "q3", name: "question", args: { questions: [{ header: "Language", question: "Which language?" }] } }] },
+      { role: "user", parts: [{ type: "tool_result", id: "q3", name: "question", output: "The user answered:\n1. Language — Bengali", stats: { answers: [["Bengali"]] } }] },
+    ],
+  })
+  const part = converted[0].content.find((p) => p.type === "tool")
+  assert.equal(part.name, "question")
+  assert.equal(part.state.status, "completed")
+  assert.deepEqual(part.state.metadata.answers, [["Bengali"]])
+  assert.deepEqual(part.state.input.questions[0].header, "Language")
 })
 
 test("browser tools return a clear error when no browser is connected (CLI/SDK)", async () => {

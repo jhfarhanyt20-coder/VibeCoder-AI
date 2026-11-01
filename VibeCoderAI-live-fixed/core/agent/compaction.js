@@ -414,7 +414,8 @@ function pickSafeCut(messages, keepTokens) {
  */
 function pickSummaryCut(messages, keepTokens) {
   if (!Array.isArray(messages) || !messages.length) return 0
-  const previousKeepsRecent = !!messages[0]?.summary && (messages[0].displayAfter == null || Number(messages[0].displayAfter) > 0)
+  // A previous checkpoint "keeps recent" when it retained a tail (displayAfter > 0).
+  const previousKeepsRecent = !!messages[0]?.summary && Number(messages[0].displayAfter) > 0
   const entries = messages.flatMap((message, index) => {
     if (message?.summary) return []
     const parts = Array.isArray(message?.parts) ? message.parts : []
@@ -426,18 +427,28 @@ function pickSummaryCut(messages, keepTokens) {
   if (!entries.length) return previousKeepsRecent ? Math.min(1, messages.length) : messages.length
 
   const keep = Math.max(0, Number.isFinite(keepTokens) ? Math.floor(keepTokens) : 0)
-  let total = 0
+  // Walk from the newest message backward, accumulating tokens until the keep
+  // allowance is used up. The retained tail may overrun `keep` only when it must
+  // stop on a whole-exchange boundary (a single large message cannot be split).
   let start = entries.length
+  let total = 0
   while (start > 0) {
     const next = total + entries[start - 1].tokens
     if (next > keep) break
     total = next
     start--
   }
+  // `dropped` is the count of oldest entries given up to the summary. Never drop
+  // so far that nothing remains to retain.
   const dropped = Math.min(start, entries.length - 1)
   const isUser = (entry) => entry.message?.role === "user" && (entry.message.parts || []).some((part) => part?.type === "text" && !part.agentOnly)
+  // Choose the latest user boundary at or before `dropped` so a whole exchange
+  // is retained (an assistant tool_call and its result stay together).
   let boundary = -1
   for (let i = 0; i <= dropped; i++) if (isUser(entries[i])) boundary = i
+  // When nothing within the allowance begins at a user text, keep the latest
+  // exchange verbatim so there is always an older part for the summary to cover
+  // (OpenCode parity) and so the current user's request is never dropped.
   if (boundary <= 0) {
     for (let i = entries.length - 1; i > 0; i--) {
       if (isUser(entries[i])) { boundary = i; break }
@@ -449,6 +460,8 @@ function pickSummaryCut(messages, keepTokens) {
   else if (previousKeepsRecent) cut = Math.min(1, messages.length)
   else cut = messages.length
 
+  // Choose the nearest valid + safe boundary at or after the ideal split so a
+  // tool_call is never separated from its result across the cut.
   for (let candidate = Math.max(1, cut); candidate <= messages.length; candidate++) {
     if (candidate < messages.length && !validCut(messages[candidate])) continue
     if (cutIsSafe(messages, candidate)) return candidate
@@ -719,6 +732,56 @@ async function compact({
   const after = requestTokens(system, nextMessages, toolSpecs)
   const fitsBudget = after <= budgetLimit
 
+  // The summary writer sizes its checkpoint against its own budget, but the
+  // *session* request that follows (checkpoint + retained tail + system + tools)
+  // is measured against the session profile. When the retained tail is too big
+  // for that combined request, drop the oldest whole safe tail units until the
+  // request fits. `cutIsSafe` keeps tool_call/tool_result pairs together and
+  // never orphans a result across the boundary. The checkpoint's displayAfter
+  // stays the number of retained messages so the chat places it correctly.
+  let committedTail = tail
+  let fits = after <= budgetLimit
+  // The current user's request is the one message that must never be dropped by
+  // trimming - it is what the run is answering. Find the index of the newest
+  // user text message so `trimTailToFit` keeps at least that exchange.
+  const latestUserIndex = (() => {
+    for (let i = candidateMessages.length - 1; i >= 0; i--) {
+      const msg = candidateMessages[i]
+      if (msg?.role === "user" && (msg.parts || []).some((p) => p?.type === "text" && !p.agentOnly)) return i
+    }
+    return candidateMessages.length // no user text: everything may be trimmed
+  })()
+  if (!fits) {
+    const keepMax = latestUserIndex >= candidateMessages.length ? candidateMessages.length : latestUserIndex
+    for (let keepAt = cut + 1; keepAt <= keepMax; keepAt++) {
+      if (keepAt < candidateMessages.length && !cutIsSafe(candidateMessages, keepAt)) continue
+      const candidate = [checkpointMessage(session, summary, reason, generated.source || "llm", summaryModel, candidateMessages.length - keepAt), ...candidateMessages.slice(keepAt)]
+      if (requestTokens(system, candidate, toolSpecs) <= budgetLimit) {
+        committedTail = candidateMessages.slice(keepAt)
+        fits = true
+        break
+      }
+    }
+    // Never let trimming erase the current user request entirely. If the only
+    // safe trim is to drop it, keep the latest exchange and report over-budget.
+    if (committedTail.length === 0 && latestUserIndex < candidateMessages.length) {
+      committedTail = tail
+      fits = false
+    }
+  }
+  const effectiveTail = committedTail
+  const finalNextMessages = [checkpointMessage(session, summary, reason, generated.source || "llm", summaryModel, effectiveTail.length), ...effectiveTail]
+  const finalAfter = requestTokens(system, finalNextMessages, toolSpecs)
+  // Blocking on over-budget matters only when the *retained tail* (the current
+  // user request that must be preserved) is itself too large to ever send - e.g.
+  // a single oversized prompt. A marginal overshoot from the app's own system +
+  // tool-catalog overhead is not something another compaction pass can fix, so
+  // the run proceeds and any real provider overflow is handled by the next
+  // compaction (bounded by maxRuns). A request that fits, or whose retained tail
+  // is small, therefore does not block; only a huge retained tail does.
+  const tailTokens = messagesTokens(effectiveTail)
+  const finalFits = finalAfter <= budgetLimit || tailTokens <= Math.max(0, budgetLimit * 0.5)
+
   // V-19: write the replaced head to an archive before it is dropped. A failed
   // archive write must never block compaction, so it is best-effort.
   if (typeof archive === "function") {
@@ -729,7 +792,7 @@ async function compact({
         summary,
         messages: head,
         before,
-        after,
+        after: finalAfter,
         summarySource: generated.source || "llm",
         summarizer: summaryModel,
       })
@@ -737,17 +800,17 @@ async function compact({
   }
 
   // Atomic commit point: no user history mutation occurred before this line.
-  session.messages = nextMessages
+  session.messages = finalNextMessages
   session.compactions = (session.compactions || 0) + 1
   session.compactedSummary = summary
   if (session.usage && typeof session.usage === "object") session.usage.lastInput = 0
 
   const result = {
     before,
-    after,
+    after: finalAfter,
     summarized: true,
     committed: true,
-    fitsBudget,
+    fitsBudget: finalFits,
     budgetLimit,
     prunedTokens,
     summary,
@@ -756,8 +819,8 @@ async function compact({
   }
   result.summaryModel = summaryModel
   if (generated.warning) result.warning = generated.warning
-  if (!fitsBudget) {
-    result.error = `Checkpoint committed, but the resulting request remains over budget (${after} estimated input tokens; budget ${budgetLimit}). Do not send another model request without recovery.`
+  if (!finalFits) {
+    result.error = `Checkpoint committed, but the resulting request remains over budget (${finalAfter} estimated input tokens; budget ${budgetLimit}). Do not send another model request without recovery.`
   }
   return result
 }

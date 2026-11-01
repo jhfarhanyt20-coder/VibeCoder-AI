@@ -34,6 +34,11 @@ function createVibe(opts = {}) {
       compact: (id, o) => e.compact(id, o),
     },
     permission: { reply: async (permissionId, decision) => e.replyPermission(permissionId, decision) },
+    forms: {
+      list: async (sessionID) => e.listForms(sessionID),
+      reply: async (formID, answer) => ({ replied: e.replyForm(formID, answer) }),
+      cancel: async (formID, message) => ({ cancelled: e.cancelForm(formID, message) }),
+    },
     subagents: {
       create: async (o) => e.createSubagent(o),
       list: async (sessionId) => e.listSubagents(sessionId),
@@ -113,6 +118,11 @@ function connect({ url, token }) {
       compact: (id, o = {}) => call("POST", `/session/${id}/compact`, o),
     },
     permission: { reply: (permissionId, decision) => call("POST", `/permission/${permissionId}`, { decision }) },
+    forms: {
+      list: (sessionID) => call("GET", "/form" + (sessionID ? `?sessionID=${encodeURIComponent(sessionID)}` : "")),
+      reply: (formID, answer) => call("POST", `/form/${encodeURIComponent(formID)}/reply`, { answer }),
+      cancel: (formID, message) => call("POST", `/form/${encodeURIComponent(formID)}/cancel`, { message }),
+    },
     profiles: { list: () => call("GET", "/profiles") },
     event: {
       subscribe(fn) {

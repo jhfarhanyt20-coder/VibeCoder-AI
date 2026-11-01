@@ -81,6 +81,8 @@ const TOOL_ALIASES = {
   find: "glob",
   find_files: "glob",
   todo_write: "todowrite",
+  ask_user: "question",
+  askuser: "question",
 }
 const resolveTool = (name) => tools.byName(name) || tools.byName(TOOL_ALIASES[String(name || "").toLowerCase()])
 

@@ -13,6 +13,7 @@ const tools = require("./tools")
 const jobs = require("./jobs")
 const { McpManager } = require("./mcp")
 const { SubAgentManager } = require("./subagents")
+const forms = require("./forms")
 const plugins = require("./plugins")
 const { newId, homeDir } = require("./util")
 
@@ -38,6 +39,8 @@ class Engine {
     profiles.migrateAuthKeys(this.home)
     this.listeners = new Set()
     this.pending = new Map()
+    // V-10: interactive questions the agent is waiting on (formID -> form).
+    this.forms = new Map()
     this.runs = new Map()
     this.mcp = new McpManager()
     this._mcpSync = null // in-flight connect promise (dedupe)
@@ -243,6 +246,9 @@ class Engine {
   _ask(session, signal, emit, inherits = null, agentRules = []) {
     return (perm) => {
       const tool = String(perm?.tool ?? "")
+      // V-10: asking the user a question is itself the interaction; a
+      // permission prompt on top of it would be a second, pointless click.
+      if (tool === "question") return true
       const subject = perm?.subject == null ? "" : perm.subject
       const neverPersist = !!perm?.neverPersist
       // V-07: an agent definition's rules sit last, so a "deny" in a read-only
@@ -277,6 +283,65 @@ class Engine {
     return true
   }
 
+  // ---- V-10: interactive questions (the `question` tool) ----
+  /**
+   * Ask the user one or more questions and wait for the answer. Resolves with
+   * an ordered `answers` array (string[] per question) or `null` when the user
+   * dismissed the form or the run was stopped.
+   */
+  askQuestions({ session, questions, signal, emit }) {
+    const normalized = forms.normalizeQuestions(questions)
+    const id = newId("form")
+    const form = forms.formPayload(session.id, id, normalized)
+    const send = typeof emit === "function" ? emit : (ev) => this._emit(session.id, ev)
+    return new Promise((resolve) => {
+      const entry = { id, sessionID: session.id, questions: normalized, form, resolve, emit: send, cleanup: null }
+      this.forms.set(id, entry)
+      const onAbort = () => {
+        if (!this.forms.delete(id)) return
+        send({ type: "question.cancelled", form, message: "The run was stopped." })
+        resolve(null)
+      }
+      entry.cleanup = () => {
+        try {
+          signal?.removeEventListener?.("abort", onAbort)
+        } catch {}
+      }
+      if (signal) {
+        if (signal.aborted) return onAbort()
+        signal.addEventListener("abort", onAbort, { once: true })
+      }
+      send({ type: "question.ask", form })
+    })
+  }
+  /** Pending questions, newest last. Omit sessionID to list every session. */
+  listForms(sessionID) {
+    return [...this.forms.values()]
+      .filter((entry) => !sessionID || entry.sessionID === sessionID)
+      .map((entry) => entry.form)
+  }
+  /** Answer a pending form. Returns false when it is no longer pending. */
+  replyForm(formID, answer) {
+    const entry = this.forms.get(formID)
+    if (!entry) return false
+    this.forms.delete(formID)
+    entry.cleanup?.()
+    const answers = forms.answerValues(entry.questions, answer)
+    entry.emit({ type: "question.replied", form: entry.form, answers })
+    entry.resolve(answers)
+    return true
+  }
+  /** Dismiss a pending form (the agent continues without an answer). */
+  cancelForm(formID, message = "User dismissed the question") {
+    const entry = this.forms.get(formID)
+    if (!entry) return false
+    this.forms.delete(formID)
+    entry.cleanup?.()
+    entry.emit({ type: "question.cancelled", form: entry.form, message })
+    entry.resolve(null)
+    return true
+  }
+
   // ---- running ----
   interrupt(id) {
     const c = this.runs.get(id)
@@ -304,6 +369,8 @@ class Engine {
       c.abort()
     } catch {}
     for (const [pid, p] of [...this.pending]) if (p.session && p.session.id === id) this.replyPermission(pid, "deny")
+    // V-10: a dead run must not leave an answerable question card behind.
+    for (const form of [...this.forms.values()]) if (form.sessionID === id) this.cancelForm(form.id, "The run was stopped.")
     this._emit(id, { type: "done", reason: "interrupted" })
     c.orphaned = true
     if (c.killTimer) clearTimeout(c.killTimer)

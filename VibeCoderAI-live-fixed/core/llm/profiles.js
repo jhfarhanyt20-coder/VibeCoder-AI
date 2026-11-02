@@ -76,16 +76,6 @@ const BUILTIN = [
     contextLimit: 64000,
     maxOutput: 8192,
   },
-  {
-    id: "ollama",
-    label: "Ollama (local, no key)",
-    format: "openai-chat",
-    baseURL: "http://127.0.0.1:11434/v1",
-    model: "qwen2.5-coder",
-    noAuth: true,
-    contextLimit: 32768,
-    maxOutput: 4096,
-  },
 ]
 
 const read = (f, fallback) => {

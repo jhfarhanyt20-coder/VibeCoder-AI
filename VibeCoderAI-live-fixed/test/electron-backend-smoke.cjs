@@ -143,6 +143,16 @@ async function main() {
   assert.equal(initialCatalog.source.profilesFile, path.join(tempHome, "profiles.json"))
   assert.equal(initialCatalog.source.authFile, path.join(tempHome, "auth.json"))
   assert.ok(initialCatalog.models.every((row) => !row.isBuiltin || row.hasKey), "unconfigured built-in providers must not crowd the model picker")
+  // A fresh VIBE_HOME has no configured provider. Add one explicitly so this
+  // test never depends on a no-auth built-in provider shipping with the app.
+  await invoke("providerSave", {
+    id: "smoke-provider",
+    name: "Smoke provider",
+    baseURL: "http://127.0.0.1:9/v1",
+    apiFormat: "chat",
+    apiKey: "test-only-key",
+    models: [{ id: "smoke-model", context: 8192, output: 1024 }],
+  })
   const session = await invoke("createSession", { directory: process.cwd(), title: "Backend smoke test" })
   assert.ok(session.id)
   assert.equal((await invoke("getMessages", { sessionID: session.id })).length, 0)

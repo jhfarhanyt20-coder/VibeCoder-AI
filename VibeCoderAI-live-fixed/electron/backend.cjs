@@ -145,7 +145,7 @@ function selectedProfileId() {
     const pid = selectedModel.split("/")[0]
     if (available.has(pid)) return pid
   }
-  const preferred = ["openai", "ollama", "groq-gpt-oss-120b"].find((id) => available.has(id))
+  const preferred = ["openai", "groq-gpt-oss-120b"].find((id) => available.has(id))
   return preferred || rows[0]?.providerID || null
 }
 function profileFormat(value) {

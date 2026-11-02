@@ -1865,6 +1865,30 @@ test("V-19: the replaced head is archived on disk and never sent to the model", 
   assert.ok(session.messages.every((msg) => !msg.archive))
 })
 
+test("deleting a session is permanent: a late save cannot resurrect it and its archive is removed", async () => {
+  const home = tmp()
+  const vibe = createVibe({ home, permission: "allow" })
+  await vibe.profiles.upsert({ id: "p", format: "openai-chat", baseURL: "http://127.0.0.1:1/v1", model: "m", noAuth: true })
+  const s = await vibe.session.create({ dir: tmp(), profile: "p" })
+  // The object a run that is still winding down holds in memory.
+  const inFlight = vibe.engine.getSession(s.id)
+  const file = path.join(home, "sessions", s.id + ".json")
+  const archive = path.join(home, "sessions", s.id + ".archive.json")
+  assert.equal(fs.existsSync(file), true)
+  fs.writeFileSync(archive, "[]")
+
+  await vibe.session.remove(s.id)
+  assert.equal(fs.existsSync(file), false, "session file is deleted")
+  assert.equal(fs.existsSync(archive), false, "compaction archive is deleted too")
+
+  // A finishing run calls store.save() with its old object after the delete.
+  vibe.engine.store.save(inFlight)
+  assert.equal(fs.existsSync(file), false, "a late save must not recreate a deleted session")
+
+  assert.equal((await vibe.session.list({})).some((r) => r.id === s.id), false, "deleted session is not listed")
+  assert.throws(() => vibe.engine.getSession(s.id), /Session not found/, "deleted session cannot be loaded")
+})
+
 test("V-20: a separate summary model writes the checkpoint with its own key", async () => {
   const compaction = require("../core/agent/compaction")
   const main = await mock(() => ({ chunks: [...chat.text("session model must not be called"), ...chat.end()] }))

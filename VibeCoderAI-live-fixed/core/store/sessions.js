@@ -9,6 +9,11 @@ class SessionStore {
     this.dir = path.join(home || homeDir(), "sessions")
     fs.mkdirSync(this.dir, { recursive: true })
     this.cache = new Map()
+    // Tombstones for deleted sessions. A run that is still winding down holds the
+    // old session object and calls save() from its finally block (and from inside
+    // the agent loop). Without this, deleting a session that has just been used
+    // silently rewrote its JSON file a moment later, so the session "came back".
+    this.removed = new Set()
   }
   file(id) {
     if (!/^ses_[0-9a-f]+$/.test(id)) throw new Error("Invalid session id")
@@ -39,6 +44,7 @@ class SessionStore {
     return s
   }
   get(id) {
+    if (this.removed.has(id)) throw new Error(`Session not found: ${id}`)
     if (this.cache.has(id)) return this.cache.get(id)
     let s
     try {
@@ -50,6 +56,9 @@ class SessionStore {
     return s
   }
   save(s) {
+    // A deleted session is a tombstone: ignore late saves from a run that is
+    // still finishing instead of recreating the file.
+    if (this.removed.has(s.id)) return s
     s.updatedAt = Date.now()
     this.cache.set(s.id, s)
     const f = this.file(s.id)
@@ -108,8 +117,13 @@ class SessionStore {
     const out = []
     for (const n of fs.readdirSync(this.dir)) {
       if (!n.endsWith(".json")) continue
+      // V-19 compaction archives are siblings named <id>.archive.json. They are
+      // not sessions, and a deleted session's archive must never surface either.
+      if (n.endsWith(".archive.json")) continue
+      const id = n.slice(0, -5)
+      if (this.removed.has(id)) continue
       try {
-        const r = this._row(path.join(this.dir, n), n.slice(0, -5))
+        const r = this._row(path.join(this.dir, n), id)
         if (!r || (dir && path.resolve(dir) !== r.dir)) continue
         // Subagent sessions are internal child runs. They must not show up in
         // the user's session list; pass includeSubagents for cleanup/telemetry.
@@ -126,9 +140,32 @@ class SessionStore {
     return s
   }
   remove(id) {
+    this.removed.add(id)
     this.cache.delete(id)
+    let base = null
     try {
-      fs.unlinkSync(this.file(id))
+      base = this.file(id)
+    } catch {
+      return // invalid id: nothing on disk to delete
+    }
+    // The session file and its V-19 compaction archive (<id>.archive.json) must
+    // both go, or the deleted history would linger on disk.
+    const archive = base.replace(/\.json$/, ".archive.json")
+    for (const f of [base, archive]) {
+      try {
+        fs.unlinkSync(f)
+      } catch {}
+    }
+    // Clean up an interrupted atomic write for this session, if one is left.
+    try {
+      const prefix = path.basename(base) + "."
+      for (const n of fs.readdirSync(this.dir)) {
+        if (n.startsWith(prefix) && n.endsWith(".tmp")) {
+          try {
+            fs.unlinkSync(path.join(this.dir, n))
+          } catch {}
+        }
+      }
     } catch {}
   }
 }

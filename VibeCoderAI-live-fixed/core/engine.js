@@ -203,12 +203,20 @@ class Engine {
     return this.store.rename(id, title)
   }
   removeSession(id) {
-    this.interrupt(id)
+    // A deleted session must stop immediately: a graceful interrupt lets the run
+    // keep saving the session (its finally block rewrites the JSON file), which
+    // made deletions reappear. forceStop marks the run orphaned so its late
+    // events and saves are ignored; the session store also tombstones the id as a
+    // second line of defence.
+    if (this.runs.has(id)) this.forceStop(id)
     // V-01: child sessions are hidden from list(), so they must be removed here
     // or they would leak on disk for ever.
     try {
       for (const child of this.store.list({ includeSubagents: true })) {
-        if (child.parentId === id) this.store.remove(child.id)
+        if (child.parentId === id) {
+          if (this.runs.has(child.id)) this.forceStop(child.id)
+          this.store.remove(child.id)
+        }
       }
     } catch {}
     this.store.remove(id)

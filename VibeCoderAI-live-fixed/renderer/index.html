@@ -315,6 +315,7 @@
         <div class="nav-scroll">
           <div class="nav-group">Basics</div>
           <button class="nav-item active" data-page="general"><span class="ic">⚙</span> General</button>
+          <button class="nav-item" data-page="app-updates"><span class="ic">⬆</span> App Updates</button>
           <button class="nav-item" data-page="appearance"><span class="ic">🌗</span> Appearance</button>
           <button class="nav-item" data-page="model-settings"><span class="ic">🧠</span> Model settings</button>
           <button class="nav-item" data-page="browser-use"><span class="ic">🌐</span> Browser Use</button>
@@ -456,6 +457,98 @@
             <div class="s-row">
               <div class="s-name">Integrated terminal shell</div>
               <select><option>System default</option><option>PowerShell</option><option>cmd</option><option>Git Bash</option></select>
+            </div>
+          </div>
+        </div>
+
+        <!-- app updates -->
+        <div class="s-page" data-page="app-updates" hidden>
+          <div class="s-head-row">
+            <div>
+              <h1 class="s-title">App Updates</h1>
+              <p class="s-sub">Keep VibeCoder AI current with stable desktop releases. Your data (API keys, sessions, providers, MCP, skills, plugins) is never touched by an update.</p>
+            </div>
+          </div>
+
+          <div class="s-card">
+            <div class="s-row">
+              <div>
+                <div class="s-name">Stable channel</div>
+                <div class="s-desc" id="app-update-status">Checking…</div>
+              </div>
+              <span class="s-chip" id="app-update-version-chip">v—</span>
+            </div>
+            <div class="s-row">
+              <div>
+                <div class="s-name">Installed version</div>
+                <div class="s-static" id="app-update-installed">—</div>
+              </div>
+            </div>
+            <div class="s-row">
+              <div>
+                <div class="s-name">Latest stable <span class="dot-ind" id="app-update-dot" hidden></span></div>
+                <div class="s-static" id="app-update-latest">—</div>
+              </div>
+            </div>
+            <div class="s-row">
+              <div>
+                <div class="s-name">Last checked</div>
+                <div class="s-static" id="app-update-last-checked">Never</div>
+              </div>
+              <button class="save-btn" id="app-update-check" type="button">Check for Updates</button>
+            </div>
+          </div>
+
+          <div class="s-card" id="app-update-action-card" hidden>
+            <div class="s-row" id="app-update-progress-row" hidden>
+              <div>
+                <div class="s-name" id="app-update-download-label">Downloading update…</div>
+                <div class="s-desc" id="app-update-progress-text">0%</div>
+              </div>
+              <div class="app-update-bar"><div class="app-update-bar-fill" id="app-update-progress-fill" style="width:0%"></div></div>
+            </div>
+            <div class="s-row" id="app-update-install-row" hidden>
+              <div>
+                <div class="s-name">Download complete</div>
+                <div class="s-desc">The new version is ready to install. Updates never modify your data — they only replace the application files.</div>
+              </div>
+              <div class="app-update-actions">
+                <button class="save-btn ghost" id="app-update-later" type="button">Later</button>
+                <button class="save-btn" id="app-update-install" type="button">Install &amp; Restart</button>
+              </div>
+            </div>
+            <div class="s-row" id="app-update-error-row" hidden>
+              <div>
+                <div class="s-name">Update failed</div>
+                <div class="s-desc" id="app-update-error-text"></div>
+              </div>
+              <button class="save-btn" id="app-update-retry" type="button">Retry</button>
+            </div>
+          </div>
+
+          <div class="s-card">
+            <div class="s-row">
+              <div>
+                <div class="s-name">Check for updates automatically</div>
+                <div class="s-desc">On startup and periodically while running. Only stable releases are offered.</div>
+              </div>
+              <div class="toggle on" id="toggle-app-auto-check" role="switch" aria-checked="true" tabindex="0"></div>
+            </div>
+            <div class="s-row">
+              <div>
+                <div class="s-name">Download updates automatically</div>
+                <div class="s-desc">Download in the background once a stable update is found. You still choose when to install &amp; restart.</div>
+              </div>
+              <div class="toggle on" id="toggle-app-auto-download" role="switch" aria-checked="true" tabindex="0"></div>
+            </div>
+          </div>
+
+          <div class="s-card" id="app-update-notes-card" hidden>
+            <div class="s-row">
+              <div>
+                <div class="s-name">Release notes</div>
+                <div class="s-desc" id="app-update-notes"></div>
+              </div>
             </div>
           </div>
         </div>

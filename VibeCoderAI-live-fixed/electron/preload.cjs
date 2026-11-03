@@ -48,6 +48,8 @@ const api = {
   renameSession: call("renameSession"),
   deleteSession: call("deleteSession"),
   revertSession: call("revertSession"),
+  undoSession: call("undoSession"),
+  listSnapshots: call("listSnapshots"),
 
   // runs
   prompt: call("prompt"),
@@ -157,6 +159,21 @@ const api = {
   logError: call("logError"),
   openErrorLog: call("openErrorLog"),
   toast: (m) => ipcRenderer.invoke("vibe:notify", { title: "VibeCoder AI", body: String(m || "") }).catch(() => {}),
+
+  // ---- desktop app auto-update (stable channel, production only) ----
+  appUpdateStatus: call("appUpdateStatus"),
+  appUpdateSetPrefs: call("appUpdateSetPrefs"),
+  checkForAppUpdate: (arg) => ipcRenderer.invoke("vibe:appUpdateCheck", arg),
+  downloadAppUpdate: () => ipcRenderer.invoke("vibe:appUpdateDownload"),
+  installAppUpdate: () => ipcRenderer.invoke("vibe:appUpdateInstall"),
+  onAppUpdateEvent(cb) {
+    if (typeof cb !== "function") return () => {}
+    const h = (_event, payload) => {
+      try { cb(payload) } catch {}
+    }
+    ipcRenderer.on("vibe:app-update-event", h)
+    return () => ipcRenderer.removeListener("vibe:app-update-event", h)
+  },
 
   // live engine events -> renderer handlers
   onEvent(cb) {

@@ -13,7 +13,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node test/core-test.mjs && node test/agents-test.mjs && node test/skills-test.mjs && node test/electron-backend-smoke.cjs && node test/compaction-ui-regression.mjs && node test/subagent-ui-regression.mjs",
+    "test": "node test/core-test.mjs && node test/agents-test.mjs && node test/skills-test.mjs && node test/electron-backend-smoke.cjs && node test/compaction-ui-regression.mjs && node test/subagent-ui-regression.mjs && node test/app-updater-test.cjs",
     "serve": "node cli/vibe.js serve",
     "app": "electron electron/main.cjs",
     "dev": "electron electron/main.cjs --dev",
@@ -61,6 +61,16 @@
       "createStartMenuShortcut": true,
       "shortcutName": "VibeCoder AI",
       "artifactName": "VibeCoderAI-v2-${version}.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "GITHUB_OWNER",
+      "repo": "GITHUB_REPOSITORY",
+      "releaseType": "release",
+      "publishAutoUpdate": true
     }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
   }
 }

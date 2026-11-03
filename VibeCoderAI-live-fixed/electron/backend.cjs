@@ -14,6 +14,7 @@ const { app, BrowserWindow, ipcMain, dialog, clipboard, shell, Notification } = 
 const { createVibe } = require("../sdk")
 const { createServer } = require("../cli/server")
 const { convertMessages } = require("./messages.cjs")
+const updater = require("./updater.cjs")
 const { homeDir } = require("../core/util")
 const profileStore = require("../core/llm/profiles")
 const providerMeta = require("../core/llm/provider-meta")
@@ -38,6 +39,7 @@ let serverToken = process.env.VIBE_SERVE_TOKEN || null
 let eventOff = null
 let registered = false
 let browserResultRegistered = false
+let appUpdateRegistered = false
 let providerWatcher = null
 let providerWatchTimer = null
 let providerWatcherStarted = false
@@ -115,7 +117,7 @@ function requireSession(id) {
   if (!id) throw new Error("No active session. Create or open a session first.")
   return engine.getSession(id)
 }
-function persistUIState() { writeJson(uiStateFile, { directory: currentDirectory, selectedModel, activeAgent }) }
+function persistUIState() { writeJson(uiStateFile, { directory: currentDirectory, selectedModel, activeAgent, [updater.PREF_KEY]: updater.serializePrefs() }) }
 function send(channel, payload) {
   try { if (win && !win.isDestroyed() && win.webContents && !win.webContents.isDestroyed()) win.webContents.send(channel, payload) } catch {}
 }
@@ -541,6 +543,8 @@ const handlers = {
   renameSession: async (a = {}) => { const s = engine.renameSession(idOf(a), a.title || a.name || "New session"); emitUI("session.renamed", s.id, { session: { id: s.id, title: s.title } }); return s },
   deleteSession: async (a = {}) => { const id = idOf(a); engine.removeSession(id); if (activeSessionId === id) activeSessionId = null; emitUI("session.deleted", id, { sessionID: id }); return { deleted: true } },
   revertSession: async (a = {}) => engine.revertSession(idOf(a), a.messageID || a.messageId),
+  undoSession: async (a = {}) => engine.undoSession(idOf(a), a.messageID || a.messageId),
+  listSnapshots: async (a = {}) => engine.listSnapshots(idOf(a)),
   prompt: async (a = {}) => {
     const id = idOf(a); requireSession(id)
     if (engine.isBusy(id)) throw new Error("Session is already running.")
@@ -613,7 +617,7 @@ const handlers = {
     s.rules = permissions.map((p) => ({ tool: String(p.action || "*"), pattern: String(p.resource || "*"), action: ["allow", "ask", "deny"].includes(String(p.effect)) ? String(p.effect) : "ask", exact: false }))
     engine.store.save(s); return { updated: s.rules.length }
   },
-  listPermissionRequests: async () => [...engine.pending.entries()].map(([id, p]) => ({ id, permissionId: id, sessionID: p.session?.id, action: p.tool, tool: p.tool, resource: p.subject, resources: p.subject ? [p.subject] : [] })),
+  listPermissionRequests: async () => [...engine.pending.entries()].map(([id, p]) => ({ id, permissionId: id, sessionID: p.session?.parentId || p.session?.id, subagentSessionID: p.session?.parentId ? p.session.id : undefined, action: p.tool, tool: p.tool, resource: p.subject, resources: p.subject ? [p.subject] : [] })),
   replyPermission: async (a = {}) => { const id = a.requestID || a.permissionId || a.id; const decision = a.decision === "reject" ? "deny" : a.decision; if (!engine.replyPermission(id, decision)) throw new Error("Permission request is no longer pending."); emitUI("session.permissions", a.sessionID, { resolved: true, requestID: id, decision }); return { replied: true } },
   listForms: async (a = {}) => engine.listForms(a.sessionID || a.sessionId || null),
   replyForm: async (a = {}) => {
@@ -869,15 +873,27 @@ const handlers = {
   browserFill: async (a = {}) => normalizeResult(await engine.browserFill(a)),
   browserPress: async (a = {}) => normalizeResult(await engine.browserPress(a)),
   browserScroll: async (a = {}) => normalizeResult(await engine.browserScroll(a)),
+  // ---- Desktop auto-update status + preferences (read-only / safe) ----
+  appUpdateStatus: async () => {
+    if (!updater.enabled()) {
+      return { enabled: false, version: require("../package.json").version || null, channel: "stable", state: "disabled", payload: null, lastCheckedAt: null, prefs: updater.serializePrefs() }
+    }
+    return updater.getStatus()
+  },
+  appUpdateSetPrefs: async (a = {}) => {
+    const saved = updater.setPreferences(a)
+    persistUIState() // persist the prefs into electron-ui-state.json
+    return saved
+  },
 }
 
 const preloadNames = [
   "info","setMode","getAllUsage","clearSessionRules","browserCreateTab","browserCloseTab","browserListTabs","browserCurrent","browserNavigate","browserScreenshot","browserEvaluate","browserSnapshot","browserClick","browserFill","browserPress","browserScroll",
-  "listSessions","createSession","getMessages","renameSession","deleteSession","revertSession","prompt","resumeRun","interrupt","compactSession","getCompactionSettings","setCompactionSettings",
+  "listSessions","createSession","getMessages","renameSession","deleteSession","revertSession","undoSession","listSnapshots","prompt","resumeRun","interrupt","compactSession","getCompactionSettings","setCompactionSettings",
   "listShells","shellOutput","backgroundSession","backgroundShell","cancelShell","setPermissions","listPermissionRequests","replyPermission","listForms","replyForm","cancelForm",
   "listModels","listAllModels","listModelLimits","setModel","providerCatalog","providerList","providerSave","providerRemove","providerDisabled","providerKey","providerModels","providerModel","providerMeta",
   "cwd","setDirectory","getDirectory","gitBranch","pickProject","pickAttachments","readAttachment","ensureAgent","switchAgent","listAgents","setAgentDisabled","mcpList","mcpAdd","mcpRemove","subagentCreate","subagentList","subagentStatus","subagentResult","subagentDetails","subagentResume","subagentStop","subagentToggle",
-  "pluginList","pluginAdd","pluginRemove","builtins","installBuiltinPlugin","removeBuiltinPlugin","marketplace","installSkill","removeSkill","installCustomSkill","removeCustomSkill","importGitHubSkills","registryAdd","registryRemove","memoryPath","memoryList","memoryAdd","memoryRemove","openMemoryFile","todoList","todoSave","cliInfo","cliInstallTested","cliUpdateCheck","authStatus","authConnect","authDisconnect","upgradeInfo","startUpgrade","ownerScan","ownerVerify","notify","openExternal","restartEvents","logError","openErrorLog"
+  "pluginList","pluginAdd","pluginRemove","builtins","installBuiltinPlugin","removeBuiltinPlugin","marketplace","installSkill","removeSkill","installCustomSkill","removeCustomSkill","importGitHubSkills","registryAdd","registryRemove","memoryPath","memoryList","memoryAdd","memoryRemove","openMemoryFile","todoList","todoSave","cliInfo","cliInstallTested","cliUpdateCheck","authStatus","authConnect","authDisconnect","upgradeInfo","startUpgrade","ownerScan","ownerVerify","notify","openExternal","restartEvents","logError","openErrorLog","appUpdateStatus","appUpdateSetPrefs"
 ]
 
 function initBackend(targetWin, { port = Number(process.env.VIBE_SERVE_PORT || 4096), serve = process.env.VIBE_SERVE !== "0" } = {}) {
@@ -900,6 +916,27 @@ function initBackend(targetWin, { port = Number(process.env.VIBE_SERVE_PORT || 4
       const manager = typeof engine._browserManager === "function" ? engine._browserManager() : null
       if (!manager || typeof manager.resolveCommand !== "function") throw new Error("Browser bridge is unavailable")
       return manager.resolveCommand(payload)
+    })
+  }
+  if (!appUpdateRegistered) {
+    appUpdateRegistered = true
+    // Privileged updater actions (check / download / install) are registered on
+    // their own channels so the sender identity can be validated before anything
+    // runs. The renderer never chooses the URL or touches electron-updater.
+    const requireTrusted = (event) => {
+      if (!win || !event || event.sender !== win.webContents) throw new Error("Untrusted updater request")
+    }
+    ipcMain.handle("vibe:appUpdateCheck", (event, a = {}) => {
+      requireTrusted(event)
+      return updater.checkForUpdates({ silent: !!a.silent }).then((r) => ({ ok: r.ok, error: r.error || null, alreadyChecking: !!r.alreadyChecking }))
+    })
+    ipcMain.handle("vibe:appUpdateDownload", (event) => {
+      requireTrusted(event)
+      return updater.downloadUpdate().then((r) => ({ ok: r.ok, error: r.error || null }))
+    })
+    ipcMain.handle("vibe:appUpdateInstall", (event) => {
+      requireTrusted(event)
+      return updater.installUpdate().then((r) => ({ ok: r.ok, error: r.error || null }))
     })
   }
   if (win && typeof win.on === "function") {
@@ -944,5 +981,8 @@ const persisted = readJson(uiStateFile, {})
 if (persisted.directory && fs.existsSync(persisted.directory)) { try { currentDirectory = safeResolveDirectory(persisted.directory) } catch {} }
 if (typeof persisted.selectedModel === "string") selectedModel = persisted.selectedModel
 if (typeof persisted.activeAgent === "string") { activeAgent = persisted.activeAgent; engine.agentName = activeAgent }
+// Restore the desktop auto-update preferences (persisted under VIBE_HOME, never
+// inside the install directory).
+if (persisted[updater.PREF_KEY]) updater.deserializePrefs(persisted[updater.PREF_KEY])
 
 module.exports = { initBackend, shutdownBackend, getServer: () => server, getToken: () => serverToken, app, engine, vibe }

@@ -629,9 +629,11 @@ const U = window.VibeUsage
 let usage = U.emptyUsage()
 let ctxLimits = new Map() // "provider/model" -> context window (tokens)
 let ctxLimitsAt = 0
+let ctxLimitsStale = false
 
 async function loadCtxLimits() {
-  if (ctxLimits.size || Date.now() - ctxLimitsAt < 30000) return
+  if (!ctxLimitsStale && (ctxLimits.size || Date.now() - ctxLimitsAt < 30000)) return
+  ctxLimitsStale = false
   ctxLimitsAt = Date.now()
   try {
     const res = await vibe.listModelLimits()
@@ -797,16 +799,18 @@ async function maybeAutoCompact(delay = 1200) {
   if (!state.autoCompact || state.compacting || state.running) return
   if (!state.activeSessionID) return
   if (Date.now() < state.compactCooldownUntil) return
+  const scheduledFor = state.activeSessionID // pin: never compact a different session than the one measured
   await loadCtxLimits()
+  if (state.activeSessionID !== scheduledFor) return
   const snap = usageSnapshot()
   if (!snap.limit || !snap.used || !U.shouldAutoCompact(snap.used, snap.limit)) return
   if (state.compactTimer) clearTimeout(state.compactTimer)
   state.compactTimer = setTimeout(() => {
     state.compactTimer = null
     const now = usageSnapshot()
-    if (!state.compacting && !state.running && state.activeSessionID && now.limit &&
+    if (!state.compacting && !state.running && state.activeSessionID === scheduledFor && now.limit &&
         U.shouldAutoCompact(now.used, now.limit)) {
-      compactNow({ reason: "auto" })
+      compactNow({ reason: "auto", sessionID: scheduledFor })
     }
   }, Math.max(0, delay))
 }
@@ -891,6 +895,10 @@ function finishCompaction(status, opts = {}) {
     state.compactWatch = null
   }
   state.compacting = false
+  if ((status === "done" || status === "overbudget") && Number(opts.after) > 0) {
+    usage.last = { tokens: { input: Number(opts.after) }, modelKey: usage.last ? usage.last.modelKey : null }
+    updateUsageRing()
+  }
   updateRunBadge()
   showCompaction(status, opts)
   state.compactTrigger = null
@@ -929,9 +937,12 @@ function quietCompactionEnd() {
   updateRunBadge()
 }
 
-async function compactNow({ reason = "manual" } = {}) {
-  const sessionID = state.activeSessionID
-  if (!sessionID || state.compacting) return false
+async function compactNow({ reason = "manual", sessionID: pinned = null } = {}) {
+  const sessionID = pinned || state.activeSessionID
+  if (!sessionID || state.compacting || sessionID !== state.activeSessionID) return false
+  // True when the user moved to another session while this one was compacting.
+  // The backend still finishes the right session; the UI just must not touch the new one.
+  const switchedAway = () => state.activeSessionID !== sessionID
   state.compacting = true
   state.compactTrigger = reason
   state.compactCooldownUntil = 0
@@ -939,11 +950,12 @@ async function compactNow({ reason = "manual" } = {}) {
   showCompaction("running", { reason, summaryModel: state.selectedModel || "current session model" })
   if (state.compactWatch) clearTimeout(state.compactWatch)
   state.compactWatch = setTimeout(() => {
-    if (!state.compacting) return
+    if (!state.compacting || switchedAway()) return
     finishCompaction("failed", { reason, error: "No response from the compaction step (timed out)" })
   }, COMPACT_TIMEOUT_MS)
   try {
     const res = await vibe.compactSession({ sessionID, reason })
+    if (switchedAway()) return !!(res && res.ok)
     if (!res || !res.ok) {
       const error = (res && res.error) || "unknown error"
       // Auto is a hint, not a command: a session with nothing to summarize is fine.
@@ -956,6 +968,7 @@ async function compactNow({ reason = "manual" } = {}) {
     }
     return true
   } catch (e) {
+    if (switchedAway()) return false
     if (reason === "auto" && /nothing to compact/i.test(String(e))) {
       quietCompactionEnd()
       return false
@@ -2013,13 +2026,71 @@ function openSession(id) {
   state.retryCount = 0
 }
 
+/* ---------- queued prompts (typed while the agent is running) ---------- */
+const queuedPrompts = [] // { sid, text }
+
+function renderQueueStrip() {
+  const host = $("composer")
+  if (!host) return
+  let el = $("queue-strip")
+  const mine = queuedPrompts.filter((q) => q.sid === state.activeSessionID)
+  if (!mine.length) { if (el) el.remove(); return }
+  if (!el) {
+    el = document.createElement("div")
+    el.id = "queue-strip"
+    el.style.cssText = "display:flex;align-items:center;gap:8px;padding:6px 12px;font-size:12px;opacity:.85;border-bottom:1px solid rgba(255,255,255,.08)"
+    host.prepend(el)
+  }
+  el.textContent = ""
+  const label = document.createElement("span")
+  label.style.cssText = "flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+  label.textContent = `⏳ Queued (${mine.length}): ${mine[0].text.replace(/\s+/g, " ").slice(0, 120)}`
+  const x = document.createElement("button")
+  x.type = "button"
+  x.textContent = "✕"
+  x.title = "Remove queued message(s)"
+  x.style.cssText = "background:none;border:0;color:inherit;cursor:pointer"
+  x.onclick = () => { clearQueuedPrompts(); }
+  el.append(label, x)
+}
+
+function clearQueuedPrompts() {
+  queuedPrompts.length = 0
+  renderQueueStrip()
+}
+
+function queuePrompt() {
+  const ta = $("input")
+  const text = ta.value.trim()
+  if (!text || !state.activeSessionID) return
+  queuedPrompts.push({ sid: state.activeSessionID, text })
+  ta.value = ""
+  $("btn-send").disabled = false
+  renderQueueStrip()
+}
+
+async function drainQueuedPrompt() {
+  if (state.running || sendInFlight || state.userStopped || state.retryTimer) return
+  const i = queuedPrompts.findIndex((q) => q.sid === state.activeSessionID)
+  if (i < 0) { renderQueueStrip(); return }
+  const [item] = queuedPrompts.splice(i, 1)
+  renderQueueStrip()
+  const ta = $("input")
+  if (ta.value.trim()) { // user is typing something new: put the queued text first, keep theirs
+    ta.value = item.text + "\n\n" + ta.value
+  } else ta.value = item.text
+  await send()
+}
+
 let sendInFlight = false
 async function send() {
   // Prevent double-click / Enter+click races while provider selection and session
   // setup contain asynchronous IPC calls. Never enqueue a second prompt into a busy run.
   if (sendInFlight) return
   if (state.running) {
-    showError("Agent is busy", "Wait for the current response, or press Stop before sending another message.", { key: "send-busy" })
+    // OpenCode-style: Enter while the agent works queues the message; it is sent
+    // automatically as soon as the current run finishes successfully.
+    queuePrompt()
     return
   }
   sendInFlight = true
@@ -2301,7 +2372,7 @@ function showRunFailureInline(msg, target) {
   // because nothing was persisted for the assistant. Create the bubble instead
   // of dropping the error: a failed run that looks like silence is the worst
   // failure mode ("my message never got an answer").
-  const t = target || lastAssistantBubble() || addMsg("assistant", "")
+  const t = target || runEndBubble()
   t.classList.remove("thinking")
   t.textContent = `⚠ ${msg}`
   addRetryButtonToBubble(t)
@@ -2509,12 +2580,8 @@ function retryRow() {
     el.append(spin, text, stop)
     // Insert directly after the last assistant bubble, not at the end of the container.
     // This keeps the retry counter inline below the VibeCoder message.
-    const lastAssistant = [...box.querySelectorAll(".msg.assistant")].at(-1)
-    if (lastAssistant) {
-      lastAssistant.insertAdjacentElement("afterend", el)
-    } else {
-      box.appendChild(el)
-    }
+    // Always the very end of the timeline: tool rows may follow the last assistant bubble.
+    box.appendChild(el)
   }
   return el
 }
@@ -2692,6 +2759,7 @@ $("btn-send").onclick = async () => {
     // stop the running agent
     state.userStopped = true
     state.interruptReason = "user"
+    clearQueuedPrompts() // Stop drops anything still waiting
     stopRetryCountdown()
     if (state.retryTimer) {
       clearTimeout(state.retryTimer)
@@ -2736,6 +2804,20 @@ document.addEventListener("keydown", (e) => {
 const msgBuffers = new Map() // "assistantMessageID#ordinal" -> streamed text
 const textEnded = new Map() // same key -> final trimmed text (duplicate guard)
 const typing = { el: null, full: "", shown: 0, timer: null }
+
+/** Bubble for run-level errors/stop notices. Reuse the last assistant bubble only when
+ *  nothing but a retry row/compaction card follows it; otherwise (tool rows came after it)
+ *  add a fresh bubble at the end so the error appears where the run actually stopped. */
+function runEndBubble() {
+  const last = lastAssistantBubble()
+  const msg = last ? last.closest(".msg") : null
+  if (msg) {
+    let n = msg.nextElementSibling
+    while (n && (n.classList.contains("retry-row") || n === liveCompactEl)) n = n.nextElementSibling
+    if (!n) return last
+  }
+  return addMsg("assistant", "")
+}
 
 function lastAssistantBubble() {
   return [...document.querySelectorAll(".msg.assistant .bubble")].at(-1) ?? null
@@ -2905,7 +2987,7 @@ vibe.onEvent(async (event) => {
   // Compaction (auto or manual): show the checkpoint while it streams, then
   // re-render the canonical timeline once the summary is stored.
   if (type.startsWith("session.compaction.")) {
-    if (sid && sid !== state.activeSessionID) return
+    if (sid !== state.activeSessionID) return
     if (type === "session.compaction.started") {
       // The compact endpoint is always admitted as a manual request, so use our
       // own trigger to label an automatic checkpoint correctly.
@@ -3083,7 +3165,7 @@ vibe.onEvent(async (event) => {
       if (pretty === state.lastToolError) hideError()
     }
 
-    const target = lastAssistantBubble()
+    const target = runEndBubble()
     if (target) {
       target.classList.remove("thinking")
       target.textContent = failed ? `⚠ ${pretty}` : `⏹ ${pretty}`
@@ -3159,6 +3241,7 @@ vibe.onEvent(async (event) => {
     hideBranchChip()
     const target = lastAssistantBubble()
     if (target?.classList.contains("thinking")) target.textContent = ""
+    if (queuedPrompts.length) setTimeout(drainQueuedPrompt, 900) // after the timeline re-render below
     // re-render the canonical timeline (opencode style groups, file cards)
     setTimeout(() => {
       if (!state.activeSessionID) return
@@ -3209,7 +3292,7 @@ vibe.onEvent(async (event) => {
     hideBranchChip()
     if (type === "session.execution.failed" && data.source === "subagent-result") {
       const msg = realErrorText(data.error) || "The main agent could not report the completed subagent result."
-      showRunFailureInline(msg, lastAssistantBubble())
+      showRunFailureInline(msg, runEndBubble())
       notifyAgent("Could not report subagent result", msg)
       return
     }
@@ -3254,7 +3337,7 @@ vibe.onEvent(async (event) => {
       const unexpectedAbort = generic && !knownStop && !state.lastRealError
       if (generic && knownStop) {
         // A stop we can explain: say it, but do not raise an error.
-        const target = lastAssistantBubble()
+        const target = runEndBubble()
         if (target) target.textContent = `⏹ ${interruptText()}`
         hideError("execution")
         return
@@ -3264,7 +3347,7 @@ vibe.onEvent(async (event) => {
         : real
           ? realErrorText(real) || "The agent stopped unexpectedly."
           : "The agent stopped unexpectedly."
-      const target = lastAssistantBubble()
+      const target = runEndBubble()
       // Timeouts / rate limits / 5xx / unknown aborts: retry automatically and
       // keep a manual Retry available afterwards.
       if (data.retryable !== false && !state.userStopped && (isRetryableRunError(real) || unexpectedAbort) && scheduleRetry(msg)) {
@@ -3286,7 +3369,7 @@ vibe.onEvent(async (event) => {
       if (known) {
         if (reason !== "user" && !state.userStopped) {
           const msg = interruptText()
-          const target = lastAssistantBubble()
+          const target = runEndBubble()
           if (target) target.textContent = `⏹ ${msg}`
           hideError("execution")
           notifyAgent("Agent interrupted", msg)
@@ -3678,6 +3761,228 @@ if (cliUpdateBtn) cliUpdateBtn.onclick = () => refreshCliUpdates({ force: true }
 // process), plus a refresh whenever the settings page opens.
 setTimeout(() => { refreshCliUpdates().catch(() => {}) }, 8000)
 
+/* ---------- desktop app auto-updates (stable channel, production) ---------- */
+// Entirely separate from the CLI update screen above. Talks only through the
+// preload bridge (vibe.checkForAppUpdate / downloadAppUpdate / installAppUpdate
+// / onAppUpdateEvent) - never directly to electron-updater.
+let appUpdateState = { enabled: false, version: null, state: "idle", payload: null, lastCheckedAt: null, prefs: { autoCheck: true, autoDownload: true } }
+let appUpdateOff = null
+let appUpdateBusy = false
+
+function fmtVersion(v) { return v ? `v${v}` : "—" }
+function fmtLastChecked(ts) {
+  if (!ts) return "Never"
+  const d = new Date(ts)
+  if (isNaN(d.getTime())) return "Never"
+  return d.toLocaleString()
+}
+function clampPercent(p) { const n = Number(p) || 0; return Math.max(0, Math.min(100, n)) }
+
+function setToggle(el, on) {
+  if (!el) return
+  el.classList.toggle("on", !!on)
+  el.setAttribute("aria-checked", on ? "true" : "false")
+}
+
+function showAppUpdateRow(name, show) {
+  const el = document.getElementById(name)
+  if (el) el.hidden = !show
+}
+
+function renderAppUpdateStatus() {
+  const status = document.getElementById("app-update-status")
+  const chip = document.getElementById("app-update-version-chip")
+  const installed = document.getElementById("app-update-installed")
+  const latest = document.getElementById("app-update-latest")
+  const last = document.getElementById("app-update-last-checked")
+  const dot = document.getElementById("app-update-dot")
+  const notesCard = document.getElementById("app-update-notes-card")
+  const notes = document.getElementById("app-update-notes")
+
+  const s = appUpdateState
+  if (chip) chip.textContent = fmtVersion(s.version)
+  if (installed) installed.textContent = fmtVersion(s.version)
+
+  // Status line
+  let statusText = "Updates unavailable (source build)."
+  if (s.enabled) {
+    switch (s.state) {
+      case "checking": statusText = "Checking for the latest stable release…"; break
+      case "update-available": statusText = `Update available: ${fmtVersion(s.payload?.version)}`; break
+      case "update-not-available": statusText = "You're on the latest stable release."; break
+      case "downloading": statusText = "Downloading update…"; break
+      case "downloaded":
+      case "update-downloaded": statusText = "Download complete — ready to install."; break
+      case "error": statusText = "Update check could not complete."; break
+      case "disabled": statusText = "Updates are only available in the packaged app."; break
+      default: statusText = "Idle."
+    }
+  }
+  if (status) status.textContent = statusText
+
+  // Latest / dot
+  if (latest) latest.textContent = s.payload?.version ? fmtVersion(s.payload.version) : "—"
+  if (dot) dot.hidden = !(s.state === "update-available" || s.state === "downloading" || s.state === "update-downloaded")
+  if (last) last.textContent = fmtLastChecked(s.lastCheckedAt)
+
+  // Release notes
+  const hasNotes = s.payload?.notes
+  if (notesCard) notesCard.hidden = !hasNotes
+  if (notes) notes.textContent = hasNotes || ""
+}
+
+function renderAppUpdateActions() {
+  const actionCard = document.getElementById("app-update-action-card")
+  const progressRow = document.getElementById("app-update-progress-row")
+  const installRow = document.getElementById("app-update-install-row")
+  const errorRow = document.getElementById("app-update-error-row")
+  const progressText = document.getElementById("app-update-progress-text")
+  const progressFill = document.getElementById("app-update-progress-fill")
+  const checkBtn = document.getElementById("app-update-check")
+  const installBtn = document.getElementById("app-update-install")
+
+  const s = appUpdateState
+  if (!actionCard) return
+  actionCard.hidden = !(s.state === "downloading" || s.state === "update-downloaded" || s.state === "error")
+
+  showAppUpdateRow("app-update-progress-row", s.state === "downloading")
+  showAppUpdateRow("app-update-install-row", s.state === "update-downloaded")
+  showAppUpdateRow("app-update-error-row", s.state === "error")
+
+  if (progressText && progressFill) {
+    const p = s.state === "downloading" ? clampPercent(s.payload?.percent) : 0
+    progressText.textContent = s.state === "downloading" ? `${p}%` : ""
+    progressFill.style.width = `${p}%`
+  }
+  if (checkBtn) checkBtn.disabled = appUpdateBusy || s.state === "downloading"
+  if (installBtn) installBtn.disabled = appUpdateBusy
+}
+
+function applyAppUpdateEvent(ev) {
+  if (!ev || !ev.type) return
+  if (ev.type === "prefs") { if (ev.payload) appUpdateState.prefs = { ...appUpdateState.prefs, ...ev.payload }; setToggle($("toggle-app-auto-check"), appUpdateState.prefs.autoCheck); setToggle($("toggle-app-auto-download"), appUpdateState.prefs.autoDownload); renderAppUpdateStatus(); return }
+  appUpdateState.state = ev.type
+  appUpdateState.payload = ev.payload || null
+  if (ev.type === "checking") appUpdateBusy = true
+  else if (ev.type === "error") { appUpdateBusy = false; if (ev.payload?.error) { const et = document.getElementById("app-update-error-text"); if (et) et.textContent = ev.payload.error } }
+  else if (ev.type === "update-not-available" || ev.type === "update-available") { appUpdateBusy = false }
+  else if (ev.type === "downloading" || ev.type === "download-progress") { /* busy */ }
+  else if (ev.type === "update-downloaded") { appUpdateBusy = false }
+  renderAppUpdateStatus()
+  renderAppUpdateActions()
+}
+
+async function refreshAppUpdateStatus() {
+  if (!vibe.appUpdateStatus) return
+  try {
+    const res = await vibe.appUpdateStatus()
+    if (!res || res.ok === false) throw new Error((res && res.error) || "unknown error")
+    appUpdateState = res.data || appUpdateState
+    if (!appUpdateState.prefs) appUpdateState.prefs = { autoCheck: true, autoDownload: true }
+    setToggle($("toggle-app-auto-check"), appUpdateState.prefs.autoCheck)
+    setToggle($("toggle-app-auto-download"), appUpdateState.prefs.autoDownload)
+    renderAppUpdateStatus()
+    renderAppUpdateActions()
+  } catch (err) {
+    const status = document.getElementById("app-update-status")
+    if (status) status.textContent = `Could not load update status: ${(err && err.message) || err}`
+  }
+}
+
+async function doAppUpdateCheck() {
+  if (!vibe.checkForAppUpdate || appUpdateBusy) return
+  appUpdateBusy = true
+  const btn = document.getElementById("app-update-check")
+  if (btn) { btn.disabled = true; btn.textContent = "Checking…" }
+  try {
+    await vibe.checkForAppUpdate({})
+    // Wait for the async events (update-available / not-available / error) to
+    // arrive through onAppUpdateEvent; they repaint the UI.
+  } catch (err) {
+    const et = document.getElementById("app-update-error-text")
+    if (et) et.textContent = (err && err.message) || String(err)
+    appUpdateState.state = "error"
+    renderAppUpdateActions()
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Check for Updates" }
+  }
+}
+
+async function doAppUpdateDownload() {
+  if (!vibe.downloadAppUpdate) return
+  try { await vibe.downloadAppUpdate() }
+  catch (err) {
+    const et = document.getElementById("app-update-error-text")
+    if (et) et.textContent = (err && err.message) || String(err)
+    appUpdateState.state = "error"
+    renderAppUpdateActions()
+  }
+}
+
+async function doAppUpdateInstall() {
+  if (!vibe.installAppUpdate) return
+  const s = appUpdateState
+  const version = s.payload?.version ? "v" + s.payload.version : ""
+  // Ask for explicit consent before restarting. Never force an update.
+  const ok = await showDialog({
+    title: "Install & restart",
+    message: `Install ${version} now? The app will close and reopen on the new version.\n\nYour data (sessions, providers, API keys, skills, plugins) is kept untouched.`,
+    okText: "Install & Restart",
+    cancelText: "Later",
+  })
+  if (!ok) return
+  try {
+    const res = await vibe.installAppUpdate()
+    if (!res || res.ok === false) {
+      const msg = (res && res.error) || "Could not install the update"
+      const et = document.getElementById("app-update-error-text")
+      if (et) et.textContent = msg
+      appUpdateState.state = "error"
+      renderAppUpdateActions()
+    }
+    // On success the app restarts immediately (main process refuses if a run is active).
+  } catch (err) {
+    const et = document.getElementById("app-update-error-text")
+    if (et) et.textContent = (err && err.message) || String(err)
+    appUpdateState.state = "error"
+    renderAppUpdateActions()
+  }
+}
+
+function wireAppUpdates() {
+  if (!vibe.appUpdateStatus && !vibe.onAppUpdateEvent) return
+  if (appUpdateOff) { try { appUpdateOff() } catch {}; appUpdateOff = null }
+  if (vibe.onAppUpdateEvent) appUpdateOff = vibe.onAppUpdateEvent(applyAppUpdateEvent)
+
+  const checkBtn = document.getElementById("app-update-check")
+  if (checkBtn) checkBtn.onclick = doAppUpdateCheck
+  const installBtn = document.getElementById("app-update-install")
+  if (installBtn) installBtn.onclick = doAppUpdateInstall
+  const laterBtn = document.getElementById("app-update-later")
+  if (laterBtn) laterBtn.onclick = () => { appUpdateState.state = "idle"; renderAppUpdateActions() }
+  const retryBtn = document.getElementById("app-update-retry")
+  if (retryBtn) retryBtn.onclick = doAppUpdateCheck
+
+  // Toggles
+  const autoCheck = document.getElementById("toggle-app-auto-check")
+  if (autoCheck && vibe.appUpdateSetPrefs) autoCheck.onclick = () => {
+    const on = !autoCheck.classList.contains("on")
+    setToggle(autoCheck, on)
+    appUpdateState.prefs.autoCheck = on
+    vibe.appUpdateSetPrefs({ autoCheck: on }).catch(() => {})
+  }
+  const autoDownload = document.getElementById("toggle-app-auto-download")
+  if (autoDownload && vibe.appUpdateSetPrefs) autoDownload.onclick = () => {
+    const on = !autoDownload.classList.contains("on")
+    setToggle(autoDownload, on)
+    appUpdateState.prefs.autoDownload = on
+    vibe.appUpdateSetPrefs({ autoDownload: on }).catch(() => {})
+  }
+
+  refreshAppUpdateStatus().catch(() => {})
+}
+wireAppUpdates()
+
 /* ---------- dev-only: upgrade + rebuild from inside the app ---------- */
 // scripts/upgrade-opencode.cjs bumps the three pins, patches TESTED_CLI_VERSION,
 // runs npm test and npm run dist. Only available when the app runs from the
@@ -3840,6 +4145,7 @@ settingsNav.querySelectorAll(".nav-item").forEach((item) => {
     if (page === "model-settings") loadProviders()
     if (page === "skills") loadSkills()
     if (page === "usage") loadUsage()
+    if (page === "app-updates") refreshAppUpdateStatus()
   }
 })
 
@@ -4764,6 +5070,9 @@ function modelDisplayLabel(key) {
 }
 
 function applyProviderCatalog(data) {
+  // Context sizes may have changed in Model settings: re-read them for the ring.
+  ctxLimitsStale = true // keep showing the old numbers until the fresh ones arrive (no flicker)
+  setTimeout(() => { try { loadCtxLimits() } catch {} }, 0)
   if (!data || typeof data !== "object") return
   providerState.list = Array.isArray(data.custom) ? data.custom : []
   providerState.formats = Array.isArray(data.formats) ? data.formats : []
@@ -7583,9 +7892,16 @@ async function refreshForms() {
 
 function questionHistoryEl(part) {
   const st = part.state ?? {}
-  const questions = st.input?.questions ?? []
+  // Models sometimes send `questions` as a JSON string or a single object; never assume an array.
+  const asList = (v) => {
+    if (typeof v === "string") { try { v = JSON.parse(v) } catch { return v.trim() ? [{ question: v }] : [] } }
+    if (Array.isArray(v)) return v.map((q) => (q && typeof q === "object" ? q : { question: String(q ?? "") }))
+    return v && typeof v === "object" ? [v] : []
+  }
+  const questions = asList(st.input?.questions)
   if (!questions.length) return null
-  const answers = st.metadata?.answers ?? []
+  const rawAnswers = st.metadata?.answers
+  const answers = Array.isArray(rawAnswers) ? rawAnswers : (rawAnswers == null ? [] : [rawAnswers])
   const done = st.status === "completed"
   const el = document.createElement("div")
   el.className = "q-card history settled " + (done ? "answered" : "pending")

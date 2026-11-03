@@ -7,6 +7,7 @@
 const path = require("path")
 const { app, BrowserWindow, Menu, clipboard, shell } = require("electron")
 const { initBackend, shutdownBackend } = require("./backend.cjs")
+const updater = require("./updater.cjs")
 
 /* The native menu bar (File/Edit/View/Window) is not wanted - the app has its own
    UI. Copy/paste keeps working through the right-click menu and Ctrl+C/Ctrl+V
@@ -92,6 +93,17 @@ function createWindow() {
 
   // backend needs the window to push engine events
   initBackend(win)
+
+  // Production-only desktop auto-updater: broadcast updater state to the renderer
+  // over a secure IPC channel (the renderer never touches electron-updater).
+  const offUpdater = updater.onChange((type, payload) => {
+    try {
+      if (win && !win.isDestroyed() && win.webContents && !win.webContents.isDestroyed()) {
+        win.webContents.send("vibe:app-update-event", { type, payload })
+      }
+    } catch {}
+  })
+  win.on("closed", () => { try { offUpdater() } catch {} })
   return win
 }
 
@@ -123,6 +135,24 @@ if (!gotLock) {
 }
 
 app.whenReady().then(() => {
+  // Provide the updater with a live "is any agent work active?" check so it can
+  // refuse to install a restart while a run is in flight. The engine is owned by
+  // backend.cjs, so ask it for the live engine each time (never cache a copy).
+  updater.setBusyProvider(() => {
+    try {
+      const backend = require("./backend.cjs")
+      const engine = backend.engine
+      if (engine && typeof engine.runs === "object" && engine.runs) return engine.runs.size > 0
+    } catch {}
+    return false
+  })
+  // Production-only: start the stable-channel auto-updater and one quiet check
+  // on startup. Dev mode never checks (enabled() is false there).
+  if (updater.enabled()) {
+    updater.startPeriodicCheck()
+    setTimeout(() => updater.checkForUpdates({ silent: true }).catch(() => {}), 4000)
+  }
+
   createWindow()
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

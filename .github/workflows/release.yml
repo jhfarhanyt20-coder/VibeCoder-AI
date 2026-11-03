@@ -1,0 +1,50 @@
+name: Release stable VibeCoder AI
+
+# Trigger ONLY on version tags like v1.1.0. Ordinary commits never build or
+# publish a stable release (run the workflow on tag v* only).
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # needed to publish the release assets (NSIS installer + latest.yml)
+
+# The app source lives in VibeCoderAI-live-fixed/ under this repo. All commands
+# run there; the repo root only carries PLAN.md and .github/.
+env:
+  APP_DIR: VibeCoderAI-live-fixed
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ${{ env.APP_DIR }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: npm ci
+
+      - name: Run the test suite
+        working-directory: ${{ env.APP_DIR }}
+        run: npm test
+
+      - name: Build the Windows NSIS installer + publish update metadata
+        working-directory: ${{ env.APP_DIR }}
+        env:
+          # Release artifacts are uploaded to the GitHub Release for the tag.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win nsis --x64 --publish always
+
+      # Security: GITHUB_TOKEN is short-lived and scoped to this repository; it
+      # is never printed. For signed production releases, set a code-signing
+      # certificate secret and wire it here (see PLAN.md / README note) - the
+      # project has no certificate configured today, so builds are unsigned.

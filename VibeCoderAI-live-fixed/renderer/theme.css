@@ -1602,6 +1602,26 @@ body {
   flex-shrink: 0;
 }
 
+/* ---- desktop app updates ---- */
+.app-update-bar {
+  flex: 1;
+  min-width: 160px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.app-update-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.15s ease;
+}
+.app-update-actions { display: flex; gap: 8px; flex-shrink: 0; }
+#app-update-progress-row { align-items: center; }
+.app-update-bar + .s-desc { margin-top: 4px; }
+
 .model-detail {
   padding: 28px;
   overflow-y: auto;

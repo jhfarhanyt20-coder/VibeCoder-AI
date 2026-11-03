@@ -141,10 +141,38 @@ function usableForMessages(profile, system, toolSpecs, config) {
   return Math.max(0, usable - tokenCount(system || "") - tokenCount(safeStringify(toolSpecs || [])))
 }
 
+// A checkpoint always costs some tokens of its own (prefix + summary + project
+// context). Summarizing a head smaller than this cannot shrink the request.
+const MIN_USEFUL_HEAD_TOKENS = 256
+
+/**
+ * Decide whether an automatic checkpoint is worth running. It is not when the
+ * request is over budget only because the immutable system prompt + tool catalog
+ * are huge and the conversation itself is still tiny: replacing those few
+ * messages with a checkpoint would make the request bigger, not smaller.
+ *
+ * The "budget too small to write any summary" case is deliberately NOT skipped,
+ * so compact() still runs and reports the terminal failure (no model request is
+ * allowed in that situation).
+ */
 function needsCompaction({ system, messages, toolSpecs, lastInput, profile, config }) {
-  const { threshold } = limits(profile, config)
+  const { usable, threshold } = limits(profile, config)
   const measured = Number.isFinite(lastInput) && lastInput > 0 ? lastInput : 0
-  return Math.max(requestTokens(system, messages, toolSpecs), measured) >= threshold
+  if (Math.max(requestTokens(system, messages, toolSpecs), measured) < threshold) return false
+
+  const configuredKeep = config && config.keep && Number(config.keep.tokens) > 0 ? Math.floor(Number(config.keep.tokens)) : 0
+  const keepTokens = configuredKeep > 0
+    ? Math.min(configuredKeep, Math.max(1, usable - 1))
+    : Math.min(20000, Math.floor(usable * 0.2))
+  if (messagesTokens(messages) > keepTokens + MIN_USEFUL_HEAD_TOKENS) return true
+
+  // Nothing to gain. Only proceed if the summary itself cannot fit, because the
+  // caller must surface that failure instead of silently sending an impossible
+  // request.
+  const normalized = normalizeProfile(profile)
+  const maxOutput = Math.max(1, Math.min(normalized.maxOutput, 4096))
+  const fixedInput = tokenCount(SUMMARY_SYSTEM) + tokenCount(`<conversation>\n\n</conversation>\n\n${TEMPLATE}`) + MESSAGE_OVERHEAD
+  return usable - fixedInput - maxOutput - 64 < 48
 }
 
 /** Clear old tool outputs in a provided message array. Caller decides whether to commit the array. */

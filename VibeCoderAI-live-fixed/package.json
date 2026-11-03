@@ -64,8 +64,8 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "GITHUB_OWNER",
-      "repo": "GITHUB_REPOSITORY",
+      "owner": "jhfarhanyt20-coder",
+      "repo": "VibeCoder-AI",
       "releaseType": "release",
       "publishAutoUpdate": true
     }

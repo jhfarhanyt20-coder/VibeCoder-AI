@@ -28,7 +28,7 @@ function parseArgs(argv) {
 const HELP = `vibe - coding agent CLI
 
   vibe run "<prompt>"       run one task and exit        (-m profile  -C dir  -s session  -c continue  --yes)
-  vibe chat                 interactive chat             (/compact  /model <profile>  /new  /exit)
+  vibe chat                 interactive chat             (/compact  /undo  /model <profile>  /new  /exit)
   vibe serve [--port 4096]  local HTTP+SSE API for the SDK / app
   vibe models               list model profiles
   vibe profile add <id> <openai-chat|openai-responses|anthropic> <baseURL> <model> [contextLimit]
@@ -221,7 +221,7 @@ async function main() {
     let s = await getSession()
     const state = { yes: !!flags.yes, showReasoning: false }
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
-    console.log(dim(`vibe chat - ${s.profile} - ${dir}\n/compact  /model <profile>  /reasoning  /new  /exit   (Ctrl+C interrupts a running answer)`))
+    console.log(dim(`vibe chat - ${s.profile} - ${dir}\n/compact  /undo  /model <profile>  /reasoning  /new  /exit   (Ctrl+C interrupts a running answer)`))
     let busy = false
     rl.on("SIGINT", () => (busy ? vibe.session.interrupt(s.id) : rl.close()))
     for (;;) {
@@ -236,6 +236,17 @@ async function main() {
       if (line === "/reasoning") {
         state.showReasoning = !state.showReasoning
         console.log(dim("reasoning " + (state.showReasoning ? "shown" : "hidden")))
+        continue
+      }
+      if (line === "/undo") {
+        try {
+          const r = await vibe.session.undo(s.id)
+          s = await vibe.session.get(s.id)
+          console.log(dim(`undone: ${r.restored.length} restored, ${r.deleted.length} deleted, ${r.skipped.length} skipped; ${r.messagesDropped} message(s) dropped`))
+          for (const f of [...r.restored, ...r.deleted]) console.log(dim("  " + f))
+        } catch (err) {
+          console.error("Error: " + err.message)
+        }
         continue
       }
       if (line === "/compact") {

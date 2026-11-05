@@ -34,8 +34,8 @@ const projectDir = (dir) => path.join(dir || process.cwd(), ".vibe", "agents")
 const BUILTIN = [
   {
     id: "build",
-    name: "Build",
-    description: "Default coding agent with every tool.",
+    name: "Pilot",
+    description: "Default VibeCoder agent with every tool.",
     mode: "primary",
     system: "",
     permissions: [],
@@ -45,7 +45,7 @@ const BUILTIN = [
   },
   {
     id: "plan",
-    name: "Plan",
+    name: "Architect",
     description: "Explores and plans; normal project files cannot be edited.",
     mode: "primary",
     system:
@@ -55,6 +55,18 @@ const BUILTIN = [
       { action: "write", resource: "**", effect: "deny" },
       { action: "edit", resource: "**/plan/**", effect: "allow" },
       { action: "write", resource: "**/plan/**", effect: "allow" },
+      // Plan mode is read-only: shell is denied except a few inspection commands.
+      // Later rules win, so the redirect/output denies come last.
+      { action: "bash", resource: "**", effect: "deny" },
+      { action: "bash", resource: "git status*", effect: "allow" },
+      { action: "bash", resource: "git diff*", effect: "allow" },
+      { action: "bash", resource: "git log*", effect: "allow" },
+      { action: "bash", resource: "git show*", effect: "allow" },
+      { action: "bash", resource: "ls*", effect: "allow" },
+      { action: "bash", resource: "dir*", effect: "allow" },
+      { action: "bash", resource: "pwd", effect: "allow" },
+      { action: "bash", resource: "*>*", effect: "deny" },
+      { action: "bash", resource: "*--output*", effect: "deny" },
     ],
     steps: 60,
     hidden: false,
@@ -62,7 +74,7 @@ const BUILTIN = [
   },
   {
     id: "explore",
-    name: "Explore",
+    name: "Scout",
     description: "Reads and searches without editing files or running commands.",
     mode: "subagent",
     system: "You are an exploration agent. Search and read code or web sources, then report findings. Do not edit files and do not run commands.",
@@ -77,7 +89,7 @@ const BUILTIN = [
   },
   {
     id: "general",
-    name: "General",
+    name: "Maker",
     description: "General-purpose subagent with all built-in tools.",
     mode: "subagent",
     system: "You are a general assistant. Use the available tools to complete the task and report the result.",

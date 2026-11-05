@@ -5,9 +5,10 @@ Own CLI + own SDK + own agent loop. No OpenCode, no third-party packages. Node >
 ```
 core/llm/       openai-chat.js  openai-responses.js  anthropic.js  sse.js  http.js  profiles.js
 core/agent/     loop.js  compaction.js  prompt.js
-core/tools/     read write edit bash grep glob todowrite webfetch
+core/tools/     read write edit multiedit apply_patch list bash grep glob todowrite webfetch ... (+ editkit, diagnostics)
 core/perm/      rules.js          allow / ask / deny rules (+ workspace guard)
 core/store/     sessions.js       JSON sessions in ~/.vibe/sessions
+core/store/     snapshots.js      per-turn file snapshots for /undo (~/.vibe/snapshots)
 core/engine.js  ties it together
 sdk/index.js    createVibe() in-process, connect() to `vibe serve`
 cli/vibe.js     run / chat / serve / models / auth / compact ...
@@ -91,3 +92,21 @@ Provider selection is resolved against a fresh disk-backed `providerCatalog` bef
 - The renderer presents the existing checkpoint status card as the sole failure UI, removes the empty Thinking placeholder, and clears any stale retry countdown/Stop row.
 - Failed/over-budget checkpoint cards are moved to the end of the active timeline; the run remains locked until the matching execution-failed event arrives to prevent a prompt/event race.
 - Regression coverage includes a real engine test proving an unsafe compaction does not send an LLM request, plus source wiring checks for the UI/event path.
+
+
+## OpenCode-parity changes (this build)
+
+1. **Prompt bug fixed**: `${agentName}` was printed literally; the leaked example model name is gone.
+2. **Per-model prompt notes** (`modelHints` in `core/agent/prompt.js`: gpt/o-series, gemini, deepseek/grok/qwen/kimi/llama/glm) + a short *Code conduct* block (no commit/push unless asked, follow conventions, `file:line` references, secrets, todo usage, prefer dedicated tools) + git repo/branch in the environment block.
+3. **Permissions**: `node *test*` / `node *build*` are no longer auto-allowed (only `node --test*`). The **plan** agent now denies shell except `git status|diff|log|show`, `ls`, `dir`, `pwd` (and never redirects / `--output`).
+4. **Edit**: exact match first, then a matcher chain (line-trimmed -> whitespace-normalized -> indentation-flexible -> block-anchor) that re-indents the replacement; CRLF kept. **Read-before-edit** and "file changed since you read it" are enforced per session (`core/tools/editkit.js`).
+5. **New tools**: `list` (tree), `multiedit` (ordered edits, all-or-nothing), `apply_patch` (`*** Begin Patch` envelope: update/add/delete/move, atomic, per-file permission).
+6. **Undo**: before write/edit/multiedit/apply_patch the original file is captured once per turn. `/undo` in `vibe chat`, `session.undo()` in the SDK, `POST /session/:id/undo`, `undoSession` in the Electron IPC. Subagent edits count toward the parent's turn. Shell side effects are not captured. `revertSession` is unchanged (messages only).
+7. **Diagnostics (LSP-lite)**: after an edit, syntax errors in `.json`, `.js/.mjs/.cjs` (`node --check`) and `.py` (`ast.parse`, if python exists) are returned in the same tool result.
+8. Removed stale files: `core/llm/http.zip` and the one-off `electron/fix-*.js`, `add-event-handler.js`, `event-wiring.js`, `proper-add-events.js`, `electron/frontend/cleanup.js`.
+
+Not done: real LSP servers, `websearch` / `codesearch`, a UI button for undo (the API is wired through preload; the "Edit & resend" dialog still only removes messages).
+
+## License
+
+Copyright (c) 2026 VibeCoder AI. All rights reserved. This repository is proprietary; viewing or cloning the source does not grant permission to use, copy, modify, or redistribute it. See the [LICENSE](../LICENSE) file at the repository root for the full terms. Third-party dependencies remain under their own licenses.

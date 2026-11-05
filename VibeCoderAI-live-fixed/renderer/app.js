@@ -21,6 +21,9 @@ const state = {
   lastToolError: null,
   // Prevent generic retries for a deterministic compaction failure.
   compactionBlockedRun: false,
+  pulse: null,
+  rewindLatestStep: null,
+  rewindLatestTurn: null,
 }
 
 // Preload API only exists inside Electron; preview-safe stub for browser design preview.
@@ -56,6 +59,13 @@ var vibe = window.vibe ?? {
   getDirectory: async () => ({ ok: true, data: null }),
   gitBranch: async () => ({ ok: true, data: null }),
   revertSession: async () => ({ ok: true }),
+  undoSession: async () => ({ ok: true, data: {} }),
+  listSnapshots: async () => ({ ok: true, data: [] }),
+  listStepSnapshots: async () => ({ ok: true, data: [] }),
+  previewSnapshot: async () => ({ ok: true, data: { files: [] } }),
+  undoStepSession: async () => ({ ok: true, data: {} }),
+  redoSession: async () => ({ ok: true, data: {} }),
+  listRedo: async () => ({ ok: true, data: [] }),
   renameSession: async () => ({ ok: true }),
   deleteSession: async () => ({ ok: true }),
   interrupt: async () => ({ ok: true }),
@@ -820,7 +830,8 @@ function updateRunBadge() {
   if (!b) return
   if (state.running) {
     b.hidden = false
-    b.textContent = "● Running"
+    const pulse = state.pulse
+    b.textContent = pulse?.step ? `● Step ${pulse.step}${pulse.tools ? ` · ${pulse.tools} actions` : ""}` : "● Running"
   } else if (state.compacting) {
     b.hidden = false
     b.textContent = "● Compacting"
@@ -1557,7 +1568,9 @@ function syncSubagentCard(el, info) {
 function renderToolDetails(el, name, input = {}, state = {}, toolCallId = "") {
   // subtitle (file path / command)
   const sub = toolSubtitle(name, input)
-  if (sub) el.querySelector(".act-sub").textContent = sub
+  const durationMs = Number(state?.metadata?.durationMs)
+  const duration = Number.isFinite(durationMs) && durationMs >= 0 ? (durationMs < 1000 ? `${Math.round(durationMs)}ms` : `${(durationMs / 1000).toFixed(1)}s`) : ""
+  if (sub || duration) el.querySelector(".act-sub").textContent = [sub, duration].filter(Boolean).join(" · ")
 
   const files = toolFiles(state, input)
   const body = el.querySelector(".act-body")
@@ -2699,6 +2712,7 @@ function scheduleRetry(reason) {
 /* ---------- running / stop state ---------- */
 function setRunning(on) {
   state.running = !!on
+  if (!state.running) state.pulse = null
   const btn = $("btn-send")
   btn.classList.toggle("stop", state.running)
   btn.textContent = state.running ? "■" : "↑"
@@ -2968,6 +2982,30 @@ vibe.onEvent(async (event) => {
 
   if (type === "subagent.event") {
     handleSubagentEvent(data)
+    return
+  }
+
+  if (type === "session.pulse.started" && sid === state.activeSessionID) {
+    state.pulse = { step: 0, tools: 0, maxSteps: Number(data.maxSteps) || 0 }
+    updateRunBadge()
+    return
+  }
+  if (type === "session.pulse.step.started" && sid === state.activeSessionID) {
+    state.pulse = { ...(state.pulse || {}), step: Number(data.step) || 0, tools: Array.isArray(data.tools) ? data.tools.length : 0 }
+    updateRunBadge()
+    return
+  }
+  if (type === "session.pulse.step.ended" && sid === state.activeSessionID) {
+    state.pulse = { ...(state.pulse || {}), step: Number(data.step) || state.pulse?.step || 0 }
+    updateRunBadge()
+    return
+  }
+  if (type === "session.permission.locked" && sid === state.activeSessionID) {
+    addHarnessNote("Hard lock blocked this action", `${data.tool || "action"}${data.subject ? ` — ${data.subject}` : ""}`, "locked")
+    return
+  }
+  if (type === "session.recipe.started" && sid === state.activeSessionID) {
+    addHarnessNote(`Recipe /${data.id || "unknown"}`, [data.agent && `persona ${data.agent}`, data.model && `model ${data.model}`].filter(Boolean).join(" · "))
     return
   }
 
@@ -7541,9 +7579,32 @@ function clearActs() {
   reasoningEl = null
 }
 
+function addHarnessNote(title, detail = "", tone = "") {
+  const box = $("messages")
+  if (!box) return
+  const el = document.createElement("div")
+  el.className = `harness-note${tone ? ` ${tone}` : ""}`
+  const strong = document.createElement("strong")
+  strong.textContent = String(title || "VibeCore")
+  el.appendChild(strong)
+  if (detail) el.appendChild(document.createTextNode(` · ${String(detail)}`))
+  box.appendChild(el)
+  scrollChat()
+}
+
 /* ---------- permission requests ---------- */
 const permEls = new Map()
 const permSeen = new Set()
+
+function permissionScope(action) {
+  if (action === "external_directory") return "Outside workspace"
+  if (action === "bash") return "Command"
+  if (["write", "edit", "multiedit", "apply_patch"].includes(action)) return "File change"
+  if (["read", "list", "grep", "glob"].includes(action)) return "Read-only"
+  if (String(action || "").startsWith("browser")) return "Browser"
+  if (["connector", "mcp"].includes(action)) return "Connector"
+  return "Action"
+}
 
 async function refreshPermissionRequests() {
   const res = await vibe.listPermissionRequests()
@@ -7557,6 +7618,7 @@ async function refreshPermissionRequests() {
     el.className = "perm-card"
     el.innerHTML = `
       <div class="perm-title">🔐 Permission required</div>
+      <div class="perm-scope"></div>
       <div class="perm-action"></div>
       <div class="perm-res"></div>
       <div class="perm-actions">
@@ -7565,6 +7627,7 @@ async function refreshPermissionRequests() {
         <button class="danger-btn" data-d="reject">Reject</button>
       </div>`
     el.querySelector(".perm-action").textContent = `${p.action || "action"}`
+    el.querySelector(".perm-scope").textContent = permissionScope(p.action)
     el.querySelector(".perm-res").textContent =
       (Array.isArray(p.resources) ? p.resources.join(", ") : p.resource) || ""
     // The agent is blocked -> tell the user, even if the app is in the background
@@ -8247,6 +8310,95 @@ $("ctx-compact-now").onclick = (e) => {
   closeAllMenus()
   compactNow({ reason: "manual" })
 }
+
+const rewindRows = (response) => response?.ok === false ? [] : (Array.isArray(response?.data) ? response.data : [])
+const shortPath = (value) => String(value || "").replace(/\\/g, "/").split("/").filter(Boolean).pop() || String(value || "file")
+
+async function refreshRewindMenu() {
+  const summary = $("rewind-summary")
+  const files = $("rewind-files")
+  const stepButton = $("rewind-step")
+  const turnButton = $("rewind-turn")
+  const redoButton = $("rewind-redo")
+  const sessionID = state.activeSessionID
+  state.rewindLatestStep = null
+  state.rewindLatestTurn = null
+  if (!sessionID) {
+    summary.textContent = "Open a session to inspect captured changes."
+    files.replaceChildren()
+    stepButton.disabled = turnButton.disabled = redoButton.disabled = true
+    return
+  }
+  const [stepResult, turnResult, redoResult] = await Promise.all([
+    vibe.listStepSnapshots({ sessionID }),
+    vibe.listSnapshots({ sessionID }),
+    vibe.listRedo({ sessionID }),
+  ])
+  const steps = rewindRows(stepResult)
+  const turns = rewindRows(turnResult)
+  const redos = rewindRows(redoResult)
+  state.rewindLatestStep = steps[0] || null
+  state.rewindLatestTurn = turns[0] || null
+  stepButton.disabled = state.running || !state.rewindLatestStep
+  turnButton.disabled = state.running || !state.rewindLatestTurn
+  redoButton.disabled = state.running || !redos.length
+  const target = state.rewindLatestStep || state.rewindLatestTurn
+  if (!target) {
+    summary.textContent = redos.length ? "Changes are rewound. Redo is available." : "No captured changes in this session."
+    files.replaceChildren()
+    return
+  }
+  summary.textContent = target.step
+    ? `Latest capture: turn ${target.turn}, step ${target.step}`
+    : `Latest capture: turn ${target.turn}`
+  const preview = await vibe.previewSnapshot({ sessionID, turn: target.turn, ...(target.step ? { step: target.step } : {}) })
+  const rows = preview?.ok === false ? [] : (preview?.data?.files || [])
+  files.replaceChildren(...rows.slice(0, 8).map((row) => {
+    const el = document.createElement("div")
+    el.className = "rewind-file"
+    const name = document.createElement("b")
+    name.textContent = shortPath(row.path)
+    name.title = String(row.path || "")
+    const stats = document.createElement("span")
+    stats.textContent = row.skipped ? "skipped" : row.binary ? "binary" : `+${Number(row.added) || 0} −${Number(row.removed) || 0}`
+    el.append(name, stats)
+    return el
+  }))
+}
+
+async function applyRewind(kind) {
+  if (state.running) return showError("Stop the current run first", "Rewind cannot change files while the agent is running.", { key: "rewind" })
+  const sessionID = state.activeSessionID
+  if (!sessionID) return
+  let response
+  if (kind === "step") {
+    const target = state.rewindLatestStep
+    if (!target) return
+    response = await vibe.undoStepSession({ sessionID, turn: target.turn, step: target.step })
+  } else if (kind === "turn") response = await vibe.undoSession({ sessionID })
+  else response = await vibe.redoSession({ sessionID })
+  if (!response || response.ok === false) {
+    showError("Rewind failed", response?.error || "The requested history state is unavailable.", { key: "rewind" })
+    return
+  }
+  hideError("rewind")
+  closeAllMenus()
+  await renderSessionHistory(sessionID)
+  await refreshSessions()
+}
+
+$("btn-rewind").onclick = async (event) => {
+  event.stopPropagation()
+  const menu = $("rewind-menu")
+  const wasHidden = menu.hidden
+  closeAllMenus()
+  menu.hidden = !wasHidden
+  if (!menu.hidden) await refreshRewindMenu()
+}
+$("rewind-menu").onclick = (event) => event.stopPropagation()
+$("rewind-step").onclick = () => applyRewind("step")
+$("rewind-turn").onclick = () => applyRewind("turn")
+$("rewind-redo").onclick = () => applyRewind("redo")
 setAccess("ask")
 setThinking("Low")
 renderAutoCompact()

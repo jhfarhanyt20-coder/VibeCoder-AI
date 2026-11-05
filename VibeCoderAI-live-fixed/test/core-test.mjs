@@ -224,18 +224,199 @@ test("agent loop: write -> read -> answer, session persisted", async () => {
 test("edit tool: unique match rule, replaceAll", async () => {
   const { m, vibe, s, dir } = await setup(({ n, body }) => {
     const last = body.messages.at(-1)
-    if (n === 0) return { chunks: [...chat.tool("e1", "edit", { path: "f.txt", oldString: "a", newString: "b" }), ...chat.end(1, 1, "tool_calls")] }
-    if (n === 1) return { chunks: [...chat.tool("e2", "edit", { path: "f.txt", oldString: "a", newString: "b", replaceAll: true }), ...chat.end(1, 1, "tool_calls")] }
+    if (n === 0) return { chunks: [...chat.tool("r0", "read", { path: "f.txt" }), ...chat.end(1, 1, "tool_calls")] }
+    if (n === 1) return { chunks: [...chat.tool("e1", "edit", { path: "f.txt", oldString: "a", newString: "b" }), ...chat.end(1, 1, "tool_calls")] }
+    if (n === 2) return { chunks: [...chat.tool("e2", "edit", { path: "f.txt", oldString: "a", newString: "b", replaceAll: true }), ...chat.end(1, 1, "tool_calls")] }
     return { chunks: [...chat.text("ok"), ...chat.end()] }
   })
   fs.writeFileSync(path.join(dir, "f.txt"), "a a a")
   const evs = await collect(vibe.session.prompt(s.id, "edit"))
   m.close()
-  const ends = evs.filter((e) => e.type === "tool.end")
+  const ends = evs.filter((e) => e.type === "tool.end").slice(1) // [0] is the read
   assert.equal(ends[0].isError, true)
   assert.match(ends[0].output, /matches 3 places/)
   assert.equal(ends[1].isError, false)
   assert.equal(fs.readFileSync(path.join(dir, "f.txt"), "utf8"), "b b b")
+})
+
+test("edit: tolerates indentation / whitespace slips and keeps the file's indentation", () => {
+  const { applyEdit } = require("../core/tools/editkit")
+  const src = "function a(){\n    if (x) {\n        return 1;\n    }\n}\n"
+  let r = applyEdit(src, "if (x) {\n  return 1;\n}", "if (x) {\n  return 99;\n}")
+  assert.equal(r.out, "function a(){\n    if (x) {\n        return 99;\n    }\n}\n")
+  r = applyEdit(src, "if(x)   {", "if (y) {")
+  assert.match(r.out, /if \(y\) \{/)
+  r = applyEdit(src, "function a(){\n    if (x) {\n        return 1 ;\n    }\n}\n", "function a(){\n  return 0\n}\n")
+  assert.equal(r.out, "function a(){\n  return 0\n}\n")
+  assert.throws(() => applyEdit(src, "nothing here", "z"), /not found/)
+  assert.throws(() => applyEdit("a\na\n", "a", "b"), /matches 2 places/)
+  assert.throws(() => applyEdit(src, "x", "x"), /identical/)
+})
+
+test("edit/write: read-before-edit guard and stale-file detection", async () => {
+  const { byName } = require("../core/tools")
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "vibe-guard-"))
+  const f = path.join(d, "g.txt")
+  try {
+    fs.writeFileSync(f, "one two")
+    const c = { cwd: d, session: { id: "guard-test" }, emit: () => {}, stats: {} }
+    await assert.rejects(() => byName("edit").run({ path: "g.txt", oldString: "one", newString: "1" }, c), /must read/)
+    await assert.rejects(() => byName("write").run({ path: "g.txt", content: "x" }, c), /must read/)
+    await byName("read").run({ path: "g.txt" }, c)
+    await byName("edit").run({ path: "g.txt", oldString: "one", newString: "1" }, c)
+    await byName("edit").run({ path: "g.txt", oldString: "two", newString: "2" }, c) // our own write counts as seen
+    assert.equal(fs.readFileSync(f, "utf8"), "1 2")
+    fs.writeFileSync(f, "changed outside"); const t = Date.now() / 1000 + 10; fs.utimesSync(f, t, t)
+    await assert.rejects(() => byName("edit").run({ path: "g.txt", oldString: "changed", newString: "x" }, c), /changed on disk/)
+    // new files never need a read
+    await byName("write").run({ path: "fresh.txt", content: "new" }, c)
+    // no session (library use): guard is off
+    await byName("edit").run({ path: "fresh.txt", oldString: "new", newString: "n2" }, { cwd: d, emit: () => {}, stats: {} })
+  } finally { fs.rmSync(d, { recursive: true, force: true }) }
+})
+
+test("list tool: tree view, skips node_modules, depth limit", async () => {
+  const { byName } = require("../core/tools")
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "vibe-list-"))
+  try {
+    fs.mkdirSync(path.join(d, "src", "deep", "deeper"), { recursive: true })
+    fs.mkdirSync(path.join(d, "node_modules", "x"), { recursive: true })
+    fs.writeFileSync(path.join(d, "src", "a.js"), "1")
+    fs.writeFileSync(path.join(d, "README.md"), "r")
+    const out = await byName("list").run({ path: "." , depth: 2 }, { cwd: d })
+    assert.match(out, /src\//); assert.match(out, /a\.js/); assert.match(out, /README\.md/)
+    assert.match(out, /node_modules\/ \(skipped\)/); assert.ok(!/ x\//.test(out))
+    assert.ok(!/deeper/.test(out), "depth 2 must not show level 3")
+    await assert.rejects(() => byName("list").run({ path: "README.md" }, { cwd: d }), /not a directory/)
+  } finally { fs.rmSync(d, { recursive: true, force: true }) }
+})
+
+test("multiedit: ordered edits on one file, all-or-nothing", async () => {
+  const { byName } = require("../core/tools")
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "vibe-multi-"))
+  const f = path.join(d, "m.js")
+  try {
+    fs.writeFileSync(f, "const a = 1\nconst b = 2\nconst c = 3\n")
+    const c = { cwd: d, session: { id: "multi-test" }, emit: () => {}, stats: {} }
+    await byName("read").run({ path: "m.js" }, c)
+    await assert.rejects(() => byName("multiedit").run({ path: "m.js", edits: [{ oldString: "a = 1", newString: "a = 10" }, { oldString: "zzz", newString: "q" }] }, c), /Edit 2 of 2 failed \(nothing was written\)/)
+    assert.equal(fs.readFileSync(f, "utf8"), "const a = 1\nconst b = 2\nconst c = 3\n")
+    const r = await byName("multiedit").run({ path: "m.js", edits: [{ oldString: "a = 1", newString: "a = 10" }, { oldString: "a = 10", newString: "a = 11" }, { oldString: "c = 3", newString: "c = 33" }] }, c)
+    assert.match(r, /Applied 3 edits/)
+    assert.equal(fs.readFileSync(f, "utf8"), "const a = 11\nconst b = 2\nconst c = 33\n")
+  } finally { fs.rmSync(d, { recursive: true, force: true }) }
+})
+
+test("apply_patch: update + add + move + delete in one atomic call", async () => {
+  const { byName } = require("../core/tools")
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "vibe-patch-"))
+  try {
+    fs.writeFileSync(path.join(d, "a.txt"), "one\ntwo\nthree\n")
+    fs.writeFileSync(path.join(d, "old.txt"), "gone\n")
+    fs.writeFileSync(path.join(d, "mv.txt"), "keep\nme\n")
+    const c = { cwd: d, session: { id: "patch-test" }, emit: () => {}, stats: {}, askPermission: async () => true }
+    for (const f of ["a.txt", "old.txt", "mv.txt"]) await byName("read").run({ path: f }, c)
+    const patch = [
+      "*** Begin Patch",
+      "*** Update File: a.txt", "@@", " one", "-two", "+TWO", " three",
+      "*** Add File: sub/new.txt", "+hello", "+world",
+      "*** Delete File: old.txt",
+      "*** Update File: mv.txt", "*** Move to: moved.txt", "@@", " keep", "-me", "+you",
+      "*** End Patch",
+    ].join("\n")
+    const out = await byName("apply_patch").run({ patchText: patch }, c)
+    assert.match(out, /Updated .*a\.txt/); assert.match(out, /Created .*new\.txt/); assert.match(out, /Deleted .*old\.txt/); assert.match(out, /Moved/)
+    assert.equal(fs.readFileSync(path.join(d, "a.txt"), "utf8"), "one\nTWO\nthree\n")
+    assert.equal(fs.readFileSync(path.join(d, "sub", "new.txt"), "utf8"), "hello\nworld\n")
+    assert.ok(!fs.existsSync(path.join(d, "old.txt")) && !fs.existsSync(path.join(d, "mv.txt")))
+    assert.equal(fs.readFileSync(path.join(d, "moved.txt"), "utf8"), "keep\nyou\n")
+    // atomic: a bad second hunk must leave every file untouched
+    await byName("read").run({ path: "a.txt" }, c)
+    const bad = ["*** Begin Patch", "*** Update File: a.txt", "@@", "-one", "+1", "*** Update File: a.txt", "@@", "-nope", "+x", "*** End Patch"].join("\n")
+    await assert.rejects(() => byName("apply_patch").run({ patchText: bad }, c), /hunk 1 failed/)
+    assert.equal(fs.readFileSync(path.join(d, "a.txt"), "utf8"), "one\nTWO\nthree\n")
+    // a denied extra file blocks the whole patch
+    const deny = { ...c, askPermission: async () => false }
+    const two = ["*** Begin Patch", "*** Add File: p1.txt", "+1", "*** Add File: p2.txt", "+2", "*** End Patch"].join("\n")
+    await assert.rejects(() => byName("apply_patch").run({ patchText: two }, deny), /denied permission/)
+    assert.ok(!fs.existsSync(path.join(d, "p1.txt")) && !fs.existsSync(path.join(d, "p2.txt")))
+    assert.throws(() => parsePatchCheck(), /./)
+  } finally { fs.rmSync(d, { recursive: true, force: true }) }
+  function parsePatchCheck() { return require("../core/tools").byName("apply_patch").paths({ patchText: "garbage" }, { cwd: d }) }
+})
+
+test("undo: restores edited files, deletes created files, and only undoes the last turn", async () => {
+  const { m, vibe, s, dir } = await setup(({ n }) => {
+    // turn 1: edit a.txt + create new.txt
+    if (n === 0) return { chunks: [...chat.tool("r1", "read", { path: "a.txt" }), ...chat.end(1, 1, "tool_calls")] }
+    if (n === 1) return { chunks: [...chat.tool("e1", "edit", { path: "a.txt", oldString: "alpha", newString: "ALPHA" }), ...chat.end(1, 1, "tool_calls")] }
+    if (n === 2) return { chunks: [...chat.tool("w1", "write", { path: "new.txt", content: "created" }), ...chat.end(1, 1, "tool_calls")] }
+    if (n === 3) return { chunks: [...chat.text("turn1 done"), ...chat.end()] }
+    // turn 2: edit b.txt (via a subagent-free direct edit)
+    if (n === 4) return { chunks: [...chat.tool("r2", "read", { path: "b.txt" }), ...chat.end(1, 1, "tool_calls")] }
+    if (n === 5) return { chunks: [...chat.tool("e2", "edit", { path: "b.txt", oldString: "beta", newString: "BETA" }), ...chat.end(1, 1, "tool_calls")] }
+    return { chunks: [...chat.text("turn2 done"), ...chat.end()] }
+  })
+  const a = path.join(dir, "a.txt"), b = path.join(dir, "b.txt"), nw = path.join(dir, "new.txt")
+  fs.writeFileSync(a, "alpha"); fs.writeFileSync(b, "beta")
+  await collect(vibe.session.prompt(s.id, "turn one"))
+  await collect(vibe.session.prompt(s.id, "turn two"))
+  m.close()
+  assert.equal(fs.readFileSync(a, "utf8"), "ALPHA")
+  assert.equal(fs.readFileSync(b, "utf8"), "BETA")
+  assert.equal((await vibe.session.snapshots(s.id)).length, 2)
+  // undo #1: last turn only (b.txt)
+  const r1 = await vibe.session.undo(s.id)
+  assert.equal(fs.readFileSync(b, "utf8"), "beta")
+  assert.equal(fs.readFileSync(a, "utf8"), "ALPHA")
+  assert.equal(r1.restored.length, 1)
+  assert.ok(r1.messagesDropped > 0)
+  // undo #2: turn one (restore a.txt, delete new.txt)
+  const r2 = await vibe.session.undo(s.id)
+  assert.equal(fs.readFileSync(a, "utf8"), "alpha")
+  assert.ok(!fs.existsSync(nw))
+  assert.equal(r2.deleted.length, 1)
+  assert.equal((await vibe.session.get(s.id)).messages.length, 0)
+  await assert.rejects(() => vibe.session.undo(s.id), /Nothing to undo/)
+})
+
+test("undo: edits made by a subagent are attributed to the root session turn", async () => {
+  const snapshots = require("../core/store/snapshots")
+  const home = tmp(), d = tmp()
+  const f = path.join(d, "x.txt"); fs.writeFileSync(f, "orig")
+  const root = { id: "ses_aaaa", turnSeq: 7 }
+  const child = { id: "ses_bbbb", parentId: "ses_aaaa" }
+  const engine = { home, store: { get: (id) => (id === "ses_aaaa" ? root : child) } }
+  snapshots.capture({ session: child, engine }, f)
+  fs.writeFileSync(f, "changed by subagent")
+  assert.deepEqual(snapshots.list(home, "ses_aaaa").map((x) => x.turn), [7])
+  const r = snapshots.undo(home, "ses_aaaa", 7)
+  assert.equal(fs.readFileSync(f, "utf8"), "orig")
+  assert.equal(r.restored.length, 1)
+})
+
+test("diagnostics: syntax errors come back in the same tool result", async () => {
+  const { byName } = require("../core/tools")
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "vibe-diag-"))
+  try {
+    const c = { cwd: d, session: { id: "diag-test" }, emit: () => {}, stats: {} }
+    let out = await byName("write").run({ path: "ok.js", content: "const a = 1\nmodule.exports = a\n" }, c)
+    assert.ok(!/Syntax errors/.test(out), "valid JS must not be flagged: " + out)
+    out = await byName("write").run({ path: "bad.js", content: "function (\n" }, c)
+    assert.match(out, /Syntax errors detected in .*bad\.js/)
+    out = await byName("write").run({ path: "esm.js", content: "import fs from 'fs'\nexport default fs\n" }, c)
+    assert.ok(!/Syntax errors/.test(out), "ESM syntax in a .js file must not be flagged: " + out)
+    out = await byName("write").run({ path: "bad.json", content: '{"a": 1,}' }, c)
+    assert.match(out, /Syntax errors detected in .*bad\.json/)
+    out = await byName("write").run({ path: "tsconfig.json", content: '{ // comment\n "a": 1 }' }, c)
+    assert.ok(!/Syntax errors/.test(out), "tsconfig with comments is legal")
+    out = await byName("write").run({ path: "notes.md", content: "function (" }, c)
+    assert.ok(!/Syntax errors/.test(out))
+    // edit that breaks a valid file is reported
+    await byName("read").run({ path: "ok.js" }, c)
+    out = await byName("edit").run({ path: "ok.js", oldString: "const a = 1", newString: "const a = = 1" }, c)
+    assert.match(out, /Syntax errors detected/)
+  } finally { fs.rmSync(d, { recursive: true, force: true }) }
 })
 
 test("permissions: ask -> deny blocks bash; ask -> always remembers; external dir guarded", async () => {

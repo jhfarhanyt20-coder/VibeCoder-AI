@@ -74,6 +74,43 @@ test("installs and removes a project skill using OpenCode SKILL.md layout", () =
   assert.equal(fs.existsSync(path.dirname(installed.file)), false)
 })
 
+test("discovers and loads native VibeCore playbooks lazily", async () => {
+  const file = path.join(project, ".vibe", "playbooks", "release-check", "PLAYBOOK.md")
+  const supporting = path.join(project, ".vibe", "playbooks", "release-check", "references", "gate.md")
+  mkdirFor(file)
+  mkdirFor(supporting)
+  fs.writeFileSync(file, "---\nname: Release Check\ndescription: Verify a release safely\n---\n\nRun the release checklist.\n")
+  fs.writeFileSync(supporting, "Tests green; migration reviewed.\n")
+
+  const found = skills.listPlaybooks(project).find((item) => item.id === "release-check")
+  assert.ok(found)
+  assert.equal(found.format, "PLAYBOOK.md")
+  const loaded = skills.loadPlaybook({ id: "release-check", directory: project })
+  assert.match(loaded.body, /release checklist/)
+  assert.ok(loaded.supportingFiles.some((item) => item.relative === path.join("references", "gate.md")))
+
+  const tools = require("../core/tools")
+  const playbook = tools.byName("playbook")
+  assert.ok(playbook)
+  const output = await playbook.run({ id: "release-check" }, { cwd: project })
+  assert.match(output, /Loaded playbook: release-check/)
+  const advertised = tools.specs().map((item) => item.name)
+  assert.ok(advertised.includes("playbook"))
+  assert.equal(advertised.includes("skill"), false, "the compatibility alias must not be model-facing")
+})
+
+test("installs a native playbook into the Vibe project layout", () => {
+  const installed = skills.installPlaybookFile({
+    id: "safe-refactor",
+    description: "Refactor with verification",
+    content: "Read first, change narrowly, and run focused tests.",
+    directory: project,
+  })
+  assert.ok(installed.file.endsWith(path.join(".vibe", "playbooks", "safe-refactor", "PLAYBOOK.md")))
+  assert.equal(installed.format, "PLAYBOOK.md")
+  assert.ok(skills.listPlaybooks(project).some((item) => item.id === "safe-refactor"))
+})
+
 test("imports public GitHub skills and supporting resources without executing them", async () => {
   const importProject = fs.mkdtempSync(path.join(os.tmpdir(), "vibe-skills-import-"))
   const tree = [

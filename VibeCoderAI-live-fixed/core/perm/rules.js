@@ -11,11 +11,13 @@ const DEFAULT_RULES = [
   { tool: "read", pattern: "*", action: "allow" },
   { tool: "grep", pattern: "*", action: "allow" },
   { tool: "glob", pattern: "*", action: "allow" },
+  { tool: "list", pattern: "*", action: "allow" },
   { tool: "todowrite", pattern: "*", action: "allow" },
   { tool: "memory", pattern: "*", action: "allow" },
   // Loading a discovered SKILL.md is read-only. The skill text still does not
   // grant permission for commands, edits, secrets, or other tool actions.
   { tool: "skill", pattern: "*", action: "allow" },
+  { tool: "playbook", pattern: "*", action: "allow" },
   // the agent's own scratch folder (./.vibe-scratch): creating, editing and
   // cleaning up files inside it never asks - it is the agent's private workspace
   { tool: "*", pattern: "**/.vibe-scratch/**", action: "allow" },
@@ -35,8 +37,9 @@ const DEFAULT_RULES = [
   { tool: "bash", pattern: "*yarn test*", action: "allow" },
   { tool: "bash", pattern: "*pnpm build*", action: "allow" },
   { tool: "bash", pattern: "*pnpm test*", action: "allow" },
-  { tool: "bash", pattern: "*node *test*", action: "allow" },
-  { tool: "bash", pattern: "*node *build*", action: "allow" },
+  // `node *test*` / `node *build*` used to be auto-allowed, which let ANY
+  // `node evil.js --test` run unasked. Only Node's own test runner is allowed.
+  { tool: "bash", pattern: "node --test*", action: "allow" },
   { tool: "bash", pattern: "*cargo build*", action: "allow" },
   { tool: "bash", pattern: "*cargo test*", action: "allow" },
   { tool: "bash", pattern: "*go build*", action: "allow" },

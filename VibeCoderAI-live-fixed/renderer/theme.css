@@ -1041,6 +1041,16 @@ body {
 .drop-item.selected { background: var(--accent-soft); color: var(--accent); }
 .drop-item small { color: var(--muted); font-size: calc(12px * var(--fs-scale, 1)); }
 .drop-item.selected small { color: var(--accent-soft-strong); }
+.drop-item:disabled { opacity: .45; cursor: default; }
+.rewind-menu { width: min(360px, 82vw); padding: 8px; }
+.rewind-summary { padding: 5px 10px 8px; color: var(--muted); font-size: calc(12px * var(--fs-scale, 1)); line-height: 1.45; }
+.rewind-files { display: grid; gap: 4px; padding: 0 10px 8px; max-height: 150px; overflow: auto; }
+.rewind-file { display: flex; justify-content: space-between; gap: 12px; font: 11px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--muted); }
+.rewind-file b { color: var(--text); font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rewind-file span { flex: 0 0 auto; color: var(--ok-soft-solid); }
+.harness-note { margin: 8px auto; width: min(760px, calc(100% - 28px)); padding: 9px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--hover); color: var(--muted); font-size: calc(12px * var(--fs-scale, 1)); }
+.harness-note.locked { border-color: var(--danger, #d35f5f); color: var(--text); }
+.perm-scope { display: inline-flex; width: max-content; margin: 4px 0 6px; padding: 2px 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: calc(11px * var(--fs-scale, 1)); }
 
 .spacer { flex: 1; }
 

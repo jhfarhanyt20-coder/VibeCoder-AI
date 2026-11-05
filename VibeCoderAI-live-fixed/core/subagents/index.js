@@ -37,19 +37,19 @@ const PROFILES = {
   read: {
     name: "Code Explorer",
     description: "Read and summarize files/directories in the workspace.",
-    tools: ["read", "grep", "glob", "write", "todowrite"],
+    tools: ["read", "list", "grep", "glob", "write", "todowrite"],
     systemExtra: "You are a code-reading assistant. Inspect files and return clear summaries with file paths and line references. Do not edit anything unless asked.",
   },
   write: {
     name: "Coding Agent",
     description: "Create or edit files in the workspace.",
-    tools: ["read", "write", "edit", "glob", "grep", "todowrite"],
+    tools: ["read", "list", "write", "edit", "multiedit", "apply_patch", "glob", "grep", "todowrite"],
     systemExtra: "You are a coding assistant. Create/edit files using read/write/edit. Run small checks only if explicitly asked.",
   },
   bash: {
     name: "Command Agent",
     description: "Run shell commands in the workspace.",
-    tools: ["bash", "read", "glob", "grep", "todowrite"],
+    tools: ["bash", "read", "list", "glob", "grep", "todowrite"],
     systemExtra: "You are a command-line assistant. Run commands with bash and report the output. Be careful with destructive commands.",
   },
   mcp: {
@@ -87,12 +87,29 @@ function selectTools(type, list) {
 }
 
 class SubAgentManager {
-  constructor(engine) {
+  constructor(engine, { maxParallel = 4 } = {}) {
     this.engine = engine
     this.agents = new Map()
+    this.maxParallel = Math.max(1, Math.min(16, Math.floor(Number(maxParallel) || 4)))
+  }
+
+  /** Number of live children owned by one parent session. */
+  activeCount(parentSessionId, exceptId = "") {
+    let count = 0
+    for (const agent of this.agents.values()) {
+      if (agent.id !== exceptId && agent.sessionId === parentSessionId && agent.status === "running") count++
+    }
+    return count
+  }
+
+  _assertCapacity(parentSessionId, exceptId = "") {
+    if (this.activeCount(parentSessionId, exceptId) >= this.maxParallel) {
+      throw new Error(`Crew parallel limit reached (${this.maxParallel}). Wait for a running helper to finish or stop one before starting another.`)
+    }
   }
 
   _public(a) {
+    const durationMs = a.completedAt && a.startedAt ? Math.max(0, a.completedAt - a.startedAt) : 0
     return {
       id: a.id,
       name: a.name,
@@ -107,6 +124,8 @@ class SubAgentManager {
       background: a.background !== false,
       startedAt: a.startedAt || 0,
       completedAt: a.completedAt || 0,
+      durationMs,
+      ok: a.status === "done" ? true : a.status === "error" ? false : null,
       parentToolCallId: a.parentToolCallId || "",
     }
   }
@@ -156,6 +175,7 @@ class SubAgentManager {
     const parent = this.engine.store.get(sessionId)
     if (!parent) throw new Error("Session not found: " + sessionId)
     if (parent.kind === "subagent") throw new Error("Subagents cannot spawn nested subagents.")
+    this._assertCapacity(parent.id)
     const agentId = String(requestedAgent || type || "general")
     const definition = typeof this.engine.getAgent === "function" ? this.engine.getAgent(agentId, parent.dir) : null
     const legacyType = PROFILES[type] ? type : PROFILES[agentId] ? agentId : "general"
@@ -264,7 +284,8 @@ class SubAgentManager {
       if (item.status === "running") continue
       const a = this._get(item.id)
       if (!a || a.session.subagentResultDeliveredAt) continue
-      results.push({ id: a.id, name: a.name, status: a.status, result: a.result, error: a.error })
+      const publicResult = this._public(a)
+      results.push({ id: a.id, name: a.name, status: a.status, ok: publicResult.ok, result: a.result, error: a.error, durationMs: publicResult.durationMs })
       a.session.subagentResultDeliveredAt = Date.now()
       this.engine.store.save(a.session)
     }
@@ -282,17 +303,22 @@ class SubAgentManager {
     const a = this._get(id)
     if (!a) throw new Error(`No subagent found with id: ${id}`)
     if (a.status === "running") throw new Error("Subagent is already running.")
+    this._assertCapacity(a.sessionId, a.id)
     if (!a.definition && typeof this.engine.getAgent === "function") a.definition = this.engine.getAgent(a.agentId, a.session.dir)
     if (a.recovered && !a.profile) a.profile = a.definition?.model || a.session.profile
     a.ctl = new AbortController()
     a.status = "running"
     a.error = ""
     a.result = ""
+    a.startedAt = Date.now()
     a.completedAt = 0
     a.maxSteps = maxSteps || a.maxSteps || DEFAULT_MAX_STEPS
     a.session.messages.push({ role: "user", parts: [{ type: "text", text: String(text || ""), subagentFollowup: true }] })
     a.session.subagentStatus = "running"
     a.session.subagentError = ""
+    a.session.subagentStartedAt = a.startedAt
+    a.session.subagentCompletedAt = 0
+    a.session.subagentDurationMs = 0
     delete a.session.subagentResultDeliveredAt
     this.engine.store.save(a.session)
     this._event(a, { type: "subagent.resume", text: String(text || "") })
@@ -324,6 +350,7 @@ class SubAgentManager {
     child.subagentResult = agent.result
     child.subagentError = agent.error
     child.subagentCompletedAt = agent.completedAt
+    child.subagentDurationMs = agent.completedAt && agent.startedAt ? Math.max(0, agent.completedAt - agent.startedAt) : 0
     this.engine.store.save(child)
   }
 
@@ -334,7 +361,8 @@ class SubAgentManager {
       agent.session.subagentResultDeliveredAt = Date.now()
       this.engine.store.save(agent.session)
     }
-    this._event(agent, { type: "subagent.result", status: agent.status, result: agent.result, error: agent.error })
+    const result = this._public(agent)
+    this._event(agent, { type: "subagent.result", status: agent.status, ok: result.ok, durationMs: result.durationMs, result: agent.result, error: agent.error })
   }
 
   /** Internal: run the subagent's isolated loop. */
@@ -364,6 +392,8 @@ class SubAgentManager {
       const system = buildSystem({
         agentName: agent.name,
         cwd: session.dir,
+        model: profileObj.model,
+        home: this.engine?.home,
         extra:
           "You are a SUBAGENT spawned by the parent agent. Your only job is: " +
           agent.task +

@@ -39,6 +39,11 @@
         break
       }
     }
+    // Right after a compaction nothing has answered yet: show the compacted
+    // request size instead of an empty ring.
+    if (!u.last && compaction >= 0 && num(list[compaction].contextTokens) > 0) {
+      u.last = { tokens: { input: num(list[compaction].contextTokens) }, modelKey: null }
+    }
     return u
   }
 

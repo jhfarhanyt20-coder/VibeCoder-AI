@@ -1,0 +1,26 @@
+# Agent rules — VibeCoder AI
+
+The authoritative project rules live in [`VIBE.md`](./VIBE.md) at the repository
+root. Read it first, then `VibeCoderAI-live-fixed/HARNESS_TODO.md`.
+
+Critical rules (do not skip):
+
+1. **Keep this repository public.** The installed app's auto-updater reads
+   GitHub Releases from this repo and ships no token. Making it private breaks
+   updates for every existing user. If source privacy is needed, move source to
+   a private repo and keep this one public as the release feed.
+2. **Users only receive updates through a tagged GitHub Release**, not through
+   an ordinary commit. Release flow: bump `package.json` +
+   `package-lock.json`, run `npm test`, commit, push `master`, tag `v<version>`,
+   push the tag. The tag must match the version.
+3. **Never commit when tests are red.**
+4. **Never commit** `node_modules/`, `release/`, `dist/`, `.env*`, logs, or
+   `VibeCoderAI-live-fixed/core/llm/http.zip`.
+5. **No secrets** in the repository and **no new runtime dependencies** without
+   explicit approval.
+6. **Additive, backward-compatible changes only.** Do not remove existing
+   features or compatibility paths.
+7. **Clean-room naming:** new code, UI and docs use VibeCoder/VibeCore names
+   only. Never copy another product's names, prompts, text, code or assets.
+8. After a context reset: read `VIBE.md` and `HARNESS_TODO.md`, check
+   `git status` / `git log` / `git tag`, and run `npm test` before editing.

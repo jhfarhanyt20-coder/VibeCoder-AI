@@ -189,7 +189,7 @@
         </div>
 
         <textarea id="input" rows="2"
-          placeholder="Ask VibeCoder, type @ to add files, / for commands, $ for skills, # to link chats"></textarea>
+          placeholder="Ask VibeCoder, type @ to add files, / for recipes, $ for playbooks, # to link chats"></textarea>
 
         <div class="attach-tray" id="attach-tray" hidden></div>
 
@@ -265,6 +265,19 @@
               <div class="ctx-row ctx-model-row"><span>Summary model</span><b id="ctx-summary-model-current">ChatComposer model</b></div>
               <button class="ctx-compact-btn" id="ctx-compact-now" type="button">Compact now</button>
               <div class="ctx-note">Manual and automatic summaries always use the model selected in ChatComposer.</div>
+            </div>
+          </div>
+          <div class="menu-wrap">
+            <button class="mode-pill" id="btn-rewind" title="Preview or rewind agent file changes">
+              <span class="ic">↶</span><span>Rewind</span>
+            </button>
+            <div class="drop-menu rewind-menu" id="rewind-menu" hidden>
+              <div class="drop-title">Rewind changes</div>
+              <div class="rewind-summary" id="rewind-summary">No captured changes in this session.</div>
+              <div class="rewind-files" id="rewind-files"></div>
+              <button class="drop-item" id="rewind-step" type="button">Undo latest step<small>Restore files and tool history from that step</small></button>
+              <button class="drop-item" id="rewind-turn" type="button">Undo latest turn<small>Restore the latest user turn that changed files</small></button>
+              <button class="drop-item" id="rewind-redo" type="button">Redo<small>Restore the most recently rewound state</small></button>
             </div>
           </div>
           <span class="run-badge" id="run-badge" hidden>● Running</span>

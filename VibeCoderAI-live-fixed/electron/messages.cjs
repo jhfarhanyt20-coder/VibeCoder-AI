@@ -23,6 +23,7 @@ function convertMessages(session) {
       const raw = String((m.parts[0] && m.parts[0].text) || "")
       const prefix = "[Checkpoint: the earlier part of this conversation was compacted. Continue from this summary.]"
       let checkpoint = raw.startsWith(prefix) ? raw.slice(prefix.length).trim() : raw.trim()
+      checkpoint = checkpoint.replace(/<\/?template>/gi, "").replace(/^[ \t]*Break the objective into smaller goals and report.*\n?/gim, "").replace(/^[ \t]*List the files and directories, other than the current working directory.*\n?/gim, "").trim() // also repairs checkpoints saved before the fix
       const contextMarker = "\n\n## Project context\n"
       const contextAt = checkpoint.lastIndexOf(contextMarker)
       const projectContext = contextAt >= 0 ? checkpoint.slice(contextAt + 2).trim() : ""
@@ -36,6 +37,7 @@ function convertMessages(session) {
         projectContext,
         summarySource: m.summarySource || "llm",
         summaryModel: m.summaryModel || "",
+        contextTokens: Number(m.contextTokens) || 0,
         time: { created: session.updatedAt },
       }
       const legacyDisplayAfter = i === 0 && Number(session.usage?.lastInput || 0) === 0 ? session.messages.length - 1 : null
@@ -80,6 +82,13 @@ function convertMessages(session) {
                 } }
               : { ...stats })
           : null
+        const richMetadata = res && (Number.isFinite(res.durationMs) || Array.isArray(res.artifacts))
+          ? {
+            ...(metadata || {}),
+            ...(Number.isFinite(res.durationMs) ? { durationMs: res.durationMs } : {}),
+            ...(Array.isArray(res.artifacts) ? { artifacts: res.artifacts } : {}),
+          }
+          : metadata
         parts.push({
           type: "tool",
           id: p.id,
@@ -93,7 +102,7 @@ function convertMessages(session) {
                 ? [{ type: "image", mime: String(res.screenshot.mime || "image/png"), dataUrl: `data:${String(res.screenshot.mime || "image/png")};base64,${res.screenshot.data}`, url: String(res.screenshot.url || ""), title: String(res.screenshot.title || ""), tabID: String(res.screenshot.tabID || "") }]
                 : []),
             ] : [],
-            ...(metadata ? { metadata } : {}),
+            ...(richMetadata ? { metadata: richMetadata } : {}),
           },
         })
       }

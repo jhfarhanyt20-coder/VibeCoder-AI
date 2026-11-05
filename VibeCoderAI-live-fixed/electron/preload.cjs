@@ -50,6 +50,12 @@ const api = {
   revertSession: call("revertSession"),
   undoSession: call("undoSession"),
   listSnapshots: call("listSnapshots"),
+  listStepSnapshots: call("listStepSnapshots"),
+  previewSnapshot: call("previewSnapshot"),
+  undoStepSession: call("undoStepSession"),
+  redoSession: call("redoSession"),
+  listRedo: call("listRedo"),
+  getTrail: call("getTrail"),
 
   // runs
   prompt: call("prompt"),

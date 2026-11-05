@@ -1,4 +1,37 @@
 "use strict"
+
+/**
+ * Windows PowerShell 5.1 has no `&&`. Models write it constantly, so rewrite a
+ * top-level `a && b && c` into `a; if ($?) { b; if ($?) { c } }`. Anything inside
+ * quotes, here-strings or (), {}, [] is left alone, so `python -c "a && b"` is safe.
+ */
+function psChain(cmd) {
+  if (!cmd.includes("&&")) return cmd
+  const parts = []
+  let depth = 0, quote = "", last = 0
+  for (let i = 0; i < cmd.length; i++) {
+    const ch = cmd[i]
+    if (quote) {
+      if (ch === "`" && quote === '"') i++
+      else if (ch === quote) quote = ""
+      continue
+    }
+    if (ch === "`") { i++; continue }
+    if (ch === "'" || ch === '"') { quote = ch; continue }
+    if (ch === "(" || ch === "{" || ch === "[") depth++
+    else if (ch === ")" || ch === "}" || ch === "]") depth = Math.max(0, depth - 1)
+    else if (depth === 0 && ch === "&" && cmd[i + 1] === "&") {
+      parts.push(cmd.slice(last, i).trim())
+      last = i + 2
+      i++
+    }
+  }
+  if (!parts.length) return cmd
+  parts.push(cmd.slice(last).trim())
+  if (parts.some((x) => !x)) return cmd
+  return parts.reduceRight((acc, seg, idx) => (acc === null ? seg : idx === parts.length - 1 ? seg : `${seg}; if ($?) { ${acc} }`), null)
+}
+
 /**
  * Shell job registry (OpenCode-style).
  *
@@ -113,7 +146,7 @@ function createShell({ sessionID, command, cwd, background = false, env, emit } 
 
   let child
   try {
-    const args = win ? ["-NoProfile", "-NonInteractive", "-Command", String(command || "")] : ["-lc", String(command || "")]
+    const args = win ? ["-NoProfile", "-NonInteractive", "-Command", psChain(String(command || ""))] : ["-lc", String(command || "")]
     child = spawn(win ? "powershell.exe" : "bash", args, {
       cwd: job.cwd,
       // A background job must survive an interrupt of the agent run. On POSIX a

@@ -1,7 +1,8 @@
 {
   "name": "vibe-core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "VibeCoder AI engine: own CLI, own SDK, 3 LLM formats, auto-compaction. Zero dependencies.",
+  "license": "UNLICENSED",
   "author": {
     "name": "Jamil Hussain"
   },
@@ -13,7 +14,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node test/core-test.mjs && node test/agents-test.mjs && node test/skills-test.mjs && node test/electron-backend-smoke.cjs && node test/compaction-ui-regression.mjs && node test/subagent-ui-regression.mjs && node test/app-updater-test.cjs",
+    "test": "node test/core-test.mjs && node test/agents-test.mjs && node test/skills-test.mjs && node test/harness-test.mjs && node test/electron-backend-smoke.cjs && node test/compaction-ui-regression.mjs && node test/subagent-ui-regression.mjs && node test/harness-ui-regression.mjs && node test/app-updater-test.cjs",
     "serve": "node cli/vibe.js serve",
     "app": "electron electron/main.cjs",
     "dev": "electron electron/main.cjs --dev",

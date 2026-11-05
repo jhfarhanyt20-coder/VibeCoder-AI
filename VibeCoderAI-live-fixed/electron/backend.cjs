@@ -420,11 +420,17 @@ function onEngineEvent(ev) {
           tabID: String(shot.tabID || ""),
         })
       }
+      const metadata = { ...(ev.stats || {}), ...(Number.isFinite(ev.durationMs) ? { durationMs: ev.durationMs } : {}), ...(Array.isArray(ev.artifacts) ? { artifacts: ev.artifacts } : {}) }
       emitUI(ev.isError ? "session.tool.failed" : "session.tool.success", sid, ev.isError
-        ? { id: ev.id, name: ev.name, error: { message: output }, content, metadata: ev.stats || {} }
-        : { id: ev.id, name: ev.name, content, metadata: ev.stats || {} })
+        ? { id: ev.id, name: ev.name, error: { message: output }, content, metadata }
+        : { id: ev.id, name: ev.name, content, metadata })
       break
     }
+    case "run.start": emitUI("session.pulse.started", sid, data); break
+    case "step.start": emitUI("session.pulse.step.started", sid, data); break
+    case "step.end": emitUI("session.pulse.step.ended", sid, data); break
+    case "permission.lock": emitUI("session.permission.locked", sid, data); break
+    case "recipe.start": emitUI("session.recipe.started", sid, data); break
     case "usage":
       emitUI("session.step.ended", sid, { assistantMessageID: `asst_${Date.now().toString(36)}`, tokens: { input: Number(ev.input) || 0, output: Number(ev.output) || 0, reasoning: 0 } })
       break
@@ -545,6 +551,12 @@ const handlers = {
   revertSession: async (a = {}) => engine.revertSession(idOf(a), a.messageID || a.messageId),
   undoSession: async (a = {}) => engine.undoSession(idOf(a), a.messageID || a.messageId),
   listSnapshots: async (a = {}) => engine.listSnapshots(idOf(a)),
+  listStepSnapshots: async (a = {}) => engine.listStepSnapshots(idOf(a)),
+  previewSnapshot: async (a = {}) => engine.previewSnapshot(idOf(a), { turn: a.turn, step: a.step }),
+  undoStepSession: async (a = {}) => engine.undoStepSession(idOf(a), a.turn, a.step),
+  redoSession: async (a = {}) => engine.redoSession(idOf(a)),
+  listRedo: async (a = {}) => engine.listRedo(idOf(a)),
+  getTrail: async (a = {}) => engine.getTrail(idOf(a), a.limit),
   prompt: async (a = {}) => {
     const id = idOf(a); requireSession(id)
     if (engine.isBusy(id)) throw new Error("Session is already running.")
@@ -889,7 +901,7 @@ const handlers = {
 
 const preloadNames = [
   "info","setMode","getAllUsage","clearSessionRules","browserCreateTab","browserCloseTab","browserListTabs","browserCurrent","browserNavigate","browserScreenshot","browserEvaluate","browserSnapshot","browserClick","browserFill","browserPress","browserScroll",
-  "listSessions","createSession","getMessages","renameSession","deleteSession","revertSession","undoSession","listSnapshots","prompt","resumeRun","interrupt","compactSession","getCompactionSettings","setCompactionSettings",
+  "listSessions","createSession","getMessages","renameSession","deleteSession","revertSession","undoSession","listSnapshots","listStepSnapshots","previewSnapshot","undoStepSession","redoSession","listRedo","getTrail","prompt","resumeRun","interrupt","compactSession","getCompactionSettings","setCompactionSettings",
   "listShells","shellOutput","backgroundSession","backgroundShell","cancelShell","setPermissions","listPermissionRequests","replyPermission","listForms","replyForm","cancelForm",
   "listModels","listAllModels","listModelLimits","setModel","providerCatalog","providerList","providerSave","providerRemove","providerDisabled","providerKey","providerModels","providerModel","providerMeta",
   "cwd","setDirectory","getDirectory","gitBranch","pickProject","pickAttachments","readAttachment","ensureAgent","switchAgent","listAgents","setAgentDisabled","mcpList","mcpAdd","mcpRemove","subagentCreate","subagentList","subagentStatus","subagentResult","subagentDetails","subagentResume","subagentStop","subagentToggle",

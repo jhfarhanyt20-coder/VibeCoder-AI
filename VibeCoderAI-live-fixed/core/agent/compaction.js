@@ -26,46 +26,57 @@ const MESSAGE_OVERHEAD = 4
 const SUMMARY_SILENCE_TIMEOUT_MS = 30000
 const SUMMARY_SYSTEM =
   "You write checkpoint summaries so another agent can continue without the original messages. Be factual, evidence-aware, dense and exact. Never invent details or turn a suspicion into a confirmed finding."
-const TEMPLATE = `Summarize only what the user and assistant said and did. Newer history overrides stale or contradicted information.
+const TEMPLATE = `Summarize only what the user and the assistant said and did. Leave out instructions and setup the assistant was given rather than told by the user: repository conventions, instruction files such as AGENTS.md, and environment details like the session ID. The next agent receives current versions of all of these separately.
 
-Use exactly these sections (omit only sections that truly do not apply):
-
+You MUST use this format for your response (you may omit sections that aren't applicable). Do not include the <template> tags in your response.
+<template>
 ## Objective
-- One or two brief sentences describing what the user is trying to accomplish now.
+- [one or two brief sentences describing what the user is trying to accomplish]
 
 ## Requirements
-- Constraints, preferences, scope boundaries, and exact unanswered requests from the user, or "(none)".
+- [constraints, preferences, requirements, and scope boundaries stated by the user, or "(none)"]
 
 ## Decisions
-- Consequential decisions already made and why, or "(none)".
+- [decisions already made and why, or "(none)"]
 
 ## Work State
+Break the objective into smaller goals and report which are completed, which are being worked on, and which are blocked.
 ### Completed
-- Completed goals, or "(none)".
+- [goals that have been completed; otherwise "(none)"]
+
 ### Active
-- Work currently in progress, or "(none)".
+- [goals currently being worked on; otherwise "(none)"]
+
 ### Blocked
-- Blockers and their causes, or "(none)".
+- [anything blocking progress, and why; otherwise "(none)"]
 
 ## Next Move
-1. Ordered next actions, or "(none)".
+1. [ordered list of next actions, or "(none)"]
 
 ## Relevant Files
-- At most 15 exact file/directory paths another agent needs, with a brief reason; otherwise "(none)".
+List the files and directories, other than the current working directory, that another agent would need to open to continue this work. Include at most 15, most important first. Do not list every file that was read or changed. Include paths outside the current working directory when relevant. If none, write "(none)".
+- \`[file or directory path]\`: [brief reason it matters]
 
 ## Important Context
-- Facts the next agent cannot continue without and cannot easily rediscover, including exact URLs, commands, identifiers, and unresolved errors; otherwise "(none)".
+- [facts the next agent cannot continue without and cannot easily find on its own; or "(none)"]
+</template>
 
 Rules:
+- Keep each section concise. Use terse, single-line bullets, not prose paragraphs or nested lists.
+- Prefer short references over detailed restatement. It is fine to leave out information the next agent can recover from the code or the files listed above.
+- Preserve exact file paths, symbols, commands, error strings, URLs, and identifiers.
+- Carry forward only user questions or requests that remain unanswered or require further action. Do not repeat ones that newer history has answered or resolved. Preserve exact wording when carrying one forward.
+- Preserve consequential workflow state, including whether changes are uncommitted, committed, pushed, under review, or merged.
+- Do not mention the summary process or that context was compacted.
 - Keep the headings exactly as written, but write their bullet content in the user's primary language.
-- Keep sections concise and use terse single-line bullets.
-- Preserve only current or unresolved work; newer evidence overrides stale claims and completed next steps.
 - Preserve epistemic status exactly: distinguish observed facts, user-reported facts, assistant hypotheses, and unverified possibilities.
 - Never call something a verified root cause, completed diagnosis, successful fix, or confirmed result unless the conversation contains direct conclusive evidence.
 - Put unresolved verification in Active or Blocked, including missing permissions, unavailable logs/dumps, failed commands, and conflicting evidence.
-- Preserve important contradictions (for example, a disk event error alongside a later healthy status) rather than selecting one as certain.
-- Do not mention compaction or the summary process; do not continue the task or call tools.
-- Return only the structured summary.`
+- Preserve important contradictions rather than selecting one as certain.
+
+Do not continue the task or call tools.
+
+Return only the structured summary in the requested format. Do not include a preamble, explanation, or other commentary.`
 const CHECKPOINT_PREFIX = "[Checkpoint: the earlier part of this conversation was compacted. Continue from this summary.]"
 
 function tokenCount(value) {
@@ -302,6 +313,14 @@ function renderTranscript(messages, maxChars) {
   let result = `${head.join("\n")}${marker}${tail.join("\n")}`
   if (result.length > cap) result = result.slice(0, cap)
   return result
+}
+
+/** Drop the template's own instruction lines when a model copies them into its answer. */
+function stripTemplateEcho(text) {
+  return String(text || "")
+    .replace(/<\/?template>/gi, "")
+    .replace(/^[ \t]*Break the objective into smaller goals and report.*\n?/gim, "")
+    .replace(/^[ \t]*List the files and directories, other than the current working directory.*\n?/gim, "")
 }
 
 function validSummary(summary) {
@@ -545,11 +564,15 @@ async function generateSummaryWithin({ profile, apiKey, signal, head, previousSu
       if (event?.type === "text") {
         const delta = String(event.delta || "")
         text += delta
-        if (typeof onDelta === "function" && delta) onDelta({ reset: false, text, delta })
+        // Show the live text without the echoed <template> wrapper (an inert HTML
+        // element that would hide the streaming summary) or a half-typed tag.
+        if (typeof onDelta === "function" && delta) onDelta({ reset: false, text: stripTemplateEcho(text).replace(/<\/?t?e?m?p?l?a?t?e?$/i, "").replace(/^\s+/, ""), delta })
       }
       if (event?.type === "finish") break
     }
-    const summary = text.trim()
+    // Models often echo the prompt's <template> wrapper. In HTML <template> is an
+    // inert element, so the whole checkpoint would be invisible in the UI.
+    const summary = stripTemplateEcho(text).trim()
     if (validSummary(summary)) return summary
     sawInvalid = true
     return null
@@ -828,6 +851,7 @@ async function compact({
   }
 
   // Atomic commit point: no user history mutation occurred before this line.
+  finalNextMessages[0].contextTokens = finalAfter // lets the context ring show the real size right after compaction
   session.messages = finalNextMessages
   session.compactions = (session.compactions || 0) + 1
   session.compactedSummary = summary

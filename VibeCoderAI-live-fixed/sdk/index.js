@@ -27,6 +27,13 @@ function createVibe(opts = {}) {
       rename: async (id, title) => e.renameSession(id, title),
       remove: async (id) => e.removeSession(id),
       revert: async (id, messageID) => e.revertSession(id, messageID),
+      undo: async (id, messageID) => e.undoSession(id, messageID),
+      undoStep: async (id, turn, step) => e.undoStepSession(id, turn, step),
+      redo: async (id) => e.redoSession(id),
+      snapshots: async (id) => e.listSnapshots(id),
+      snapshotSteps: async (id) => e.listStepSnapshots(id),
+      snapshotPreview: async (id, options) => e.previewSnapshot(id, options),
+      redos: async (id) => e.listRedo(id),
       switchModel: async (id, profile) => e.switchModel(id, profile),
       prompt: (id, text, o) => e.prompt(id, text, o),
       resume: (id, o) => e.resume(id, o),
@@ -47,6 +54,14 @@ function createVibe(opts = {}) {
       details: async (id) => e.subagentDetails(id),
       resume: async (id, text, o) => e.resumeSubagent(id, text, o),
       stop: async (id) => e.stopSubagent(id),
+    },
+    connectors: {
+      resources: async (o = {}) => e.listConnectorResources(o.connector, o.directory),
+      templates: async (o = {}) => e.listConnectorResourceTemplates(o.connector, o.directory),
+      read: async (o = {}) => e.readConnectorResource(o.connector, o.uri, o.directory),
+      beginOAuth: async (o = {}) => e.beginConnectorOAuth(o.connector, o.redirectUri, o.directory),
+      completeOAuth: async (o = {}) => e.completeConnectorOAuth(o.state, o.code),
+      clearOAuth: async (o = {}) => e.clearConnectorOAuth(o.connector, o.directory),
     },
     browser: {
       current: async (o) => e.browserCurrent(o),
@@ -87,6 +102,14 @@ function connect({ url, token }) {
   }
   return {
     mode: "remote",
+    connectors: {
+      resources: (o = {}) => call("GET", `/connectors/resources?connector=${encodeURIComponent(o.connector || "")}&directory=${encodeURIComponent(o.directory || "")}`),
+      templates: (o = {}) => call("GET", `/connectors/templates?connector=${encodeURIComponent(o.connector || "")}&directory=${encodeURIComponent(o.directory || "")}`),
+      read: (o = {}) => call("POST", "/connectors/read", o),
+      beginOAuth: (o = {}) => call("POST", "/connectors/oauth/start", o),
+      completeOAuth: (o = {}) => call("POST", "/connectors/oauth/complete", o),
+      clearOAuth: (o = {}) => call("POST", "/connectors/oauth/clear", o),
+    },
     session: {
       create: (o) => call("POST", "/session", o),
       list: (q = {}) => call("GET", "/session" + (q.dir ? `?dir=${encodeURIComponent(q.dir)}` : "")),
@@ -95,6 +118,13 @@ function connect({ url, token }) {
       rename: (id, title) => call("PATCH", `/session/${id}`, { title }),
       remove: (id) => call("DELETE", `/session/${id}`),
       revert: (id, messageID) => call("POST", `/session/${id}/revert`, { messageID }),
+      undo: (id, messageID) => call("POST", `/session/${id}/undo`, { messageID }),
+      undoStep: (id, turn, step) => call("POST", `/session/${id}/undo-step`, { turn, step }),
+      redo: (id) => call("POST", `/session/${id}/redo`),
+      snapshots: (id) => call("GET", `/session/${id}/snapshots`),
+      snapshotSteps: (id) => call("GET", `/session/${id}/snapshot-steps`),
+      snapshotPreview: (id, options = {}) => call("POST", `/session/${id}/snapshot-preview`, options),
+      redos: (id) => call("GET", `/session/${id}/redos`),
       switchModel: (id, profile) => call("POST", `/session/${id}/model`, { profile }),
       async *prompt(id, text, o = {}) {
         const ctl = new AbortController()

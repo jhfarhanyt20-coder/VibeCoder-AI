@@ -4,7 +4,9 @@ const tools = require("../tools")
 const compaction = require("./compaction")
 const { buildSystem } = require("./prompt")
 const { isInside } = require("../tools/fsutil")
-const skills = require("../skills")
+const playbooks = require("../harness/playbooks")
+const recipes = require("../harness/recipes")
+const actions = require("../harness/actions")
 const { sleep } = require("../util")
 
 /** If a run was interrupted, an assistant tool_call may have no result. Add error results so the history is valid. */
@@ -63,9 +65,10 @@ const TOOL_ALIASES = {
   command: "bash",
   terminal: "bash",
   read_file: "read",
-  list_files: "read",
-  list_dir: "read",
-  ls: "read",
+  list_files: "list",
+  list_dir: "list",
+  ls: "list",
+  tree: "list",
   view: "read",
   write_file: "write",
   create_file: "write",
@@ -73,8 +76,9 @@ const TOOL_ALIASES = {
   str_replace_editor: "edit",
   str_replace: "edit",
   edit_file: "edit",
-  multi_edit: "edit",
-  patch: "edit",
+  multi_edit: "multiedit",
+  patch: "apply_patch",
+  applypatch: "apply_patch",
   search: "grep",
   search_files: "grep",
   code_search: "grep",
@@ -146,10 +150,85 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
   let overflowRetried = false
   // built-ins + MCP/plugin tools, refreshed each step (a server may connect mid-run)
   const allTools = () => [...tools.ALL, ...extraTools()]
-  let toolSpecs = tools.specs(allTools())
-  const resolve = (name) => allTools().find((t) => t.name === name) || allTools().find((t) => t.name === TOOL_ALIASES[String(name || "").toLowerCase()])
-  const skillText = skills.systemText(session.dir)
-  const sys = () => buildSystem({ agentName, cwd: session.dir, extra: [agentSystem, extraSystem, skillText].filter(Boolean).join("\n\n") })
+  let activeTools = allTools()
+  let toolSpecs = tools.specs(activeTools)
+  // `activeTools` is frozen for one model step. Connector/extension changes are
+  // picked up at the next boundary, so the model can only call what it saw.
+  const resolve = (name) => activeTools.find((t) => t.name === name) || activeTools.find((t) => t.name === TOOL_ALIASES[String(name || "").toLowerCase()])
+
+  // Pulse: pure reads can run together. Side-effect tools stay serial below.
+  const READ_ONLY = new Set(["read", "list", "grep", "glob"])
+  const isReadOnly = (call) => {
+    const tool = resolve(call && call.name)
+    return !!tool && READ_ONLY.has(tool.name)
+  }
+  const prepareRead = async (call, stepNo = 0) => {
+    const tool = resolve(call.name)
+    const shown = tool ? tool.name : call.name
+    const elapsed = actions.mark()
+    emit({ type: "tool.start", id: call.id, name: shown, args: call.args })
+    const result = { type: "tool_result", id: call.id, name: shown, output: "", isError: false }
+    try {
+      if (!tool) throw new Error(`Unknown tool "${call.name}". Available: ${activeTools.map((t) => t.name).join(", ")}`)
+      if (call.args && call.args.__parseError) throw new Error("Tool arguments were not valid JSON. Send them again as a valid JSON object.")
+      for (const key of tool.parameters.required || []) {
+        if (call.args[key] == null) throw new Error(`Missing required argument "${key}"`)
+      }
+      const ctx = { cwd: session.dir, signal, session, emit, stats: {}, engine, toolCallId: call.id, toolName: shown, askPermission, step: stepNo }
+      for (const p of tool.paths(call.args, ctx)) {
+        if (!isInside(session.dir, p) && !(await askPermission({ tool: "external_directory", subject: p }))) {
+          throw new Error(`Permission denied: ${p} is outside the workspace. Do not retry; ask the user.`)
+        }
+      }
+      const perm = tool.perm(call.args, ctx)
+      if (!(await askPermission(perm))) {
+        throw new Error(perm.locked ? "Blocked by a hard lock. Do not retry this action; explain the limitation to the user and choose a safe alternative." : "The user denied permission for this action. Do not retry the same action; ask how to proceed.")
+      }
+      return { call, tool, shown, ctx, result, ready: true, elapsed }
+    } catch (error) {
+      result.output = String((error && error.message) || error)
+      result.isError = true
+      result.durationMs = elapsed()
+      emit({ type: "tool.end", id: call.id, name: shown, output: result.output, isError: true, durationMs: result.durationMs })
+      return { call, tool, shown, result, ready: false }
+    }
+  }
+  const executeRead = async (prepared) => {
+    const { call, tool, shown, ctx, result, elapsed } = prepared
+    try {
+      if (signal.aborted) throw new Error("Interrupted by user.")
+      const value = await abortable(Promise.resolve().then(() => tool.run(call.args, ctx)), signal)
+      const normalized = actions.normalizeResult(value)
+      result.output = normalized.output
+      result.isError = normalized.isError
+      if (normalized.stats) result.stats = normalized.stats
+      else if (ctx.stats && Object.keys(ctx.stats).length) result.stats = ctx.stats
+      if (normalized.artifacts) result.artifacts = normalized.artifacts
+    } catch (error) {
+      result.output = String((error && error.message) || error)
+      result.isError = true
+    }
+    result.durationMs = elapsed()
+    emit({ type: "tool.end", id: call.id, name: shown, output: result.output, isError: result.isError, durationMs: result.durationMs, ...(result.stats ? { stats: result.stats } : {}), ...(result.artifacts ? { artifacts: result.artifacts } : {}) })
+    return result
+  }
+  const runReadBatch = async (calls, stepNo = 0) => {
+    // Permission prompts are sequential (one question at a time); execution is parallel.
+    const prepared = []
+    for (const call of calls) prepared.push(await prepareRead(call, stepNo))
+    return Promise.all(prepared.map((item) => (item.ready ? executeRead(item) : item.result)))
+  }
+
+  const playbookText = playbooks.systemText(session.dir, engine?.home)
+  const recipeText = recipes.systemText({ directory: session.dir, home: engine?.home })
+  const sys = () => buildSystem({ agentName, cwd: session.dir, model: profile.model, home: engine?.home, extra: [agentSystem, extraSystem, playbookText, recipeText].filter(Boolean).join("\n\n") })
+  emit({
+    type: "run.start",
+    agent: agentName,
+    model: profile?.model || "",
+    maxSteps,
+    resumed: Array.isArray(session.messages) && session.messages.length > 0,
+  })
 
   const doCompact = async (reason, targetTokens = 0) => {
     const summaryModel = summaryProfile
@@ -219,7 +298,8 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
     if (signal.aborted) return emit({ type: "done", reason: "interrupted" })
     if (isOrphan()) return
     const system = sys()
-    toolSpecs = tools.specs(allTools())
+    activeTools = allTools()
+    toolSpecs = tools.specs(activeTools)
 
     // V-18: `compaction.auto: false` disables the pre-request checkpoint only.
     // Explicit /compact and overflow recovery still run.
@@ -232,6 +312,7 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
       ? system + "\n\n# Final step\nYou are at the last step of this run. Do not call any tools. Write a concise closing summary of what you changed, what you verified, and what is still pending."
       : system
     const reqTools = finalStep ? [] : toolSpecs
+    emit({ type: "step.start", step: step + 1, maxSteps, tools: reqTools.map((tool) => tool.name) })
 
     let text = ""
     const calls = []
@@ -303,14 +384,31 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
     // providerID/model form matches the UI picker key (derived profiles are
     // "<provider>/<model>", the base profile is just "<provider>").
     const modelTag = { providerID: String(profile.id).split("/")[0], id: profile.model }
-    session.messages.push({ role: "assistant", parts, ...(stepUsage ? { usage: stepUsage, model: modelTag } : {}) })
+    session.messages.push({ role: "assistant", parts, step: step + 1, ...(stepUsage ? { usage: stepUsage, model: modelTag } : {}) })
     store.save(session)
+    emit({
+      type: "step.end",
+      step: step + 1,
+      finish,
+      tools: calls.length,
+      input: stepUsage?.input || 0,
+      output: stepUsage?.output || 0,
+    })
     if (!calls.length) {
       if (finalStep) finalized = true
       return emit({ type: "done", reason: finish, ...(finalStep ? { summarized: true } : {}) })
     }
 
     const results = []
+    // Parallel fast path: only pure reads, only when the model asked for more
+    // than one. Permission checks stay sequential; execution is concurrent.
+    if (calls.length > 1 && calls.every(isReadOnly)) {
+      const batch = await runReadBatch(calls, step + 1)
+      if (isOrphan()) return
+      session.messages.push({ role: "user", parts: batch, step: step + 1 })
+      store.save(session)
+      continue
+    }
     for (const c of calls) {
       if (signal.aborted) {
         results.push({ type: "tool_result", id: c.id, name: c.name, output: "Interrupted by user.", isError: true })
@@ -323,14 +421,16 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
         resolved = resolve(c.name)
       }
       const shown = resolved ? resolved.name : c.name
+      const elapsed = actions.mark()
       emit({ type: "tool.start", id: c.id, name: shown, args: c.args })
       let out
       let isError = false
       let stats = null
       let screenshot = null
+      let artifacts = null
       try {
         const tool = resolved
-        if (!tool) throw new Error(`Unknown tool "${c.name}". Available: ${allTools().map((t) => t.name).join(", ")}`)
+        if (!tool) throw new Error(`Unknown tool "${c.name}". Available: ${activeTools.map((t) => t.name).join(", ")}`)
         if (c.args && c.args.__parseError) throw new Error("Tool arguments were not valid JSON. Send them again as a valid JSON object.")
         for (const k of (tool.parameters.required || [])) if (c.args[k] == null) throw new Error(`Missing required argument "${k}"`)
         const sig = c.name + JSON.stringify(c.args)
@@ -350,7 +450,7 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
         }
         consecutiveGuardHits = 0
 
-        const ctx = { cwd: session.dir, signal, session, emit, stats: {}, engine, toolCallId: c.id, toolName: shown }
+        const ctx = { cwd: session.dir, signal, session, emit, stats: {}, engine, toolCallId: c.id, toolName: shown, askPermission, step: step + 1 }
         for (const p of tool.paths(c.args, ctx)) {
           if (!isInside(session.dir, p) && !(await askPermission({ tool: "external_directory", subject: p })))
             throw new Error(`Permission denied: ${p} is outside the workspace. Do not retry; ask the user.`)
@@ -362,13 +462,17 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
         let granted = false
         if (perm.tool === "bash" && typeof perm.subject === "string") {
           for (const sub of splitCommand(perm.subject)) {
-            granted = await askPermission({ tool: "bash", subject: sub })
-            if (!granted) break
+            const subPerm = { tool: "bash", subject: sub }
+            granted = await askPermission(subPerm)
+            if (!granted) {
+              if (subPerm.locked) perm.locked = true
+              break
+            }
           }
         } else {
           granted = await askPermission(perm)
         }
-        if (!granted) throw new Error("The user denied permission for this action. Do not retry the same action; ask how to proceed.")
+        if (!granted) throw new Error(perm.locked ? "Blocked by a hard lock. Do not retry this action; explain the limitation to the user and choose a safe alternative." : "The user denied permission for this action. Do not retry the same action; ask how to proceed.")
         const toolValue = await abortable(Promise.resolve().then(() => tool.run(c.args, ctx)), signal)
         if (toolValue && toolValue.__vibeStructuredToolResult === "browser-screenshot") {
           out = tools.clip(String(toolValue.text || "Browser screenshot captured."))
@@ -386,26 +490,31 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
             }
           }
         } else {
-          out = tools.clip(String(toolValue ?? ""))
+          const normalized = actions.normalizeResult(toolValue)
+          out = normalized.output
+          if (normalized.isError) isError = true
+          if (normalized.stats) stats = normalized.stats
+          if (normalized.artifacts) artifacts = normalized.artifacts
         }
-        if (ctx.stats && Object.keys(ctx.stats).length) stats = ctx.stats // file diffs + structured tool metadata (subagents, screenshots, ...)
+        if (ctx.stats && Object.keys(ctx.stats).length) stats = { ...(stats || {}), ...ctx.stats } // file diffs + structured tool metadata (subagents, screenshots, ...)
       } catch (e) {
         out = String((e && e.message) || e)
         isError = true
       }
-      emit({ type: "tool.end", id: c.id, name: shown, output: out, isError, ...(stats ? { stats } : {}), ...(screenshot ? { screenshot } : {}) })
-      results.push({ type: "tool_result", id: c.id, name: shown, output: out, isError, ...(stats ? { stats } : {}), ...(screenshot ? { screenshot } : {}) })
+      const durationMs = elapsed()
+      emit({ type: "tool.end", id: c.id, name: shown, output: out, isError, durationMs, ...(stats ? { stats } : {}), ...(artifacts ? { artifacts } : {}), ...(screenshot ? { screenshot } : {}) })
+      results.push({ type: "tool_result", id: c.id, name: shown, output: out, isError, durationMs, ...(stats ? { stats } : {}), ...(artifacts ? { artifacts } : {}), ...(screenshot ? { screenshot } : {}) })
     }
     // the stuck-guard stopped mid-batch: give the untouched calls an error result
     // so the stored history stays valid without another provider request.
     if (stuck) {
       for (const c of calls) if (!results.some((r) => r.id === c.id)) results.push({ type: "tool_result", id: c.id, name: c.name, output: "Skipped: the agent stopped after repeating the same call.", isError: true })
-      session.messages.push({ role: "user", parts: results })
+      session.messages.push({ role: "user", parts: results, step: step + 1 })
       store.save(session)
       return emit({ type: "done", reason: "stuck" })
     }
     if (isOrphan()) return
-    session.messages.push({ role: "user", parts: results })
+    session.messages.push({ role: "user", parts: results, step: step + 1 })
     store.save(session)
   }
   emit({ type: "done", reason: "max_steps", ...(finalized ? { summarized: true } : {}) })

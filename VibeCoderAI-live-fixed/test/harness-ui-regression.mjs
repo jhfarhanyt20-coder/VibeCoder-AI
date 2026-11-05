@@ -1,0 +1,39 @@
+import assert from "node:assert/strict"
+import fs from "node:fs"
+import path from "node:path"
+import { spawnSync } from "node:child_process"
+import { fileURLToPath } from "node:url"
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+const read = (file) => fs.readFileSync(path.join(root, file), "utf8")
+const html = read("renderer/index.html")
+const app = read("renderer/app.js")
+const css = read("renderer/theme.css")
+const backend = read("electron/backend.cjs")
+const preload = read("electron/preload.cjs")
+const messages = read("electron/messages.cjs")
+
+for (const id of ["btn-rewind", "rewind-menu", "rewind-summary", "rewind-files", "rewind-step", "rewind-turn", "rewind-redo"]) {
+  assert.match(html, new RegExp(`id=["']${id}["']`), `missing Rewind UI element ${id}`)
+}
+for (const method of ["listStepSnapshots", "previewSnapshot", "undoStepSession", "redoSession", "listRedo", "getTrail"]) {
+  assert.match(preload, new RegExp(`${method}: call\\("${method}"\\)`), `preload is missing ${method}`)
+  assert.match(backend, new RegExp(`${method}: async`), `backend is missing ${method}`)
+}
+for (const event of ["session.pulse.started", "session.pulse.step.started", "session.pulse.step.ended", "session.permission.locked", "session.recipe.started"]) {
+  assert.match(backend, new RegExp(event.replaceAll(".", "\\.")), `backend does not map ${event}`)
+}
+assert.match(backend, /durationMs: ev\.durationMs/)
+assert.match(messages, /durationMs: res\.durationMs/)
+assert.match(app, /async function refreshRewindMenu/)
+assert.match(app, /async function applyRewind/)
+assert.match(app, /function permissionScope/)
+assert.match(app, /function addHarnessNote/)
+assert.match(app, /Step \$\{pulse\.step\}/)
+assert.match(css, /\.rewind-menu/)
+assert.match(css, /\.harness-note\.locked/)
+
+const syntax = spawnSync(process.execPath, ["--check", path.join(root, "renderer", "app.js")], { encoding: "utf8" })
+assert.equal(syntax.status, 0, syntax.stderr || syntax.stdout)
+
+console.log("PASS harness UI regression: Pulse, scoped permissions and Rewind controls are wired end-to-end")

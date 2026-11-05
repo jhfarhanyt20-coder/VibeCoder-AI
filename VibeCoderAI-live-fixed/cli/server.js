@@ -69,6 +69,26 @@ function createServer(engine, { token = crypto.randomBytes(24).toString("hex") }
         if (p[1] && p[2] === "cancel" && m === "POST")
           return sendJson(res, 200, { cancelled: engine.cancelForm(p[1], (await readBody(req)).message) })
       }
+      if (p[0] === "connectors") {
+        if (p[1] === "resources" && m === "GET") return sendJson(res, 200, await engine.listConnectorResources(url.searchParams.get("connector") || "", url.searchParams.get("directory") || ""))
+        if (p[1] === "templates" && m === "GET") return sendJson(res, 200, await engine.listConnectorResourceTemplates(url.searchParams.get("connector") || "", url.searchParams.get("directory") || ""))
+        if (p[1] === "read" && m === "POST") {
+          const b = await readBody(req)
+          return sendJson(res, 200, await engine.readConnectorResource(b.connector, b.uri, b.directory))
+        }
+        if (p[1] === "oauth" && p[2] === "start" && m === "POST") {
+          const b = await readBody(req)
+          return sendJson(res, 200, engine.beginConnectorOAuth(b.connector, b.redirectUri, b.directory))
+        }
+        if (p[1] === "oauth" && p[2] === "complete" && m === "POST") {
+          const b = await readBody(req)
+          return sendJson(res, 200, await engine.completeConnectorOAuth(b.state, b.code))
+        }
+        if (p[1] === "oauth" && p[2] === "clear" && m === "POST") {
+          const b = await readBody(req)
+          return sendJson(res, 200, { cleared: await engine.clearConnectorOAuth(b.connector, b.directory) })
+        }
+      }
       if (p[0] === "session") {
         if (!p[1]) {
           if (m === "GET") return sendJson(res, 200, engine.listSessions({ dir: url.searchParams.get("dir") || undefined }))
@@ -84,6 +104,19 @@ function createServer(engine, { token = crypto.randomBytes(24).toString("hex") }
             const b = await readBody(req)
             return sendJson(res, 200, engine.revertSession(id, b.messageID))
           }
+          if (p[2] === "undo" && m === "POST") {
+            const b = await readBody(req)
+            return sendJson(res, 200, engine.undoSession(id, b.messageID))
+          }
+          if (p[2] === "undo-step" && m === "POST") {
+            const b = await readBody(req)
+            return sendJson(res, 200, engine.undoStepSession(id, b.turn, b.step))
+          }
+          if (p[2] === "redo" && m === "POST") return sendJson(res, 200, engine.redoSession(id))
+          if (p[2] === "snapshot-steps" && m === "GET") return sendJson(res, 200, engine.listStepSnapshots(id))
+          if (p[2] === "snapshot-preview" && m === "POST") return sendJson(res, 200, engine.previewSnapshot(id, await readBody(req)))
+          if (p[2] === "redos" && m === "GET") return sendJson(res, 200, engine.listRedo(id))
+          if (p[2] === "snapshots" && m === "GET") return sendJson(res, 200, engine.listSnapshots(id))
           if (p[2] === "prompt" && m === "POST") {
             const b = await readBody(req)
             const ctl = new AbortController()

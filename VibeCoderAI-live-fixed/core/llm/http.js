@@ -1,12 +1,18 @@
 "use strict"
 const { sleep } = require("../util")
 
+// Read the shipped version once so provider requests identify the exact build
+// without a manually maintained string in the hot path.
+const VIBE_VERSION = (() => {
+  try { return require("../../package.json").version || "0.0.0" } catch { return "0.0.0" }
+})()
+
 class ApiError extends Error {
   constructor(status, body) {
     const text = String(body)
     const restricted = [401, 403].includes(status) && /unauthori[sz]ed[_\s-]*client|client[^\n]{0,40}(?:not allowed|not authori[sz]ed|detected)/i.test(text)
     super(restricted
-      ? `This provider rejected VibeCoder AI as an unauthorized client (HTTP ${status}). The credential is restricted to another approved application; ask the provider to authorize VibeCoder AI or use an unrestricted API credential.`
+      ? `This provider rejected VibeCoder AI as an unauthorized client (HTTP ${status}). The credential is restricted to another approved application; ask the provider to authorize VibeCoder AI or use an unrestricted API credential. Provider said: ${text.slice(0, 300)}`
       : `HTTP ${status}: ${text.slice(0, 500)}`)
     this.name = "ApiError"
     this.status = status
@@ -73,7 +79,7 @@ async function postStream(url, { headers = {}, body, signal, retries = 2, connec
     try {
       const res = await fetch(url, {
         method: "POST",
-        headers: { "content-type": "application/json", accept: "text/event-stream", "user-agent": "VibeCoderAI/0.1.0", ...headers },
+        headers: { "content-type": "application/json", accept: "text/event-stream", "user-agent": `VibeCoderAI/${VIBE_VERSION}`, ...headers },
         body: JSON.stringify(body),
         signal: ctl.signal,
       })

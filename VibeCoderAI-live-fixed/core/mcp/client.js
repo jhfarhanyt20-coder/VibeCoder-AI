@@ -4,7 +4,7 @@
  * Supports the two standard transports:
  *   local  : spawn the server, newline-delimited JSON-RPC over stdin/stdout
  *   remote : POST JSON-RPC to the URL (Streamable HTTP; JSON or SSE replies)
- * Just enough of the protocol to be useful: initialize -> tools/list -> tools/call.
+ * Supports tools plus read-only resource discovery/read.
  */
 const { spawn } = require("child_process")
 
@@ -16,6 +16,10 @@ class McpClient {
     this.name = name
     this.entry = entry // { type: "local"|"remote", command?, url?, env?, headers? }
     this.tools = []
+    this.resources = []
+    this.resourceTemplates = []
+    this.capabilities = {}
+    this.resourceError = ""
     this.status = "connecting" // connecting | ready | error
     this.error = ""
     this.pending = new Map()
@@ -40,6 +44,8 @@ class McpClient {
       accept: "application/json, text/event-stream",
       ...(this.entry.headers || {}),
     }
+    const oauthToken = this.entry.oauth?.accessToken || (this.entry.oauth?.tokenEnv ? process.env[this.entry.oauth.tokenEnv] : "")
+    if (oauthToken && !headers.authorization && !headers.Authorization) headers.authorization = `Bearer ${oauthToken}`
     if (this.sessionId) headers["mcp-session-id"] = this.sessionId
     // Merge the caller's abort signal (if any) with a 60s timeout so a stopped
     // run can cancel an in-flight MCP call instead of waiting the full minute.
@@ -48,7 +54,10 @@ class McpClient {
     const res = await fetch(this.entry.url, { method: "POST", headers, body: JSON.stringify(msg), signal: combined })
     const sid = res.headers.get("mcp-session-id")
     if (sid) this.sessionId = sid
-    if (!res.ok) throw new Error(`MCP "${this.name}" answered HTTP ${res.status}`)
+    if (!res.ok) {
+      if (res.status === 401 && this.entry.oauth?.authorizationUrl) throw new Error(`MCP "${this.name}" requires OAuth authorization`)
+      throw new Error(`MCP "${this.name}" answered HTTP ${res.status}`)
+    }
     const ct = res.headers.get("content-type") || ""
     if (!msg.id && msg.method) return // notification: fire and forget
     if (/event-stream/i.test(ct)) {
@@ -167,14 +176,26 @@ class McpClient {
     try {
       await Promise.race([
         (async () => {
-          await this._request("initialize", {
+          const initialized = await this._request("initialize", {
             protocolVersion: PROTOCOL,
             capabilities: {},
             clientInfo: CLIENT_INFO,
           })
+          this.capabilities = initialized && typeof initialized.capabilities === "object" ? initialized.capabilities : {}
           this._notify("notifications/initialized", {})
           const out = await this._request("tools/list", {})
           this.tools = Array.isArray(out && out.tools) ? out.tools : []
+          if (this.capabilities.resources) {
+            try {
+              this.resources = await this.listResources()
+              const templates = await this._request("resources/templates/list", {}).catch(() => null)
+              this.resourceTemplates = Array.isArray(templates?.resourceTemplates) ? templates.resourceTemplates : []
+            } catch (error) {
+              // Resources are optional. A broken resource endpoint must not hide
+              // otherwise healthy connector tools.
+              this.resourceError = error?.message || String(error)
+            }
+          }
         })(),
         new Promise((_, rej) => {
           guard = setTimeout(() => rej(new Error(`MCP "${this.name}": no answer within 20s`)), 20000)
@@ -202,6 +223,23 @@ class McpClient {
     const parts = (out && out.content) || []
     const text = parts.map((c) => (c.type === "text" ? c.text : `[${c.type} content]`)).join("\n")
     return text || JSON.stringify(out && (out.structuredContent || out)) || "(empty result)"
+  }
+
+  async listResources() {
+    const out = []
+    let cursor
+    for (let page = 0; page < 10; page++) {
+      const result = await this._request("resources/list", cursor ? { cursor } : {})
+      if (Array.isArray(result?.resources)) out.push(...result.resources)
+      cursor = result?.nextCursor
+      if (!cursor) break
+    }
+    return out.slice(0, 1000)
+  }
+
+  async readResource(uri) {
+    const result = await this._request("resources/read", { uri: String(uri || "") })
+    return Array.isArray(result?.contents) ? result.contents : []
   }
 
   close() {

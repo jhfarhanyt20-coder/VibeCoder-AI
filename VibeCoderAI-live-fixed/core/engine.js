@@ -3,23 +3,28 @@ const fs = require("fs")
 const path = require("path")
 const { SessionStore } = require("./store/sessions")
 const profiles = require("./llm/profiles")
-const { DEFAULT_RULES, decide, normalizeRules } = require("./perm/rules")
+const { DEFAULT_RULES, normalizeRules } = require("./perm/rules")
 const { runLoop, repairHistory } = require("./agent/loop")
 const compaction = require("./agent/compaction")
 const agents = require("./agents")
 const config = require("./config")
 const { buildSystem } = require("./agent/prompt")
+const snapshots = require("./store/snapshots")
 const tools = require("./tools")
 const jobs = require("./jobs")
 const { McpManager } = require("./mcp")
 const { SubAgentManager } = require("./subagents")
 const forms = require("./forms")
-const plugins = require("./plugins")
+const { ExtensionManager } = require("./harness/extensions")
+const { loadLocks, isLocked } = require("./harness/locks")
+const { combineRules, decideWithSource } = require("./harness/guard")
+const recipes = require("./harness/recipes")
+const { Trail, shouldTrail } = require("./harness/trail")
 const { newId, homeDir } = require("./util")
 
 class Engine {
   /**
-   * @param {{home?:string, agentName?:string, permission?:"ask"|"allow"|"deny", rules?:Array, extraSystem?:string}} opts
+   * @param {{home?:string, agentName?:string, permission?:"ask"|"allow"|"deny", rules?:Array, extraSystem?:string, crewMaxParallel?:number}} opts
    * permission: what to do when a rule says "ask" and nobody answers: "ask" = emit permission.ask and wait.
    */
   constructor(opts = {}) {
@@ -38,13 +43,16 @@ class Engine {
     // auth.json and warms the key cache - the UI hot path never spawns.
     profiles.migrateAuthKeys(this.home)
     this.listeners = new Set()
+    this.trail = new Trail({ home: this.home })
     this.pending = new Map()
     // V-10: interactive questions the agent is waiting on (formID -> form).
     this.forms = new Map()
     this.runs = new Map()
-    this.mcp = new McpManager()
+    this.mcp = new McpManager({ home: this.home })
+    this.extensions = new ExtensionManager({ home: this.home })
     this._mcpSync = null // in-flight connect promise (dedupe)
-    this.subagents = new SubAgentManager(this)
+    this.crewMaxParallel = Math.max(1, Math.min(16, Math.floor(Number(opts.crewMaxParallel) || 4)))
+    this.subagents = new SubAgentManager(this, { maxParallel: this.crewMaxParallel })
     this.subagentsEnabled = opts.subagentsEnabled !== false // on by default
     // V-07 convenience API: engine.agents.list(dir) / engine.agents.get(id, dir)
     this.agents = {
@@ -141,9 +149,9 @@ class Engine {
     }
     let pl = []
     try {
-      pl = plugins.toolObjects(directory)
+      pl = this.extensions.toolObjects(directory)
     } catch {}
-    const ex = [...this.mcp.toolObjects(), ...pl]
+    const ex = [...this.mcp.toolObjects(), ...this.mcp.resourceToolObjects(), ...pl]
     if (this.subagentsEnabled) ex.push(this.subagentTool())
     return ex
   }
@@ -159,7 +167,16 @@ class Engine {
         l(full)
       } catch {}
     }
+    // Durable audit trail: only low-frequency, useful checkpoints. A logging
+    // failure must never affect the run, so Trail.append() swallows errors.
+    if (shouldTrail(full)) this.trail.append(sessionId, full)
+    try { this.extensions.event(full) } catch {}
     return full
+  }
+
+  /** Read the persisted audit trail for a session (oldest first). */
+  getTrail(sessionId, limit = 200) {
+    return this.trail.read(sessionId, limit)
   }
 
   // ---- profiles / auth ----
@@ -216,10 +233,13 @@ class Engine {
         if (child.parentId === id) {
           if (this.runs.has(child.id)) this.forceStop(child.id)
           this.store.remove(child.id)
+          this.trail.remove(child.id)
         }
       }
     } catch {}
     this.store.remove(id)
+    snapshots.remove(this.home, id)
+    this.trail.remove(id)
   }
   switchModel(id, profile) {
     profiles.getProfile(profile, this.home)
@@ -242,7 +262,98 @@ class Engine {
     s.messages = s.messages.slice(0, i)
     s.updatedAt = Date.now()
     this.store.save(s)
+    snapshots.clearRedo(this.home, id)
     return s
+  }
+
+  /**
+   * Undo the agent's FILE changes. By messageID ("msg-<index>" of a user message)
+   * or, with no messageID, the most recent turn that changed files. Restores the
+   * original content (deleting files the agent created) and also drops the
+   * conversation from that user message on, like revertSession.
+   * Shell side effects (sed -i, formatters, git) are not captured.
+   */
+  undoSession(id, messageID) {
+    if (this.runs.has(id)) throw new Error("Session is busy - stop the current run first.")
+    const s = this.store.get(id)
+    let turn = null
+    let cut = -1
+    if (messageID) {
+      const i = Number(/^(?:msg|cmp)-(\d+)$/.exec(String(messageID))?.[1])
+      if (!Number.isInteger(i) || i < 0 || i >= s.messages.length || s.messages[i].role !== "user") throw new Error("Pick a user message to undo from.")
+      turn = s.messages[i].turn
+      if (!Number.isInteger(turn)) throw new Error("This message has no file snapshot (it predates undo support).")
+      cut = i
+    } else {
+      const snaps = snapshots.list(this.home, id)
+      if (!snaps.length) throw new Error("Nothing to undo: the agent has not changed any files in this session.")
+      turn = snaps[0].turn
+      cut = s.messages.findIndex((m) => m.role === "user" && m.turn === turn)
+    }
+    const droppedMessages = cut >= 0 ? s.messages.slice(cut) : []
+    const result = snapshots.undo(this.home, id, turn)
+    let dropped = 0
+    if (cut >= 0) {
+      dropped = s.messages.length - cut
+      s.messages = s.messages.slice(0, cut)
+      s.updatedAt = Date.now()
+      this.store.save(s)
+    }
+    snapshots.attachRedo(this.home, id, result.redoId, { messageIndex: cut, messages: droppedMessages })
+    return { ...result, messagesDropped: dropped }
+  }
+  listSnapshots(id) {
+    return snapshots.list(this.home, id)
+  }
+  listStepSnapshots(id) {
+    return snapshots.listSteps(this.home, id)
+  }
+  previewSnapshot(id, options) {
+    this.store.get(id) // validate session ownership/existence first
+    return snapshots.preview(this.home, id, options)
+  }
+  listRedo(id) {
+    this.store.get(id)
+    return snapshots.listRedo(this.home, id)
+  }
+  undoStepSession(id, turn, step) {
+    if (this.runs.has(id)) throw new Error("Session is busy - stop the current run first.")
+    const s = this.store.get(id)
+    const selectedTurn = Number(turn)
+    const selectedStep = Number(step)
+    if (!Number.isInteger(selectedTurn) || !Number.isInteger(selectedStep) || selectedStep < 1) throw new Error("Choose a valid turn and step to rewind.")
+    const start = s.messages.findIndex((message) => message.role === "user" && message.turn === selectedTurn)
+    let cut = -1
+    if (start >= 0) cut = s.messages.findIndex((message, index) => index > start && Number(message.step) >= selectedStep)
+    const droppedMessages = cut >= 0 ? s.messages.slice(cut) : []
+    const result = snapshots.undoStep(this.home, id, selectedTurn, selectedStep)
+    if (!result.steps.length) throw new Error("Nothing to rewind for that step.")
+    if (cut >= 0) {
+      s.messages = s.messages.slice(0, cut)
+      s.updatedAt = Date.now()
+      this.store.save(s)
+    }
+    snapshots.attachRedo(this.home, id, result.redoId, { messageIndex: cut, messages: droppedMessages })
+    return { ...result, messagesDropped: droppedMessages.length }
+  }
+  redoSession(id) {
+    if (this.runs.has(id)) throw new Error("Session is busy - stop the current run first.")
+    const s = this.store.get(id)
+    const pending = snapshots.peekRedo(this.home, id)
+    if (!pending) throw new Error("Nothing to redo.")
+    const index = Number(pending.meta?.messageIndex)
+    if (Number.isInteger(index) && index >= 0 && s.messages.length !== index) {
+      throw new Error("Cannot redo because the session history changed after rewind.")
+    }
+    const result = snapshots.redo(this.home, id)
+    const messages = Array.isArray(result.meta?.messages) ? result.meta.messages : []
+    if (Number.isInteger(index) && index >= 0 && messages.length) s.messages.splice(index, 0, ...messages)
+    if (messages.length) {
+      s.updatedAt = Date.now()
+      this.store.save(s)
+    }
+    const { meta, ...publicResult } = result
+    return { ...publicResult, messagesRestored: messages.length }
   }
 
   // ---- permissions ----
@@ -259,9 +370,33 @@ class Engine {
       if (tool === "question") return true
       const subject = perm?.subject == null ? "" : perm.subject
       const neverPersist = !!perm?.neverPersist
+      // Hard locks are checked before every other rule. They are not a prompt
+      // and cannot be lifted by a saved "always allow" approval.
+      const locks = loadLocks({ home: this.home, dir: session && session.dir })
+      if (isLocked(locks, tool, subject)) {
+        const event = { type: "permission.lock", tool, subject: String(subject) }
+        if (perm && typeof perm === "object") perm.locked = true
+        if (typeof emit === "function") emit(event)
+        else this._emit(session && session.id, event)
+        return false
+      }
       // V-07: an agent definition's rules sit last, so a "deny" in a read-only
       // agent cannot be overridden by an older "always allow" approval.
-      const action = decide([...this.rules, ...(inherits?.rules || []), ...session.rules, ...(Array.isArray(agentRules) ? agentRules : [])], tool, subject)
+      const layers = combineRules({
+        project: this.rules,
+        inherited: inherits?.rules || [],
+        session: session.rules || [],
+        agent: Array.isArray(agentRules) ? agentRules : [],
+      })
+      const { action, source } = decideWithSource(layers, tool, subject)
+      // Durable audit: which layer decided, without leaking the subject value.
+      this.trail.append(session && session.id, {
+        type: "permission.decision",
+        tool,
+        subject: String(subject),
+        action,
+        source,
+      })
       if (action === "allow") return true
       if (action === "deny") return false
       if (this.permissionMode === "allow") return true
@@ -489,6 +624,13 @@ class Engine {
   async *prompt(id, text, opts = {}) {
     if (this.runs.has(id)) throw new Error("Session is busy")
     const session = this.store.get(id)
+    const recipe = !opts.agentOnly ? recipes.expandRecipe(text, { directory: session.dir, home: this.home }) : null
+    const runOpts = recipe ? {
+      ...opts,
+      recipeId: recipe.id,
+      recipeAgent: recipe.agent || "",
+      recipeModel: recipe.model || "",
+    } : opts
     const profile = profiles.getProfile(session.profile, this.home)
     const apiKey = profiles.getKey(profile, this.home)
     const ctl = this._begin(id, opts)
@@ -497,14 +639,23 @@ class Engine {
       // agentOnly prompts (the automatic background-run nudge) reach the model
       // but are not shown as a chat bubble.
       const parts = opts.agentOnly ? [{ type: "text", text: String(text), agentOnly: true }] : [{ type: "text", text: String(text) }]
+      if (recipe) parts.push({ type: "text", text: recipe.text, agentOnly: true, recipe: recipe.id })
       parts.unshift(...this._takeSubagentResultParts(session))
       // image files arrive as { mime, data } (base64) and become canonical image parts
       for (const f of Array.isArray(opts.files) ? opts.files : []) {
         if (f && f.data && String(f.mime || "").startsWith("image/")) parts.push({ type: "image", mime: f.mime, data: f.data })
       }
-      session.messages.push({ role: "user", parts })
+      // every real user prompt starts a new "turn"; file snapshots are keyed by it
+      if (!opts.agentOnly) session.turnSeq = (session.turnSeq || 0) + 1
+      session.messages.push({
+        role: "user",
+        parts,
+        ...(opts.agentOnly ? {} : { turn: session.turnSeq }),
+        ...(recipe ? { recipe: { id: recipe.id, agent: recipe.agent || "", model: recipe.model || "" } } : {}),
+      })
       if (session.title === "New session") session.title = String(text).replace(/\s+/g, " ").trim().slice(0, 60) || session.title
       this.store.save(session)
+      if (!opts.agentOnly) snapshots.clearRedo(this.home, id)
     } catch (e) {
       // a failed save (Windows file lock, full disk...) used to leave the run
       // registered for ever -> every later message said "previous run could not be stopped"
@@ -512,7 +663,7 @@ class Engine {
       throw e
     }
 
-    yield* this._drive(session, profile, apiKey, ctl, opts)
+    yield* this._drive(session, profile, apiKey, ctl, runOpts)
   }
 
   /**
@@ -535,8 +686,38 @@ class Engine {
     }
     if (!session.messages.length) throw new Error("Nothing to resume - this session has no messages yet.")
     this.store.save(session) // persist the repaired history (interrupted tool calls get error results)
-    const ctl = this._begin(id, opts)
-    yield* this._drive(session, profile, apiKey, ctl, opts)
+    const lastUser = [...session.messages].reverse().find((message) => message?.role === "user" && (message.parts || []).some((part) => part?.type === "text" && !part.agentOnly))
+    const lastRecipe = lastUser?.recipe
+    const runOpts = lastRecipe ? {
+      ...opts,
+      recipeId: opts.recipeId || lastRecipe.id || "",
+      recipeAgent: opts.recipeAgent || lastRecipe.agent || "",
+      recipeModel: opts.recipeModel || lastRecipe.model || "",
+    } : opts
+    const ctl = this._begin(id, runOpts)
+    yield* this._drive(session, profile, apiKey, ctl, runOpts)
+  }
+
+  /** Resolve either a profile id or an exact profile/model key for one run. */
+  _profileTarget(target) {
+    const value = String(target || "").trim()
+    try { return profiles.getProfile(value, this.home) } catch (exactError) {
+      const slash = value.indexOf("/")
+      if (slash <= 0 || slash === value.length - 1) throw exactError
+      const profileID = value.slice(0, slash)
+      const modelID = value.slice(slash + 1)
+      const base = profiles.getProfile(profileID, this.home)
+      const rows = Array.isArray(base.models) ? base.models : []
+      const row = rows.find((item) => item && String(item.id) === modelID)
+      if (!row && String(base.model || "") !== modelID) throw new Error(`Model "${modelID}" is not configured for profile "${profileID}".`)
+      return {
+        ...base,
+        model: modelID,
+        ...(Number(row?.context) > 0 ? { contextLimit: Number(row.context) } : {}),
+        ...(Number(row?.output) > 0 ? { maxOutput: Number(row.output) } : {}),
+        ...(row && Object.prototype.hasOwnProperty.call(row, "image") ? { image: !!row.image } : {}),
+      }
+    }
   }
 
   /**
@@ -627,6 +808,7 @@ class Engine {
       queue.push(this._emit(id, ev))
       kick()
     }
+    if (opts.recipeId) emit({ type: "recipe.start", id: opts.recipeId, agent: opts.recipeAgent || "", model: opts.recipeModel || "" })
 
     // V-18/V-20: read the compaction block once per run so a config edit takes
     // effect on the next prompt without restarting the app.
@@ -634,16 +816,18 @@ class Engine {
 
     // V-07: resolve the session's agent definition (prompt, steps, permissions,
     // optional model override). A missing definition falls back to the default.
-    const agent = session.agent ? this.getAgent(session.agent, session.dir) : null
-    if (session.agent && !agent) emit({ type: "notice", text: `Agent "${session.agent}" is no longer installed; using the default agent.` })
+    const requestedAgent = opts.recipeAgent || session.agent || ""
+    const agent = requestedAgent ? this.getAgent(requestedAgent, session.dir) : null
+    if (requestedAgent && !agent) emit({ type: "notice", text: `Agent "${requestedAgent}" is unavailable; using the default agent.` })
     let runProfile = profile
     let runApiKey = apiKey
-    if (agent?.model) {
+    const modelTarget = opts.recipeModel || agent?.model || ""
+    if (modelTarget) {
       try {
-        runProfile = profiles.getProfile(agent.model, this.home)
+        runProfile = this._profileTarget(modelTarget)
         runApiKey = profiles.getKey(runProfile, this.home)
       } catch (e) {
-        emit({ type: "notice", text: `Agent model "${agent.model}" is unavailable (${e.message}); using ${session.profile}.` })
+        emit({ type: "notice", text: `Run model "${modelTarget}" is unavailable (${e.message}); using ${session.profile}.` })
       }
     }
     // Desktop ChatComposer explicitly requests the active run model for both
@@ -718,6 +902,27 @@ class Engine {
   /** All subagents (optionally scoped to one session). */
   listSubagents(sessionId) {
     return this.subagents.list(sessionId)
+  }
+  async listConnectorResources(connector, directory) {
+    if (directory) await this.mcp.sync(directory)
+    return this.mcp.resources(connector)
+  }
+  async listConnectorResourceTemplates(connector, directory) {
+    if (directory) await this.mcp.sync(directory)
+    return this.mcp.resourceTemplates(connector)
+  }
+  async readConnectorResource(connector, uri, directory) {
+    if (directory) await this.mcp.sync(directory)
+    return this.mcp.readResource(connector, uri)
+  }
+  beginConnectorOAuth(connector, redirectUri, directory) {
+    return this.mcp.beginOAuth(connector, { redirectUri, directory })
+  }
+  completeConnectorOAuth(state, code) {
+    return this.mcp.completeOAuth({ state, code })
+  }
+  clearConnectorOAuth(connector, directory) {
+    return this.mcp.clearOAuth(connector, directory)
   }
   /** Subagent status + error. */
   subagentStatus(id) {
@@ -866,7 +1071,7 @@ class Engine {
     const reason = opts.reason === "auto" ? "auto" : "manual"
     try {
       const toolSpecs = tools.specs([...tools.ALL, ...this.extraTools(session.dir)])
-      const system = buildSystem({ agentName: this.agentName, cwd: session.dir, extra: this.extraSystem })
+      const system = buildSystem({ agentName: this.agentName, cwd: session.dir, model: profile.model, extra: this.extraSystem })
       const compactionConfig = config.compactionConfig(this.home)
       const summary = opts.summaryModel === "session"
         ? { profile: null, apiKey: "", warning: "" }

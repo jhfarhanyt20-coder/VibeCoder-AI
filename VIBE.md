@@ -25,6 +25,14 @@ same repository. Therefore:
   Never flip this repository itself to private.
 - Never publish a release only as a source commit. Users receive an update only
   when a GitHub Release with the installer and `latest.yml` is published.
+- **A manual update path must always exist.** The App Updates page must keep
+  working when both automatic settings are off:
+  1. **Check for Updates** works purely on demand;
+  2. **Download Update** appears when a release is available, downloads it, and
+     never changes the saved auto-download preference;
+  3. **Open download page** links to the latest GitHub Release so a user can
+     always download the installer by hand.
+  Never ship a build where the only update path depends on auto-update.
 
 ## 2. Release contract
 

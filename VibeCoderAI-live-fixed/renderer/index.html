@@ -510,9 +510,26 @@
               </div>
               <button class="save-btn" id="app-update-check" type="button">Check for Updates</button>
             </div>
+            <div class="s-row">
+              <div>
+                <div class="s-name">Manual download</div>
+                <div class="s-desc">If automatic updates are unavailable, open the release page and download the latest installer directly.</div>
+              </div>
+              <button class="save-btn ghost" id="app-update-open-release" type="button">Open download page</button>
+            </div>
           </div>
 
           <div class="s-card" id="app-update-action-card" hidden>
+            <div class="s-row" id="app-update-available-row" hidden>
+              <div>
+                <div class="s-name">New version ready to download</div>
+                <div class="s-desc">Manual download works even when automatic updates are turned off. Your data is never touched.</div>
+              </div>
+              <div class="app-update-actions">
+                <button class="save-btn ghost" id="app-update-dismiss" type="button">Later</button>
+                <button class="save-btn" id="app-update-download" type="button">Download Update</button>
+              </div>
+            </div>
             <div class="s-row" id="app-update-progress-row" hidden>
               <div>
                 <div class="s-name" id="app-update-download-label">Downloading update…</div>

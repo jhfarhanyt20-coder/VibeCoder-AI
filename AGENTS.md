@@ -13,14 +13,17 @@ Critical rules (do not skip):
    an ordinary commit. Release flow: bump `package.json` +
    `package-lock.json`, run `npm test`, commit, push `master`, tag `v<version>`,
    push the tag. The tag must match the version.
-3. **Never commit when tests are red.**
-4. **Never commit** `node_modules/`, `release/`, `dist/`, `.env*`, logs, or
+3. **Keep a manual update path.** App Updates must offer Check for Updates,
+   Download Update (even when auto-download is off, without changing the saved
+   preference), and an Open download page link to the latest release.
+4. **Never commit when tests are red.**
+5. **Never commit** `node_modules/`, `release/`, `dist/`, `.env*`, logs, or
    `VibeCoderAI-live-fixed/core/llm/http.zip`.
-5. **No secrets** in the repository and **no new runtime dependencies** without
+6. **No secrets** in the repository and **no new runtime dependencies** without
    explicit approval.
-6. **Additive, backward-compatible changes only.** Do not remove existing
+7. **Additive, backward-compatible changes only.** Do not remove existing
    features or compatibility paths.
-7. **Clean-room naming:** new code, UI and docs use VibeCoder/VibeCore names
+8. **Clean-room naming:** new code, UI and docs use VibeCoder/VibeCore names
    only. Never copy another product's names, prompts, text, code or assets.
-8. After a context reset: read `VIBE.md` and `HARNESS_TODO.md`, check
+9. After a context reset: read `VIBE.md` and `HARNESS_TODO.md`, check
    `git status` / `git log` / `git tag`, and run `npm test` before editing.

@@ -81,6 +81,14 @@ test("onChange replays the last state to a late subscriber", async () => {
   assert.ok(seen.some(([t]) => t === "downloading"), "expected a 'downloading' event, got " + JSON.stringify(seen))
 })
 
+test("manual download works while auto-download is off and keeps the preference", async () => {
+  const u = loadUpdater(fakeElectronPackaged)
+  u.setPreferences({ autoDownload: false })
+  const r = await u.downloadUpdate()
+  assert.equal(r.ok, true)
+  assert.equal(u.serializePrefs().autoDownload, false)
+})
+
 test("duplicate simultaneous checks are suppressed", async () => {
   const u = loadUpdater(fakeElectronPackaged)
   const p1 = u.checkForUpdates()

@@ -3806,6 +3806,9 @@ setTimeout(() => { refreshCliUpdates().catch(() => {}) }, 8000)
 let appUpdateState = { enabled: false, version: null, state: "idle", payload: null, lastCheckedAt: null, prefs: { autoCheck: true, autoDownload: true } }
 let appUpdateOff = null
 let appUpdateBusy = false
+// Stable manual fallback. Automatic updates can be turned off, so the app must
+// always expose a way for a user to download the current installer themselves.
+const APP_RELEASES_URL = "https://github.com/jhfarhanyt20-coder/VibeCoder-AI/releases/latest"
 
 function fmtVersion(v) { return v ? `v${v}` : "—" }
 function fmtLastChecked(ts) {
@@ -3878,11 +3881,13 @@ function renderAppUpdateActions() {
   const progressFill = document.getElementById("app-update-progress-fill")
   const checkBtn = document.getElementById("app-update-check")
   const installBtn = document.getElementById("app-update-install")
+  const downloadBtn = document.getElementById("app-update-download")
 
   const s = appUpdateState
   if (!actionCard) return
-  actionCard.hidden = !(s.state === "downloading" || s.state === "update-downloaded" || s.state === "error")
+  actionCard.hidden = !(s.state === "update-available" || s.state === "downloading" || s.state === "update-downloaded" || s.state === "error")
 
+  showAppUpdateRow("app-update-available-row", s.state === "update-available")
   showAppUpdateRow("app-update-progress-row", s.state === "downloading")
   showAppUpdateRow("app-update-install-row", s.state === "update-downloaded")
   showAppUpdateRow("app-update-error-row", s.state === "error")
@@ -3894,18 +3899,23 @@ function renderAppUpdateActions() {
   }
   if (checkBtn) checkBtn.disabled = appUpdateBusy || s.state === "downloading"
   if (installBtn) installBtn.disabled = appUpdateBusy
+  if (downloadBtn) downloadBtn.disabled = appUpdateBusy || s.state === "downloading"
 }
 
 function applyAppUpdateEvent(ev) {
   if (!ev || !ev.type) return
   if (ev.type === "prefs") { if (ev.payload) appUpdateState.prefs = { ...appUpdateState.prefs, ...ev.payload }; setToggle($("toggle-app-auto-check"), appUpdateState.prefs.autoCheck); setToggle($("toggle-app-auto-download"), appUpdateState.prefs.autoDownload); renderAppUpdateStatus(); return }
-  appUpdateState.state = ev.type
-  appUpdateState.payload = ev.payload || null
-  if (ev.type === "checking") appUpdateBusy = true
-  else if (ev.type === "error") { appUpdateBusy = false; if (ev.payload?.error) { const et = document.getElementById("app-update-error-text"); if (et) et.textContent = ev.payload.error } }
-  else if (ev.type === "update-not-available" || ev.type === "update-available") { appUpdateBusy = false }
-  else if (ev.type === "downloading" || ev.type === "download-progress") { /* busy */ }
-  else if (ev.type === "update-downloaded") { appUpdateBusy = false }
+  // electron-updater emits download-progress many times. Keep one stable
+  // "downloading" state so the progress card never disappears mid-download.
+  const type = ev.type === "download-progress" ? "downloading" : ev.type === "update-cancelled" ? "idle" : ev.type
+  appUpdateState.state = type
+  if (type === "downloading") appUpdateState.payload = { ...(appUpdateState.payload || {}), ...(ev.payload || {}) }
+  else appUpdateState.payload = ev.payload || null
+  if (type === "checking") appUpdateBusy = true
+  else if (type === "error") { appUpdateBusy = false; const message = ev.payload?.message || ev.payload?.error; if (message) { const et = document.getElementById("app-update-error-text"); if (et) et.textContent = message } }
+  else if (type === "update-not-available" || type === "update-available") { appUpdateBusy = false }
+  else if (type === "downloading") { appUpdateBusy = true }
+  else if (type === "update-downloaded" || type === "idle") { appUpdateBusy = false }
   renderAppUpdateStatus()
   renderAppUpdateActions()
 }
@@ -3947,12 +3957,24 @@ async function doAppUpdateCheck() {
 }
 
 async function doAppUpdateDownload() {
-  if (!vibe.downloadAppUpdate) return
-  try { await vibe.downloadAppUpdate() }
-  catch (err) {
+  if (!vibe.downloadAppUpdate || appUpdateBusy) return
+  appUpdateBusy = true
+  const btn = document.getElementById("app-update-download")
+  if (btn) { btn.disabled = true; btn.textContent = "Downloading…" }
+  appUpdateState.state = "downloading"
+  appUpdateState.payload = { ...(appUpdateState.payload || {}), percent: 0 }
+  renderAppUpdateStatus()
+  renderAppUpdateActions()
+  try {
+    const res = await vibe.downloadAppUpdate()
+    if (!res || res.ok === false) throw new Error((res && res.error) || "Could not download the update")
+  } catch (err) {
     const et = document.getElementById("app-update-error-text")
     if (et) et.textContent = (err && err.message) || String(err)
     appUpdateState.state = "error"
+  } finally {
+    appUpdateBusy = false
+    if (btn) { btn.disabled = false; btn.textContent = "Download Update" }
     renderAppUpdateActions()
   }
 }
@@ -3988,16 +4010,31 @@ async function doAppUpdateInstall() {
 }
 
 function wireAppUpdates() {
+  // The manual release link must work even if the updater bridge is absent.
+  const openReleaseBtn = document.getElementById("app-update-open-release")
+  if (openReleaseBtn) openReleaseBtn.onclick = async () => {
+    if (!vibe.openExternal) return
+    try {
+      const res = await vibe.openExternal({ url: APP_RELEASES_URL })
+      if (res && res.ok === false) throw new Error(res.error || "Could not open the download page")
+    } catch (err) {
+      showError("Could not open the download page", (err && err.message) || String(err), { key: "app-update-release" })
+    }
+  }
   if (!vibe.appUpdateStatus && !vibe.onAppUpdateEvent) return
   if (appUpdateOff) { try { appUpdateOff() } catch {}; appUpdateOff = null }
   if (vibe.onAppUpdateEvent) appUpdateOff = vibe.onAppUpdateEvent(applyAppUpdateEvent)
 
   const checkBtn = document.getElementById("app-update-check")
   if (checkBtn) checkBtn.onclick = doAppUpdateCheck
+  const downloadBtn = document.getElementById("app-update-download")
+  if (downloadBtn) downloadBtn.onclick = doAppUpdateDownload
   const installBtn = document.getElementById("app-update-install")
   if (installBtn) installBtn.onclick = doAppUpdateInstall
   const laterBtn = document.getElementById("app-update-later")
   if (laterBtn) laterBtn.onclick = () => { appUpdateState.state = "idle"; renderAppUpdateActions() }
+  const dismissBtn = document.getElementById("app-update-dismiss")
+  if (dismissBtn) dismissBtn.onclick = () => { if (appUpdateBusy) return; appUpdateState.state = "idle"; renderAppUpdateActions() }
   const retryBtn = document.getElementById("app-update-retry")
   if (retryBtn) retryBtn.onclick = doAppUpdateCheck
 

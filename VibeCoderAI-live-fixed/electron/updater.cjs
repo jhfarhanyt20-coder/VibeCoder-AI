@@ -144,11 +144,18 @@ async function downloadUpdate() {
   if (!enabled()) return { ok: false, error: "Updates are only available in the packaged app." }
   try {
     const au = ensureAutoUpdater()
+    // A manual download must still work when the user turned automatic
+    // downloads off. Enable it only for this download, then restore the saved
+    // preference so the setting is never silently changed.
+    const previousAutoDownload = au.autoDownload
     au.autoDownload = true
-    prefs.autoDownload = true
-    emit("downloading", {})
-    await au.downloadUpdate()
-    return { ok: true }
+    try {
+      emit("downloading", {})
+      await au.downloadUpdate()
+      return { ok: true }
+    } finally {
+      au.autoDownload = previousAutoDownload
+    }
   } catch (err) {
     const message = String((err && err.message) || err || "Could not download the update")
     emit("error", { message })

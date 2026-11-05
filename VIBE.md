@@ -67,6 +67,19 @@ same repository. Therefore:
 - Keep compatibility paths such as `.opencode`, `SKILL.md` and `plugins` only
   where removing them would break existing users. Do not surface those names
   as product branding.
+- Keep the current desktop visual design unless the user gives fresh explicit
+  approval for a redesign. The canceled production-UI concept is not a build
+  instruction; context-ring work is data wiring only.
+- A background shell result must never depend on an expired run queue. Persist
+  its user intent, description, command, status, exit code and bounded output;
+  attach it at the next safe model boundary and resume the agent when idle.
+  Dependent background work must not proceed without that result.
+- A running background process that asks for input (`Press any key`, Enter,
+  Y/N, password/code prompts) must be surfaced to the agent before completion.
+  The agent may use `shellInput` for non-secret answers, but must ask the user
+  for every password, passphrase, API key or verification code.
+- Context usage keeps provider-reported reasoning/cache categories separate and
+  avoids counting them once inside input/output and again as detail fields.
 
 ## 4. Naming and clean-room rules
 

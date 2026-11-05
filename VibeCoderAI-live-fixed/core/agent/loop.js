@@ -1,5 +1,6 @@
 "use strict"
 const llm = require("../llm")
+const { canonicalUsage, inputTotal, outputTotal } = require("../llm/usage")
 const tools = require("../tools")
 const compaction = require("./compaction")
 const { buildSystem } = require("./prompt")
@@ -141,7 +142,7 @@ function splitCommand(cmd) {
   return out.length ? out : [s.trim()]
 }
 
-async function runLoop({ session, store, profile, apiKey, emit, signal, askPermission, agentName, agent = null, extraSystem, maxSteps = 100, extraTools = () => [], waitExtraTools = null, isOrphan = () => false, engine = null, compactionConfig = null, summaryProfile = null, summaryApiKey = "", summaryWarning = "" }) {
+async function runLoop({ session, store, profile, apiKey, emit, signal, askPermission, agentName, agent = null, extraSystem, maxSteps = 100, extraTools = () => [], waitExtraTools = null, isOrphan = () => false, engine = null, compactionConfig = null, summaryProfile = null, summaryApiKey = "", summaryWarning = "", takePendingResults = null }) {
   // V-07: an agent definition can cap the run. An explicit maxSteps wins.
   if (agent && Number(agent.steps) > 0 && maxSteps === 100) maxSteps = Math.floor(Number(agent.steps))
   const agentSystem = agent && typeof agent.system === "string" ? agent.system.trim() : ""
@@ -297,6 +298,18 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
     if (waitExtraTools) await waitExtraTools(signal)
     if (signal.aborted) return emit({ type: "done", reason: "interrupted" })
     if (isOrphan()) return
+    // A background shell can finish while this run is handling another tool.
+    // Attach its durable intent/result at the next safe model boundary so the
+    // agent cannot forget what the command was for or start dependent work
+    // without seeing its exit status and output.
+    const pendingResults = typeof takePendingResults === "function" ? takePendingResults() : []
+    if (pendingResults.length) {
+      const last = session.messages[session.messages.length - 1]
+      if (last?.role === "user" && (last.parts || []).some((part) => part.type === "tool_result")) last.parts.push(...pendingResults)
+      else session.messages.push({ role: "user", parts: pendingResults })
+      store.save(session)
+      emit({ type: "shell.results.attached", count: pendingResults.length })
+    }
     const system = sys()
     activeTools = allTools()
     toolSpecs = tools.specs(activeTools)
@@ -330,11 +343,13 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
         }
         else if (ev.type === "tool_call") calls.push(ev)
         else if (ev.type === "usage") {
-          stepUsage = { input: ev.input || 0, output: ev.output || 0 }
-          if (ev.input) session.usage.lastInput = ev.input
-          session.usage.totalInput += ev.input || 0
-          session.usage.totalOutput += ev.output || 0
-          emit({ type: "usage", input: ev.input, output: ev.output })
+          stepUsage = canonicalUsage(ev)
+          const fullInput = inputTotal(stepUsage)
+          const fullOutput = outputTotal(stepUsage)
+          if (fullInput) session.usage.lastInput = fullInput
+          session.usage.totalInput += fullInput
+          session.usage.totalOutput += fullOutput
+          emit({ type: "usage", ...stepUsage })
         } else if (ev.type === "finish") finish = ev.reason
       }
     } catch (e) {
@@ -393,6 +408,11 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
       tools: calls.length,
       input: stepUsage?.input || 0,
       output: stepUsage?.output || 0,
+      reasoning: stepUsage?.reasoning || 0,
+      cache: {
+        read: stepUsage?.cache?.read || 0,
+        write: stepUsage?.cache?.write || 0,
+      },
     })
     if (!calls.length) {
       if (finalStep) finalized = true

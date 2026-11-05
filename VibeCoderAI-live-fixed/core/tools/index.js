@@ -150,6 +150,12 @@ const bash = {
   paths: () => [],
   run(a, c) {
     const background = a.background === true
+    const latestUserIntent = [...(c.session?.messages || [])].reverse().map((message) => {
+      if (message?.role !== "user") return ""
+      return (message.parts || []).filter((part) => part?.type === "text" && !part.agentOnly).map((part) => part.text || "").join("\n").trim()
+    }).find(Boolean) || ""
+    const intent = (latestUserIntent || a.description || a.command || "Run the requested background command").slice(0, 2000)
+    const durableCompletion = !!(c.engine && typeof c.engine.recordShellResult === "function")
     // Every temporary file an agent command creates belongs in the task's scratch
     // folder, never the system temp: when `./.vibe-scratch/` exists its `tmp/`
     // subfolder becomes TMP/TEMP/TMPDIR for the child shell. Without a scratch
@@ -171,6 +177,14 @@ const bash = {
       env,
       emit: c.emit,
       toolCallId: c.toolCallId,
+      description: a.description,
+      intent,
+      onSettled: durableCompletion
+        ? (info, output) => c.engine.recordShellResult(c.session?.id, info, output)
+        : null,
+      onWaiting: durableCompletion && typeof c.engine.recordShellWaiting === "function"
+        ? (info, prompt, output) => c.engine.recordShellWaiting(c.session?.id, info, prompt, output)
+        : null,
     })
     const ms = a.timeout === 0 ? 0 : Math.min(a.timeout || 120000, 600000)
     // Every shell is announced when it starts (background or blocking), so the
@@ -208,9 +222,11 @@ const bash = {
       // One completion path for both foreground and background jobs. A
       // backgrounded job keeps emitting after this tool call has returned.
       h.done.then((info) => {
-        c.emit({ type: "shell.ended", shell: info })
+        if (!info.backgrounded || !durableCompletion) c.emit({ type: "shell.ended", shell: info })
         if (info.backgrounded) {
-          c.emit({ type: "shell.completed", shell: info, output: jobs.output(h.id, 30000) || "" })
+          // Engine-backed runs deliver this from recordShellResult(), outside
+          // the old run queue. Direct/library tool calls retain the fallback.
+          if (!durableCompletion) c.emit({ type: "shell.completed", shell: info, output: jobs.output(h.id, 30000) || "" })
           return
         }
         const code = info.status === "completed" ? 0 : info.exit != null ? info.exit : "?"

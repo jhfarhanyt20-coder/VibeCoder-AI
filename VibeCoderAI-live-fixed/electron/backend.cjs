@@ -432,7 +432,18 @@ function onEngineEvent(ev) {
     case "permission.lock": emitUI("session.permission.locked", sid, data); break
     case "recipe.start": emitUI("session.recipe.started", sid, data); break
     case "usage":
-      emitUI("session.step.ended", sid, { assistantMessageID: `asst_${Date.now().toString(36)}`, tokens: { input: Number(ev.input) || 0, output: Number(ev.output) || 0, reasoning: 0 } })
+      emitUI("session.step.ended", sid, {
+        assistantMessageID: `asst_${Date.now().toString(36)}`,
+        tokens: {
+          input: Number(ev.input) || 0,
+          output: Number(ev.output) || 0,
+          reasoning: Number(ev.reasoning) || 0,
+          cache: {
+            read: Number(ev.cache?.read) || 0,
+            write: Number(ev.cache?.write) || 0,
+          },
+        },
+      })
       break
     case "permission.ask":
       emitUI("session.permissions", sid, { permissionId: ev.permissionId, tool: ev.tool, subject: ev.subject, ...(ev.subagentId ? { subagentId: ev.subagentId } : {}) })
@@ -456,7 +467,7 @@ function onEngineEvent(ev) {
     case "done": {
       flushText(sid); flushReasoning(sid)
       const state = runState.get(sid)
-      if (ev.reason === "interrupted") emitUI("session.execution.interrupted", sid, { reason: "user" })
+      if (ev.reason === "interrupted") emitUI("session.execution.interrupted", sid, { reason: "user", ...(state?.source ? { source: state.source } : {}) })
       else if (ev.reason === "error" || state?.failed) emitUI("session.execution.failed", sid, {
         error: {
           message: state?.failed || "The run failed.",
@@ -464,8 +475,9 @@ function onEngineEvent(ev) {
         },
         retryable: state?.retryable !== false,
         persisted: true,
+        ...(state?.source ? { source: state.source } : {}),
       })
-      else emitUI("session.execution.succeeded", sid, { reason: ev.reason || "stop" })
+      else emitUI("session.execution.succeeded", sid, { reason: ev.reason || "stop", ...(state?.source ? { source: state.source } : {}) })
       runState.delete(sid)
       break
     }
@@ -481,9 +493,15 @@ function onEngineEvent(ev) {
     case "shell.started": emitUI("session.shell.started", sid, { shell: ev.shell }); break
     case "shell.output": emitUI("session.shell.output", sid, { shell: ev.shell, delta: ev.delta || "" }); break
     case "shell.input": emitUI("session.shell.input", sid, { shell: ev.shell, bytes: ev.bytes || 0, eof: !!ev.eof }); break
+    case "shell.waiting": emitUI("session.shell.waiting", sid, { shell: ev.shell, prompt: ev.prompt || "" }); break
     case "shell.backgrounded": emitUI("session.shell.backgrounded", sid, { shell: ev.shell }); break
     case "shell.ended": emitUI("session.shell.ended", sid, { shell: ev.shell }); break
     case "shell.completed": emitUI("session.shell.completed", sid, { shell: ev.shell, output: ev.output || "" }); break
+    case "shell.resume.started": {
+      runState.set(sid, { assistantMessageID: `asst_${Date.now().toString(36)}`, ordinal: 0, text: "", reasoningStarted: false, failed: null, source: "shell-result" })
+      emitUI("session.execution.started", sid, { source: "shell-result" })
+      break
+    }
     case "todo.update": emitUI("todo.updated", sid, data); break
     default: emitUI(ev.type || "engine.event", sid, data)
   }

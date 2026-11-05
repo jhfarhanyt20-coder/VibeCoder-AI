@@ -48,6 +48,8 @@ class Engine {
     // V-10: interactive questions the agent is waiting on (formID -> form).
     this.forms = new Map()
     this.runs = new Map()
+    this.shellResumeTimers = new Map()
+    this.shellResumeRunning = new Set()
     this.mcp = new McpManager({ home: this.home })
     this.extensions = new ExtensionManager({ home: this.home })
     this._mcpSync = null // in-flight connect promise (dedupe)
@@ -566,7 +568,15 @@ class Engine {
     const job = jobs.get(shellID)
     if (!job) throw new Error("This shell no longer exists.")
     if (job.sessionID && id && job.sessionID !== id) throw new Error("This shell belongs to another session.")
-    return jobs.input(shellID, text, options)
+    const result = jobs.input(shellID, text, options)
+    try {
+      const session = this.store.get(id)
+      if (Array.isArray(session.pendingShellPrompts)) {
+        session.pendingShellPrompts = session.pendingShellPrompts.filter((item) => item?.id !== shellID)
+        this.store.save(session)
+      }
+    } catch {}
+    return result
   }
   /** Ctrl+B: move every blocking shell command of this session to the background. */
   backgroundSession(id) {
@@ -611,6 +621,132 @@ class Engine {
     return session
   }
 
+  /** Persist one completed background command so its intent/result cannot be lost. */
+  recordShellResult(id, shell, output) {
+    if (!shell || !shell.id || !shell.backgrounded) return null
+    let session
+    try { session = this.store.get(id) } catch { return null }
+    const pending = Array.isArray(session.pendingShellResults) ? session.pendingShellResults : []
+    const entry = {
+      id: shell.id,
+      toolCallId: shell.toolCallId || "",
+      description: String(shell.description || "").slice(0, 500),
+      intent: String(shell.intent || "").slice(0, 2000),
+      command: String(shell.command || "").slice(0, 4000),
+      status: shell.status || "error",
+      exit: shell.exit,
+      completed: shell.completed || Date.now(),
+      output: String(output || "").slice(-30000),
+    }
+    session.pendingShellResults = [...pending.filter((item) => item && item.id !== entry.id), entry].slice(-20)
+    if (Array.isArray(session.pendingShellPrompts)) session.pendingShellPrompts = session.pendingShellPrompts.filter((item) => item?.id !== entry.id)
+    this.store.save(session)
+    // Engine-level delivery does not depend on the old run's already-closed
+    // event queue, so the running-job chip always clears.
+    this._emit(id, { type: "shell.completed", shell, output: entry.output, durable: true })
+    if (entry.status !== "cancelled") this._scheduleShellResume(id)
+    return entry
+  }
+
+  /** Surface an interactive prompt before the background process can finish. */
+  recordShellWaiting(id, shell, prompt, output) {
+    if (!shell || !shell.id || !shell.backgrounded || shell.status !== "running") return null
+    let session
+    try { session = this.store.get(id) } catch { return null }
+    const entry = {
+      id: shell.id,
+      toolCallId: shell.toolCallId || "",
+      description: String(shell.description || "").slice(0, 500),
+      intent: String(shell.intent || "").slice(0, 2000),
+      command: String(shell.command || "").slice(0, 4000),
+      prompt: String(prompt || "").slice(-2000),
+      output: String(output || "").slice(-12000),
+      detected: Date.now(),
+    }
+    const pending = Array.isArray(session.pendingShellPrompts) ? session.pendingShellPrompts : []
+    session.pendingShellPrompts = [...pending.filter((item) => item && item.id !== entry.id), entry].slice(-20)
+    this.store.save(session)
+    this._emit(id, { type: "shell.waiting", shell, prompt: entry.prompt, durable: true })
+    this._scheduleShellResume(id)
+    return entry
+  }
+
+  _takeShellResultParts(session) {
+    const pending = Array.isArray(session.pendingShellResults) ? session.pendingShellResults : []
+    const waiting = Array.isArray(session.pendingShellPrompts) ? session.pendingShellPrompts : []
+    if (!pending.length && !waiting.length) return []
+    session.pendingShellResults = []
+    session.pendingShellPrompts = []
+    const prompts = waiting.map((item) => ({
+      type: "text",
+      agentOnly: true,
+      shellPromptId: item.id,
+      text: [
+        `[Background shell needs input: ${item.id}]`,
+        `Requested work: ${item.intent || item.description || "Run the background command and use its result."}`,
+        `Command: ${item.command || "(unknown)"}`,
+        "The process is still running and is waiting for input.",
+        "Recent output:",
+        item.output || item.prompt || "(no output)",
+        "Decide from the requested work what input is safe. Use shellInput with this shell ID; do not launch a replacement command or claim completion while it is waiting.",
+        "Never enter a password, passphrase, verification code, API key, or other secret—ask the user instead.",
+      ].join("\n"),
+    }))
+    const results = pending.map((item) => {
+      const status = item.status === "completed" ? `completed successfully${item.exit !== undefined ? ` (exit ${item.exit})` : ""}` : `${item.status || "failed"}${item.exit !== undefined ? ` (exit ${item.exit})` : ""}`
+      return {
+        type: "text",
+        agentOnly: true,
+        shellResultId: item.id,
+        text: [
+          `[Background shell result: ${item.id}]`,
+          `Requested work: ${item.intent || item.description || "Run the background command and use its result."}`,
+          `Command: ${item.command || "(unknown)"}`,
+          `Status: ${status}`,
+          "Output:",
+          item.output || "(no output)",
+          "Use this result before starting dependent work. Do not rerun the command unless the result shows it is necessary.",
+        ].join("\n"),
+      }
+    })
+    return [...prompts, ...results]
+  }
+
+  _hasShellResults(id) {
+    try {
+      const session = this.store.get(id)
+      return !!(session.pendingShellResults?.length || session.pendingShellPrompts?.length)
+    } catch { return false }
+  }
+
+  _scheduleShellResume(id) {
+    if (!id || this.runs.has(id) || this.shellResumeRunning.has(id) || this.shellResumeTimers.has(id) || !this._hasShellResults(id)) return
+    const timer = setTimeout(() => {
+      this.shellResumeTimers.delete(id)
+      this._resumeShellResults(id).catch(() => {})
+    }, 25)
+    this.shellResumeTimers.set(id, timer)
+  }
+
+  async _resumeShellResults(id) {
+    if (this.runs.has(id) || this.shellResumeRunning.has(id) || !this._hasShellResults(id)) return
+    this.shellResumeRunning.add(id)
+    this._emit(id, { type: "shell.resume.started", source: "shell-result" })
+    let failedToStart = false
+    try {
+      for await (const _event of this.resume(id, { summaryModel: "session" })) {}
+    } catch (error) {
+      failedToStart = true
+      this._emit(id, { type: "error", message: String(error?.message || error), source: "shell-result" })
+      this._emit(id, { type: "done", reason: "error", source: "shell-result" })
+    } finally {
+      this.shellResumeRunning.delete(id)
+      // A configuration/startup error leaves the durable result queued for the
+      // user's next prompt instead of retrying in a tight loop.
+      if (!failedToStart && this._hasShellResults(id)) this._scheduleShellResume(id)
+    }
+  }
+
   _takeSubagentResultParts(session) {
     const legacy = Array.isArray(session.pendingSubagentResults) ? session.pendingSubagentResults : []
     const completed = this.subagents && typeof this.subagents.takeResults === "function" ? this.subagents.takeResults(session.id) : []
@@ -647,7 +783,7 @@ class Engine {
       // but are not shown as a chat bubble.
       const parts = opts.agentOnly ? [{ type: "text", text: String(text), agentOnly: true }] : [{ type: "text", text: String(text) }]
       if (recipe) parts.push({ type: "text", text: recipe.text, agentOnly: true, recipe: recipe.id })
-      parts.unshift(...this._takeSubagentResultParts(session))
+      parts.unshift(...this._takeShellResultParts(session), ...this._takeSubagentResultParts(session))
       // image files arrive as { mime, data } (base64) and become canonical image parts
       for (const f of Array.isArray(opts.files) ? opts.files : []) {
         if (f && f.data && String(f.mime || "").startsWith("image/")) parts.push({ type: "image", mime: f.mime, data: f.data })
@@ -685,11 +821,11 @@ class Engine {
     const profile = profiles.getProfile(session.profile, this.home)
     const apiKey = profiles.getKey(profile, this.home)
     repairHistory(session.messages)
-    const subagentParts = this._takeSubagentResultParts(session)
-    if (subagentParts.length) {
+    const pendingParts = [...this._takeShellResultParts(session), ...this._takeSubagentResultParts(session)]
+    if (pendingParts.length) {
       const last = session.messages[session.messages.length - 1]
-      if (last?.role === "user" && (last.parts || []).some((part) => part.type === "tool_result")) last.parts.push(...subagentParts)
-      else session.messages.push({ role: "user", parts: subagentParts })
+      if (last?.role === "user" && (last.parts || []).some((part) => part.type === "tool_result")) last.parts.push(...pendingParts)
+      else session.messages.push({ role: "user", parts: pendingParts })
     }
     if (!session.messages.length) throw new Error("Nothing to resume - this session has no messages yet.")
     this.store.save(session) // persist the repaired history (interrupted tool calls get error results)
@@ -865,6 +1001,7 @@ class Engine {
       summaryProfile: summary.profile,
       summaryApiKey: summary.apiKey,
       summaryWarning: summary.warning,
+      takePendingResults: () => this._takeShellResultParts(session),
     })
       .catch((e) => {
         emit({
@@ -899,6 +1036,7 @@ class Engine {
       if (!ctl.orphaned) await done
       if (ctl.killTimer) clearTimeout(ctl.killTimer)
       if (this.runs.get(id) === ctl) this.runs.delete(id)
+      if (this._hasShellResults(id)) this._scheduleShellResume(id)
     }
   }
 

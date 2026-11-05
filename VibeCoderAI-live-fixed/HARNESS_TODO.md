@@ -36,7 +36,7 @@ additive হবে। ডিফল্টে পুরোনো behaviour বদ�
 
 ```text
 npm test
-core-test.mjs                 113 passed
+core-test.mjs                 115 passed
 agents-test.mjs                11 passed
 skills-test.mjs                 8 passed
 harness-test.mjs               23 passed
@@ -275,6 +275,22 @@ agent can send Enter or EOF. TypeScript semantic diagnostics run in an isolated
 bounded worker only when that project already provides TypeScript and after the
 normal Guardrail decision; VibeCoder installs no package.
 
+### Phase 12 — Usage Details + Durable Background Results
+- [x] provider usage normalization for reasoning/cache read/cache write
+- [x] prevent OpenAI nested-detail and Anthropic cache double-counting
+- [x] preserve complete usage through live events and session reload
+- [x] persist background command intent, command, status, exit and output
+- [x] deliver completion outside expired run queues and auto-resume safely
+- [x] detect `Press any key` / Enter / Y-N / credential prompts before completion
+- [x] never auto-enter secrets; route ordinary answers through `shellInput`
+- [x] preserve the existing desktop visual design (redesign canceled)
+- [x] core/Electron/UI regression tests
+
+**Phase 12 result:** done (+2 core tests; full suite green). The five existing
+context rows now receive normalized provider values without changing the UI.
+Background jobs retain why they ran and cannot silently finish in an expired
+queue; interactive prompts reach the agent while the process is still alive.
+
 ---
 
 ## 6. Priority
@@ -313,6 +329,7 @@ Thin vertical slice first:
 | 2026-11-05 | Release | `v0.3.1` corrected manual update to stay entirely in-app | CI green; installer + `latest.yml` + blockmap uploaded |
 | 2026-11-05 | Phase 11 | bounded live shell + safe stdin + project TypeScript diagnostics | +3 core tests; 125 IPC handlers; full suite green |
 | 2026-11-05 | Release | `v0.3.2` live shell + project diagnostics | CI green; installer + `latest.yml` + blockmap uploaded |
+| 2026-11-05 | Phase 12 | detailed context usage + durable background completion/input prompts | +2 core tests; full suite green |
 
 ---
 

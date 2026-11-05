@@ -3,6 +3,7 @@
 const { parseSSE } = require("./sse")
 const { postStreamAdaptive, parseRawBody } = require("./http")
 const { newId } = require("../util")
+const { openAIUsage } = require("./usage")
 
 function toWire(messages) {
   const input = []
@@ -96,7 +97,7 @@ async function* stream({ profile, apiKey, system, messages, tools, signal }) {
         break
       case "response.completed": {
         const u = (j.response && j.response.usage) || {}
-        yield { type: "usage", input: u.input_tokens || 0, output: u.output_tokens || 0 }
+        yield { type: "usage", ...openAIUsage(u) }
         break
       }
       case "response.failed":
@@ -133,7 +134,7 @@ function* fromJson(j) {
   }
   if (!(r.output || []).length && typeof r.output_text === "string" && r.output_text) yield { type: "text", delta: r.output_text }
   const u = r.usage || {}
-  yield { type: "usage", input: u.input_tokens || 0, output: u.output_tokens || 0 }
+  yield { type: "usage", ...openAIUsage(u) }
   yield { type: "finish", reason: sawCall ? "tool_calls" : "stop" }
 }
 

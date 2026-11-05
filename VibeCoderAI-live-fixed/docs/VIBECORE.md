@@ -83,6 +83,26 @@ This is a safe stdin/stdout pipe, not a terminal emulator. Programs that need
 raw terminal mode, cursor control or full PTY semantics remain future optional
 work and require an explicitly approved native dependency.
 
+Background completion is durable. Each job records why the user requested it,
+the command, status, exit code and bounded output. The result is attached at
+the next safe model boundary; if the session is idle, the agent resumes itself.
+This delivery bypasses the completed run's closed event queue, so a finished
+process cannot remain indefinitely stuck as “background”.
+
+The live tail also recognizes common interactive prompts (`Press any key`,
+Enter, Y/N and credential/code prompts). A background prompt is persisted and
+delivered to the agent before process completion. The agent can send ordinary
+input through `shellInput`; passwords, passphrases, API keys and verification
+codes are never answered automatically and must be requested from the user.
+
+## Context usage
+
+Provider-reported token details use one canonical shape: uncached input,
+visible output, reasoning, cache read and cache write. OpenAI detail fields are
+removed from their inclusive input/output totals before display; Anthropic's
+already-separate cache fields remain additive. This keeps the ring total stable
+while allowing all five existing rows to show the values a provider returns.
+
 ## Project diagnostics
 
 JSON, JavaScript and Python syntax checks continue to run automatically after

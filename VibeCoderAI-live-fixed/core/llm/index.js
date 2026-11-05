@@ -71,7 +71,8 @@ function normalizeToolNames(req) {
 }
 
 /** stream(profile, req) -> async iterable of canonical events:
- *  {type:"text"|"reasoning", delta} | {type:"tool_call", id, name, args} | {type:"usage", input, output} | {type:"finish", reason} */
+ *  {type:"text"|"reasoning", delta} | {type:"tool_call", id, name, args} |
+ *  {type:"usage", input, output, reasoning, cache:{read,write}} | {type:"finish", reason} */
 function runtimeProfiles(profile) {
   const fixed = repairBaseUrl(profile.baseURL, profile.format)
   const first = {

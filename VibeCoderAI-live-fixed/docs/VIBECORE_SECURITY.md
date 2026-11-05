@@ -9,6 +9,7 @@ Use this checklist before shipping a build that changes agent execution.
 - [ ] Compound shell commands are checked segment by segment.
 - [ ] Shell stdin is session-scoped, bounded per send and allowed only while the process is writable.
 - [ ] Live shell output events are bounded and never added to the durable Trail.
+- [ ] Interactive shell prompts never auto-submit credentials or verification codes.
 - [ ] Project-local compiler execution goes through normal command Guardrails.
 - [ ] Paths outside the workspace require an explicit directory decision.
 - [ ] Read-only parallelism includes only actions with no side effects.

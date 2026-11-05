@@ -28,7 +28,7 @@ const chat = {
       sse({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: s.slice(h) } }] } }] }),
     ]
   },
-  end: (inp = 10, out = 5, reason = "stop") => [sse({ choices: [{ delta: {}, finish_reason: reason }] }), sse({ usage: { prompt_tokens: inp, completion_tokens: out }, choices: [] }), "data: [DONE]\n\n"],
+  end: (inp = 10, out = 5, reason = "stop", usage = {}) => [sse({ choices: [{ delta: {}, finish_reason: reason }] }), sse({ usage: { prompt_tokens: inp, completion_tokens: out, ...usage }, choices: [] }), "data: [DONE]\n\n"],
 }
 function mock(handler) {
   let n = 0
@@ -88,7 +88,7 @@ test("openai-chat adapter: reasoning, split tool call args, usage", async () => 
   assert.equal(evs.find((e) => e.type === "text").delta, "hi")
   const tc = evs.find((e) => e.type === "tool_call")
   assert.deepEqual([tc.id, tc.name, tc.args], ["c1", "read", { path: "a.txt" }])
-  assert.deepEqual(evs.find((e) => e.type === "usage"), { type: "usage", input: 42, output: 7 })
+  assert.deepEqual(evs.find((e) => e.type === "usage"), { type: "usage", input: 42, output: 7, reasoning: 0, cache: { read: 0, write: 0 } })
   const r = m.requests[0]
   assert.equal(r.headers.authorization, "Bearer KEY")
   assert.equal(r.body.reasoning_effort, "high")
@@ -151,7 +151,12 @@ test("openai-responses adapter", async () => {
       sse({ type: "response.reasoning_summary_text.delta", delta: "r" }),
       sse({ type: "response.output_text.delta", delta: "hello" }),
       sse({ type: "response.output_item.done", item: { type: "function_call", call_id: "c9", name: "glob", arguments: '{"pattern":"*.js"}' } }),
-      sse({ type: "response.completed", response: { usage: { input_tokens: 11, output_tokens: 3 } } }),
+      sse({ type: "response.completed", response: { usage: {
+        input_tokens: 111,
+        output_tokens: 33,
+        input_tokens_details: { cached_tokens: 70, cache_write_tokens: 10 },
+        output_tokens_details: { reasoning_tokens: 13 },
+      } } }),
     ],
   }))
   const profile = { id: "p", format: "openai-responses", baseURL: `http://127.0.0.1:${m.port}/v1`, model: "x" }
@@ -165,6 +170,7 @@ test("openai-responses adapter", async () => {
   assert.equal(evs.find((e) => e.type === "text").delta, "hello")
   assert.deepEqual(evs.find((e) => e.type === "tool_call").args, { pattern: "*.js" })
   assert.equal(evs.find((e) => e.type === "finish").reason, "tool_calls")
+  assert.deepEqual(evs.find((e) => e.type === "usage"), { type: "usage", input: 31, output: 20, reasoning: 13, cache: { read: 70, write: 10 } })
   const b = m.requests[0].body
   assert.equal(b.instructions, "S")
   assert.deepEqual(b.input.map((i) => i.type || i.role), ["user", "function_call", "function_call_output"])
@@ -174,14 +180,14 @@ test("anthropic adapter", async () => {
   const ev = (o) => `event: ${o.type}\ndata: ${JSON.stringify(o)}\n\n`
   const m = await mock(() => ({
     chunks: [
-      ev({ type: "message_start", message: { usage: { input_tokens: 25 } } }),
+      ev({ type: "message_start", message: { usage: { input_tokens: 25, cache_read_input_tokens: 12, cache_creation_input_tokens: 5 } } }),
       ev({ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "hmm" } }),
       ev({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ok" } }),
       ev({ type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "tu1", name: "bash" } }),
       ev({ type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '{"command":' } }),
       ev({ type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '"ls"}' } }),
       ev({ type: "content_block_stop", index: 1 }),
-      ev({ type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 9 } }),
+      ev({ type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 9, reasoning_tokens: 3 } }),
     ],
   }))
   const profile = { id: "p", format: "anthropic", baseURL: `http://127.0.0.1:${m.port}`, model: "c" }
@@ -193,7 +199,7 @@ test("anthropic adapter", async () => {
   const evs = await collect(llm.stream(profile, { apiKey: "AK", system: "S", messages: msgs, tools: [{ name: "bash", description: "d", parameters: { type: "object" } }] }))
   m.close()
   assert.deepEqual(evs.find((e) => e.type === "tool_call").args, { command: "ls" })
-  assert.deepEqual(evs.find((e) => e.type === "usage"), { type: "usage", input: 25, output: 9 })
+  assert.deepEqual(evs.find((e) => e.type === "usage"), { type: "usage", input: 25, output: 6, reasoning: 3, cache: { read: 12, write: 5 } })
   assert.equal(evs.find((e) => e.type === "finish").reason, "tool_calls")
   const r = m.requests[0]
   assert.equal(r.headers["x-api-key"], "AK")
@@ -745,18 +751,27 @@ test("resume works over the HTTP server (remote SDK)", async () => {
 })
 
 test("assistant messages carry per-step token usage for the context ring", async () => {
-  const { m, vibe, s } = await setup(() => ({ chunks: [...chat.text("hello"), ...chat.end(1234, 56)] }))
+  const { m, vibe, s } = await setup(() => ({ chunks: [...chat.text("hello"), ...chat.end(1234, 56, "stop", {
+    prompt_tokens_details: { cached_tokens: 300, cache_write_tokens: 100 },
+    completion_tokens_details: { reasoning_tokens: 16 },
+  })] }))
   await collect(vibe.session.prompt(s.id, "count my tokens"))
   m.close()
   const msgs = vibe.engine.getSession(s.id).messages
   const a = msgs.find((x) => x.role === "assistant")
-  assert.deepEqual(a.usage, { input: 1234, output: 56 })
+  assert.deepEqual(a.usage, { input: 834, output: 40, reasoning: 16, cache: { read: 300, write: 100 } })
+  assert.equal(vibe.engine.getSession(s.id).usage.lastInput, 1234, "compaction keeps the provider's complete input total")
   assert.equal(a.model.providerID, "mock")
   assert.equal(a.model.id, "m")
   const { convertMessages } = require("../electron/messages.cjs")
   const view = convertMessages(vibe.engine.getSession(s.id)).find((x) => x.type === "assistant")
-  assert.deepEqual(view.tokens, { input: 1234, output: 56 })
+  assert.deepEqual(view.tokens, { input: 834, output: 40, reasoning: 16, cache: { read: 300, write: 100 } })
   assert.equal(view.model.providerID + "/" + view.model.id, "mock/m")
+  const U = require("../renderer/usage.js")
+  const live = U.emptyUsage()
+  U.addStep(live, "step", view.tokens, 0)
+  assert.equal(U.contextUsed(live), 1290, "ring adds each normalized category exactly once")
+  assert.deepEqual(U.totals(live), { input: 834, output: 40, reasoning: 16, cacheRead: 300, cacheWrite: 100, all: 1290, cost: 0, steps: 1 })
 })
 
 
@@ -1082,6 +1097,106 @@ test("background shell streams live output and accepts bounded stdin", async () 
   assert.ok(live.length > 0, "expected at least one live shell.output event")
   assert.match(live.map((event) => event.delta).join(""), /stdin:hello-live-shell/)
   assert.throws(() => jobs.input(h.id, "too late"), /no longer running/i)
+})
+
+test("background shell completion keeps its intent, clears the job, and resumes the agent", async () => {
+  const { m, vibe, s } = await setup(({ n, body }) => {
+    if (n === 0) return {
+      chunks: [
+        ...chat.tool("bg-intent-1", "bash", {
+          command: `node -e "setTimeout(function(){console.log('BUILD_OK')},700)"`,
+          description: "Compile the project and use the result before continuing",
+          background: true,
+        }),
+        ...chat.end(20, 2, "tool_calls"),
+      ],
+    }
+    if (n === 1) return { chunks: [...chat.text("Waiting for the background build result."), ...chat.end(30, 5)] }
+    const wire = JSON.stringify(body.messages || [])
+    assert.match(wire, /Background shell result/)
+    assert.match(wire, /BUILD_OK/)
+    assert.match(wire, /compile the project/i)
+    return { chunks: [...chat.text("Observed BUILD_OK and finished the dependent work."), ...chat.end(40, 7)] }
+  })
+  const events = []
+  let resolveResumed
+  let shellResumeSeen = false
+  let resumedText = ""
+  const resumed = new Promise((resolve) => { resolveResumed = resolve })
+  const off = vibe.event.subscribe((event) => {
+    events.push(event)
+    if (event.type === "shell.resume.started") shellResumeSeen = true
+    else if (shellResumeSeen && event.type === "text.delta") resumedText += event.delta || ""
+    else if (shellResumeSeen && event.type === "done") resolveResumed({ event, text: resumedText })
+  })
+  try {
+    await collect(vibe.session.prompt(s.id, "Compile this project in the background, then finish only after reading the result."))
+    const result = await Promise.race([
+      resumed,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("agent was not resumed with the background result")), 10000)),
+    ])
+    assert.match(result.text, /Observed BUILD_OK/)
+    assert.ok(events.some((event) => event.type === "shell.resume.started"), "engine announces the durable shell-result resume")
+    const completions = events.filter((event) => event.type === "shell.completed")
+    assert.equal(completions.length, 1, "background completion is delivered exactly once")
+    assert.equal(completions[0].shell.status, "completed")
+    assert.match(completions[0].shell.intent, /Compile this project in the background/i)
+    const session = vibe.engine.getSession(s.id)
+    assert.equal((session.pendingShellResults || []).length, 0, "attached results are removed from the pending queue")
+    assert.ok(session.messages.some((message) => (message.parts || []).some((part) => part.shellResultId && /BUILD_OK/.test(part.text || ""))), "intent/output remain in durable session history")
+  } finally {
+    off()
+    m.close()
+  }
+})
+
+test("background shell input prompt reaches the agent before completion", async () => {
+  const { m, vibe, s } = await setup(({ n, body }) => {
+    if (n === 0) return {
+      chunks: [
+        ...chat.tool("bg-wait-1", "bash", {
+          command: `node -e "console.log('BUILD_OK');console.log('Press any key to continue . . .');process.stdin.once('data',function(){console.log('AFTER_KEY');process.exit(0)})"`,
+          description: "Build the executable, answer its final prompt, then verify completion",
+          background: true,
+        }),
+        ...chat.end(20, 2, "tool_calls"),
+      ],
+    }
+    const wire = JSON.stringify(body.messages || [])
+    if (/Background shell result/.test(wire) && /AFTER_KEY/.test(wire)) {
+      return { chunks: [...chat.text("Saw BUILD_OK, answered the prompt, and confirmed AFTER_KEY."), ...chat.end(40, 6)] }
+    }
+    const waiting = /Background shell needs input: (sh_[0-9a-f]+)/.exec(wire)
+    const alreadySent = /"name":"shellInput"/.test(wire)
+    if (waiting && !alreadySent) {
+      return { chunks: [...chat.tool("send-enter-1", "shellInput", { shellId: waiting[1], text: "", enter: true }), ...chat.end(30, 2, "tool_calls")] }
+    }
+    return { chunks: [...chat.text("Waiting for the durable shell result."), ...chat.end(30, 4)] }
+  })
+  const events = []
+  let resolveFinished
+  const finished = new Promise((resolve) => { resolveFinished = resolve })
+  const off = vibe.event.subscribe((event) => {
+    events.push(event)
+    if (event.type === "text.delta" && /confirmed AFTER_KEY/.test(event.delta || "")) resolveFinished(event)
+  })
+  try {
+    await collect(vibe.session.prompt(s.id, "Build in the background, handle any terminal prompt safely, and do not finish before the command exits."))
+    await Promise.race([
+      finished,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("agent never handled the background input prompt")), 12000)),
+    ])
+    assert.equal(events.filter((event) => event.type === "shell.waiting").length, 1, "one durable waiting-for-input signal is emitted")
+    assert.equal(events.filter((event) => event.type === "shell.completed").length, 1, "completion follows the input prompt exactly once")
+    const session = vibe.engine.getSession(s.id)
+    assert.ok(session.messages.some((message) => (message.parts || []).some((part) => part.shellPromptId && /Press any key/.test(part.text || ""))), "the agent remembers why the running terminal needed input")
+    assert.ok(session.messages.some((message) => (message.parts || []).some((part) => part.shellResultId && /AFTER_KEY/.test(part.text || ""))), "the final command result remains durable")
+    assert.equal((session.pendingShellPrompts || []).length, 0)
+    assert.equal((session.pendingShellResults || []).length, 0)
+  } finally {
+    off()
+    m.close()
+  }
 })
 
 test("engine: notice/backgroundSession/cancelShell drive the shell job registry", async () => {

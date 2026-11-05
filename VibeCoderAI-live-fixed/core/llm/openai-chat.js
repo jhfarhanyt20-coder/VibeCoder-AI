@@ -7,6 +7,7 @@
 const { parseSSE } = require("./sse")
 const { postStreamAdaptive, parseRawBody, streamError } = require("./http")
 const { newId } = require("../util")
+const { openAIUsage } = require("./usage")
 
 function toWire(system, messages) {
   const out = []
@@ -109,7 +110,7 @@ async function* stream({ profile, apiKey, system, messages, tools, signal }) {
       continue
     }
     if (j.error) throw streamError(typeof j.error === "string" ? j.error : j.error.message || JSON.stringify(j.error))
-    if (j.usage) yield { type: "usage", input: j.usage.prompt_tokens || 0, output: j.usage.completion_tokens || 0 }
+    if (j.usage) yield { type: "usage", ...openAIUsage(j.usage) }
     const ch = j.choices && j.choices[0]
     if (!ch) continue
     const d = ch.delta || {}
@@ -151,7 +152,7 @@ function* fromJson(j) {
   if (typeof reasoning === "string" && reasoning) yield { type: "reasoning", delta: reasoning }
   const content = typeof m.content === "string" ? m.content : Array.isArray(m.content) ? m.content.map((p) => (p && p.text) || "").join("") : ""
   if (content) yield { type: "text", delta: content }
-  if (j.usage) yield { type: "usage", input: j.usage.prompt_tokens || 0, output: j.usage.completion_tokens || 0 }
+  if (j.usage) yield { type: "usage", ...openAIUsage(j.usage) }
   let n = 0
   for (const tc of m.tool_calls || []) {
     if (!tc || !tc.function || !tc.function.name) continue

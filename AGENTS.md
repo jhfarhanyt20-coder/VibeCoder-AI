@@ -30,3 +30,6 @@ Critical rules (do not skip):
    only. Never copy another product's names, prompts, text, code or assets.
 9. After a context reset: read `VIBE.md` and `HARNESS_TODO.md`, check
    `git status` / `git log` / `git tag`, and run `npm test` before editing.
+10. Do not redesign the current desktop UI without fresh explicit approval.
+    Background shell completion must durably carry the original intent,
+    command, status and output into the next safe agent turn.

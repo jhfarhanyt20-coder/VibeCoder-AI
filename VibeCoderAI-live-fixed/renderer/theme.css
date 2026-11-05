@@ -803,6 +803,14 @@ body {
   font-family: Consolas, "Courier New", monospace;
   font-size: calc(11.5px * var(--fs-scale, 1));
 }
+.bg-job-item .bji-command {
+  margin-top: 2px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 10px/1.35 Consolas, "Courier New", monospace;
+}
 .bg-job-item .bji-time { color: var(--muted); font-size: calc(11px * var(--fs-scale, 1)); }
 .bji-output {
   max-height: 150px;

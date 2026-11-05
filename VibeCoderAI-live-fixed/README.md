@@ -105,6 +105,8 @@ Provider selection is resolved against a fresh disk-backed `providerCatalog` bef
 7. **Project diagnostics**: after an edit, syntax errors in `.json`, `.js/.mjs/.cjs` (`node --check`) and `.py` (`ast.parse`, if Python exists) return in the same result. The `diagnostics` action also uses a project's installed TypeScript compiler for targeted semantic/type errors, behind normal Guardrails and without installing a package.
 8. **Live background shells**: long-running commands stream bounded output into the running-jobs panel and active tool row. The user or agent can send text/Enter/EOF through safe session-scoped stdin, while Stop and Background continue to work.
 9. Removed stale files: `core/llm/http.zip` and the one-off `electron/fix-*.js`, `add-event-handler.js`, `event-wiring.js`, `proper-add-events.js`, `electron/frontend/cleanup.js`.
+10. **Durable background results**: every background shell retains the original user intent, description, command, exit status and bounded output. Completion is delivered outside the expired run queue, attached to model-only session history and automatically resumes the agent when safe. Interactive prompts such as `Press any key`, Enter and Y/N are surfaced before completion so the agent can answer with `shellInput`; secret prompts always require the user.
+11. **Detailed context usage**: OpenAI Chat, OpenAI Responses, compatible routers and Anthropic now forward provider-reported reasoning, cache-read and cache-write tokens through live events and persisted history without double-counting nested totals.
 
 Optional future work: a native PTY terminal and persistent multi-language LSP servers. The current pipe-based shell and project TypeScript diagnostics deliberately avoid adding native/runtime dependencies.
 

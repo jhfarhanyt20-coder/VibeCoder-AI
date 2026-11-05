@@ -2,6 +2,7 @@
 /** Adapter: Anthropic Messages format (POST /v1/messages). */
 const { parseSSE } = require("./sse")
 const { postStreamAdaptive, parseRawBody, streamError } = require("./http")
+const { anthropicUsage } = require("./usage")
 
 function toWire(messages) {
   const out = []
@@ -59,7 +60,7 @@ async function* stream({ profile, apiKey, system, messages, tools, signal }) {
 
   const blocks = new Map()
   let finish = "stop"
-  let inTok = 0
+  let usage = {}
   for await (const ev of parseSSE(res.body)) {
     if (ev.event === "raw") {
       yield* fromJson(parseRawBody(ev.data))
@@ -73,7 +74,7 @@ async function* stream({ profile, apiKey, system, messages, tools, signal }) {
     }
     switch (j.type) {
       case "message_start":
-        if (j.message && j.message.usage) inTok = (j.message.usage.input_tokens || 0) + (j.message.usage.cache_read_input_tokens || 0) + (j.message.usage.cache_creation_input_tokens || 0)
+        if (j.message && j.message.usage) usage = { ...usage, ...j.message.usage }
         break
       case "content_block_start":
         if (j.content_block && j.content_block.type === "tool_use")
@@ -108,9 +109,8 @@ async function* stream({ profile, apiKey, system, messages, tools, signal }) {
         if (j.usage) {
           // real Anthropic reports input_tokens at message_start, many routers
           // report it (only) here at message_delta: take whichever is non-zero
-          const dIn = (j.usage.input_tokens || 0) + (j.usage.cache_read_input_tokens || 0) + (j.usage.cache_creation_input_tokens || 0)
-          if (dIn > inTok) inTok = dIn
-          yield { type: "usage", input: inTok, output: j.usage.output_tokens || 0 }
+          usage = { ...usage, ...j.usage }
+          yield { type: "usage", ...anthropicUsage(usage) }
         }
         break
       case "error":
@@ -132,8 +132,7 @@ function* fromJson(j) {
     }
   }
   const u = j.usage || {}
-  const input = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0)
-  yield { type: "usage", input, output: u.output_tokens || 0 }
+  yield { type: "usage", ...anthropicUsage(u) }
   yield { type: "finish", reason: n ? "tool_calls" : j.stop_reason === "end_turn" ? "stop" : j.stop_reason || "stop" }
 }
 

@@ -24,6 +24,12 @@ for (const event of ["session.pulse.started", "session.pulse.step.started", "ses
   assert.match(backend, new RegExp(event.replaceAll(".", "\\.")), `backend does not map ${event}`)
 }
 assert.match(backend, /durationMs: ev\.durationMs/)
+assert.match(backend, /reasoning: Number\(ev\.reasoning\)/)
+assert.match(backend, /read: Number\(ev\.cache\?\.read\)/)
+assert.match(backend, /write: Number\(ev\.cache\?\.write\)/)
+assert.match(messages, /reasoning: m\.usage\.reasoning/)
+assert.match(messages, /read: m\.usage\.cache\?\.read/)
+assert.match(messages, /write: m\.usage\.cache\?\.write/)
 assert.match(messages, /durationMs: res\.durationMs/)
 assert.match(app, /async function refreshRewindMenu/)
 assert.match(app, /async function applyRewind/)
@@ -34,9 +40,13 @@ assert.match(css, /\.rewind-menu/)
 assert.match(css, /\.harness-note\.locked/)
 assert.match(preload, /shellInput: call\("shellInput"\)/)
 assert.match(backend, /shellInput: async/)
-for (const event of ["session.shell.started", "session.shell.output", "session.shell.input", "session.shell.ended", "session.shell.completed"]) {
+for (const event of ["session.shell.started", "session.shell.output", "session.shell.input", "session.shell.waiting", "session.shell.ended", "session.shell.completed"]) {
   assert.match(backend, new RegExp(event.replaceAll(".", "\\.")), `backend does not map ${event}`)
 }
+assert.match(backend, /case "shell\.resume\.started"/)
+assert.match(backend, /source: "shell-result"/)
+assert.match(app, /data\.source === "shell-result"/)
+assert.match(app, /const waitingForShell =/)
 assert.match(app, /async function sendRunningShellInput/)
 assert.match(app, /type === "session\.shell\.output"/)
 assert.match(app, /vibe\.shellInput\(/)

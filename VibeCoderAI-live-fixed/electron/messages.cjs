@@ -114,7 +114,15 @@ function convertMessages(session) {
       id: `msg-${i}`,
       type: "assistant",
       content: parts,
-      ...(m.usage ? { tokens: { input: m.usage.input || 0, output: m.usage.output || 0 } } : {}),
+      ...(m.usage ? { tokens: {
+        input: m.usage.input || 0,
+        output: m.usage.output || 0,
+        reasoning: m.usage.reasoning || 0,
+        cache: {
+          read: m.usage.cache?.read || 0,
+          write: m.usage.cache?.write || 0,
+        },
+      } } : {}),
       ...(model ? { model } : {}),
       time: { created: session.updatedAt },
     })

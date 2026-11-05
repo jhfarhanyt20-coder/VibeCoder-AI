@@ -291,7 +291,7 @@ function terminalText(value, max = 12000) {
 
 function bgJobPanelSignature() {
   return JSON.stringify([...runningJobs.entries()].map(([key, job]) => [
-    key, job.kind, job.title, !!job.backgrounded, job.writable !== false,
+    key, job.kind, job.title, job.command, !!job.backgrounded, !!job.waitingForInput, job.writable !== false,
   ]))
 }
 
@@ -299,6 +299,7 @@ function refreshBgJobTimes() {
   document.querySelectorAll("#bg-job-list .bji-time[data-at]").forEach((el) => {
     const bits = [jobElapsed(Number(el.dataset.at) || Date.now())]
     if (el.dataset.backgrounded === "true") bits.push("background")
+    if (el.dataset.waiting === "true") bits.push("waiting for input")
     el.textContent = bits.join(" · ")
   })
 }
@@ -374,10 +375,20 @@ function renderBgJobPanel() {
     time.className = "bji-time"
     time.dataset.at = String(job.at || now)
     time.dataset.backgrounded = String(!!(job.shellId && job.backgrounded))
+    time.dataset.waiting = String(!!(job.shellId && job.waitingForInput))
     const bits = [jobElapsed(job.at || now)]
     if (job.shellId && job.backgrounded) bits.push("background")
+    if (job.shellId && job.waitingForInput) bits.push("waiting for input")
     time.textContent = bits.join(" · ")
-    body.append(title, time)
+    body.append(title)
+    if (job.shellId && job.command && job.command !== job.title) {
+      const command = document.createElement("div")
+      command.className = "bji-command"
+      command.textContent = job.command
+      command.title = job.command
+      body.appendChild(command)
+    }
+    body.append(time)
     if (job.shellId) {
       const output = document.createElement("pre")
       output.className = "bji-output"
@@ -650,11 +661,13 @@ async function refreshShellJobs() {
       runningJobs.set(key, {
         ...prev,
         kind: "Shell",
-        title: String(sh.command || "shell"),
+        title: String(sh.description || sh.intent || sh.command || "shell"),
+        command: String(sh.command || ""),
         at: sh.started || prev.at || Date.now(),
         shellId: sh.id,
         backgrounded: !!sh.backgrounded,
         writable: sh.writable !== false,
+        waitingForInput: !!sh.waitingForInput,
         toolCallId: sh.toolCallId || prev.toolCallId || "",
         output: terminalText(output),
       })
@@ -3390,6 +3403,14 @@ vibe.onEvent(async (event) => {
       const summary = lastAnswerSummary()
       const done = !agentLooksUnfinished()
       const wasBackgroundJob = bgJob.startedAt > 0
+      const waitingForShell = [...runningJobs.values()].some((job) => job.shellId)
+      if (waitingForShell) {
+        // A durable engine completion will attach the command's intent, output
+        // and exit status, then resume the agent. Do not announce completion or
+        // start a competing auto-continue run while that result is pending.
+        renderBgJob()
+        return
+      }
       if (done) {
         // The whole task is finished -> tell the user, with the summary.
         clearBackgroundJob()
@@ -3413,6 +3434,13 @@ vibe.onEvent(async (event) => {
       state.interruptReason = null
       state.lastRealError = null
       const pending = addMsg("assistant", "Using the completed subagent result…", "thinking")
+      state.pendingBubble = pending
+      state.liveTextEl = pending
+    } else if (data.source === "shell-result" && !state.subagentView) {
+      state.userStopped = false
+      state.interruptReason = null
+      state.lastRealError = null
+      const pending = addMsg("assistant", "Using the completed background command result…", "thinking")
       state.pendingBubble = pending
       state.liveTextEl = pending
     }
@@ -3672,13 +3700,15 @@ vibe.onEvent(async (event) => {
     if (sh.id) {
       runningJobs.set(`shell:${sh.id}`, {
         kind: "Shell",
-        title: String(sh.command || "shell"),
+        title: String(sh.description || sh.intent || sh.command || "shell"),
         at: sh.started || Date.now(),
         shellId: sh.id,
         backgrounded: !!(sh.backgrounded || sh.background),
         cwd: sh.cwd || "",
         file: sh.file || "",
+        command: String(sh.command || ""),
         writable: sh.writable !== false,
+        waitingForInput: !!sh.waitingForInput,
         toolCallId: sh.toolCallId || "",
         output: "",
       })
@@ -3693,6 +3723,7 @@ vibe.onEvent(async (event) => {
     if (job) {
       job.output = terminalText((job.output || "") + delta)
       job.writable = sh.writable !== false
+      job.waitingForInput = !!sh.waitingForInput
       updateShellOutputView(sh.id, job.output)
     }
     const toolCallId = sh.toolCallId || job?.toolCallId
@@ -3702,8 +3733,18 @@ vibe.onEvent(async (event) => {
   if (type === "session.shell.input") {
     const sh = data.shell ?? {}
     const job = runningJobs.get(`shell:${sh.id}`)
-    if (job) job.writable = sh.writable !== false
+    if (job) { job.writable = sh.writable !== false; job.waitingForInput = false }
     if (!$("bg-job-panel")?.hidden) renderBgJobPanel()
+  }
+  if (type === "session.shell.waiting") {
+    const sh = data.shell ?? {}
+    const job = runningJobs.get(`shell:${sh.id}`)
+    if (job) {
+      job.waitingForInput = true
+      job.writable = sh.writable !== false
+      if (data.prompt && !job.output) job.output = terminalText(data.prompt)
+    }
+    renderBgJob()
   }
   if (type === "session.shell.backgrounded") {
     const sh = data.shell ?? {}

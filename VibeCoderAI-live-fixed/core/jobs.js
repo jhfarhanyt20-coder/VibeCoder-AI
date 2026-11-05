@@ -57,6 +57,22 @@ const LIVE_OUTPUT_DELAY = 40 // coalesce noisy processes without making output f
 const INPUT_LIMIT = 64 * 1024 // one stdin write; prevents accidental unbounded IPC payloads
 const jobs = new Map()
 
+function inputPrompt(output) {
+  const tail = String(output || "")
+    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b\[[0-?]*[ -\/]*[@-~]/g, "")
+    .slice(-2000)
+    .trimEnd()
+  const asks = [
+    /press any key to continue[^\n]*$/i,
+    /press (?:enter|return) to continue[^\n]*$/i,
+    /(?:are you sure|continue|proceed|overwrite|replace)[^\n]{0,100}(?:\?|\[[yn]\/[^\]]+\]|\([yn]\/[yn]\))\s*$/i,
+    /(?:password|passphrase|verification code|one[- ]time (?:code|password))\s*:\s*$/i,
+    /(?:enter|type) [^\n:]{1,80}\s*:\s*$/i,
+  ]
+  return asks.some((pattern) => pattern.test(tail)) ? tail : ""
+}
+
 function shellDir(sessionID) {
   const safe = String(sessionID || "global").replace(/[^\w.-]+/g, "_").slice(0, 80) || "global"
   const dir = path.join(homeDir(), "shell", safe)
@@ -96,7 +112,7 @@ function trimHistory() {
  * `done` resolves with the final info; `backgrounded` resolves as soon as the
  * job is moved to the background (it does not stop the process).
  */
-function createShell({ sessionID, command, cwd, background = false, env, emit, toolCallId } = {}) {
+function createShell({ sessionID, command, cwd, background = false, env, emit, toolCallId, description, intent, onSettled, onWaiting } = {}) {
   const id = newId("sh")
   const win = process.platform === "win32"
   const file = path.join(shellDir(sessionID), id + ".out")
@@ -118,6 +134,14 @@ function createShell({ sessionID, command, cwd, background = false, env, emit, t
     cancelled: false,
     emit: typeof emit === "function" ? emit : null,
     toolCallId: toolCallId || undefined,
+    description: String(description || "").slice(0, 500),
+    intent: String(intent || "").slice(0, 2000),
+    onSettled: typeof onSettled === "function" ? onSettled : null,
+    onWaiting: typeof onWaiting === "function" ? onWaiting : null,
+    waitingForInput: false,
+    waitingPrompt: "",
+    waitingUiSignature: "",
+    waitingDurableSignature: "",
     stdin: null,
     stdinEnded: false,
   }
@@ -132,6 +156,24 @@ function createShell({ sessionID, command, cwd, background = false, env, emit, t
   let liveTimer = null
 
   const info = () => jobInfo(job)
+
+  const notifyWaiting = () => {
+    const prompt = inputPrompt(job.output)
+    if (!prompt) return
+    const signature = prompt.replace(/\s+/g, " ").trim().slice(-500)
+    job.waitingForInput = true
+    job.waitingPrompt = prompt
+    if (job.backgrounded && job.onWaiting) {
+      if (job.waitingDurableSignature === signature) return
+      job.waitingDurableSignature = signature
+      try { job.onWaiting(info(), prompt, clipTail(job.output, 30000)) } catch {}
+      return
+    }
+    if (job.waitingUiSignature === signature || !job.emit) return
+    job.waitingUiSignature = signature
+    try { job.emit({ type: "shell.waiting", shell: info(), prompt }) } catch {}
+  }
+  job.notifyWaiting = notifyWaiting
 
   // Let background()/backgroundSession() (called by id) wake the tool's race.
   job.backgroundResolve = () => {
@@ -156,11 +198,15 @@ function createShell({ sessionID, command, cwd, background = false, env, emit, t
     job.signal = signal || undefined
     job.completed = Date.now()
     job.stdinEnded = true
+    job.waitingForInput = false
     try {
       if (stream) stream.end()
     } catch {}
     trimHistory()
     doneResolve(info())
+    if (job.onSettled) {
+      try { job.onSettled(info(), clipTail(job.output, 30000)) } catch {}
+    }
   }
 
   let child
@@ -204,6 +250,7 @@ function createShell({ sessionID, command, cwd, background = false, env, emit, t
         if (typeof liveTimer.unref === "function") liveTimer.unref()
       }
     }
+    notifyWaiting()
   }
   child.stdout.on("data", add)
   child.stderr.on("data", add)
@@ -237,6 +284,7 @@ function createShell({ sessionID, command, cwd, background = false, env, emit, t
       background() {
         job.backgrounded = true
         if (bgResolve) bgResolve(info())
+        notifyWaiting()
         if (job.status !== "running") return info()
         return info()
       },
@@ -262,6 +310,7 @@ function background(id) {
   if (!job) return undefined
   job.backgrounded = true
   if (typeof job.backgroundResolve === "function") job.backgroundResolve()
+  if (typeof job.notifyWaiting === "function") job.notifyWaiting()
   return jobInfo(job)
 }
 
@@ -274,6 +323,7 @@ function backgroundSession(sessionID, type = "shell") {
     if (job.status !== "running") continue
     job.backgrounded = true
     if (typeof job.backgroundResolve === "function") job.backgroundResolve()
+    if (typeof job.notifyWaiting === "function") job.notifyWaiting()
     moved.push(jobInfo(job))
   }
   return moved
@@ -295,7 +345,11 @@ function jobInfo(job) {
     backgrounded: job.backgrounded,
     size: job.size,
     writable: job.status === "running" && !job.stdinEnded && !!job.stdin && !job.stdin.destroyed,
+    waitingForInput: !!job.waitingForInput,
+    ...(job.waitingPrompt ? { waitingPrompt: job.waitingPrompt } : {}),
     ...(job.toolCallId ? { toolCallId: job.toolCallId } : {}),
+    ...(job.description ? { description: job.description } : {}),
+    ...(job.intent ? { intent: job.intent } : {}),
   }
 }
 
@@ -335,6 +389,10 @@ function input(id, text = "", { newline = true, eof = false } = {}) {
   if (newline && !/[\r\n]$/.test(value)) value += "\n"
   const bytes = Buffer.byteLength(value)
   if (value) job.stdin.write(value)
+  job.waitingForInput = false
+  job.waitingPrompt = ""
+  job.waitingUiSignature = ""
+  job.waitingDurableSignature = ""
   if (eof) {
     job.stdinEnded = true
     job.stdin.end()
@@ -392,4 +450,5 @@ module.exports = {
   killTree,
   KEEP_OUTPUT,
   INPUT_LIMIT,
+  inputPrompt,
 }

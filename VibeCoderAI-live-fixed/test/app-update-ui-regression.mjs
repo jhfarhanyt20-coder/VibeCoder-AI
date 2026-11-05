@@ -12,7 +12,6 @@ const updater = read("electron/updater.cjs")
 
 for (const id of [
   "app-update-check",
-  "app-update-open-release",
   "app-update-action-card",
   "app-update-available-row",
   "app-update-download",
@@ -26,13 +25,15 @@ for (const id of [
   assert.match(html, new RegExp(`id=["']${id}["']`), `missing App Updates element ${id}`)
 }
 
-assert.match(html, /Open download page/, "manual download page button is missing")
+assert.match(html, /Update Now/, "the in-app update button is missing")
+assert.match(html, /download starts inside the app/i, "the update copy must describe the in-app download")
+assert.doesNotMatch(html, /Open download page|app-update-open-release/, "manual update must not send users to a web page")
+assert.doesNotMatch(app, /releases\/latest|openReleaseBtn/, "manual update must stay inside the app")
 assert.match(app, /async function doAppUpdateCheck/)
 assert.match(app, /async function doAppUpdateDownload/)
 assert.match(app, /async function doAppUpdateInstall/)
-assert.match(app, /const APP_RELEASES_URL = "https:\/\/github\.com\/jhfarhanyt20-coder\/VibeCoder-AI\/releases\/latest"/)
 assert.match(app, /if \(downloadBtn\) downloadBtn\.onclick = doAppUpdateDownload/)
-assert.match(app, /if \(openReleaseBtn\) openReleaseBtn\.onclick/)
+assert.match(app, /btn\.textContent = "Update Now"/)
 assert.match(app, /s\.state === "update-available"/)
 assert.match(app, /showAppUpdateRow\("app-update-available-row", s\.state === "update-available"\)/)
 assert.match(app, /ev\.type === "download-progress" \? "downloading"/)
@@ -45,4 +46,4 @@ assert.match(updater, /au\.autoDownload = previousAutoDownload/)
 const syntax = spawnSync(process.execPath, ["--check", path.join(root, "renderer", "app.js")], { encoding: "utf8" })
 assert.equal(syntax.status, 0, syntax.stderr || syntax.stdout)
 
-console.log("PASS app update UI regression: manual check, download, install and release-page fallback are wired")
+console.log("PASS app update UI regression: manual check, in-app Update Now download and Install & Restart are wired")

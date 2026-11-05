@@ -3806,9 +3806,6 @@ setTimeout(() => { refreshCliUpdates().catch(() => {}) }, 8000)
 let appUpdateState = { enabled: false, version: null, state: "idle", payload: null, lastCheckedAt: null, prefs: { autoCheck: true, autoDownload: true } }
 let appUpdateOff = null
 let appUpdateBusy = false
-// Stable manual fallback. Automatic updates can be turned off, so the app must
-// always expose a way for a user to download the current installer themselves.
-const APP_RELEASES_URL = "https://github.com/jhfarhanyt20-coder/VibeCoder-AI/releases/latest"
 
 function fmtVersion(v) { return v ? `v${v}` : "—" }
 function fmtLastChecked(ts) {
@@ -3849,7 +3846,7 @@ function renderAppUpdateStatus() {
   if (s.enabled) {
     switch (s.state) {
       case "checking": statusText = "Checking for the latest stable release…"; break
-      case "update-available": statusText = `Update available: ${fmtVersion(s.payload?.version)}`; break
+      case "update-available": statusText = `Update available: ${fmtVersion(s.payload?.version)} — click Update Now`; break
       case "update-not-available": statusText = "You're on the latest stable release."; break
       case "downloading": statusText = "Downloading update…"; break
       case "downloaded":
@@ -3960,7 +3957,7 @@ async function doAppUpdateDownload() {
   if (!vibe.downloadAppUpdate || appUpdateBusy) return
   appUpdateBusy = true
   const btn = document.getElementById("app-update-download")
-  if (btn) { btn.disabled = true; btn.textContent = "Downloading…" }
+  if (btn) { btn.disabled = true; btn.textContent = "Updating…" }
   appUpdateState.state = "downloading"
   appUpdateState.payload = { ...(appUpdateState.payload || {}), percent: 0 }
   renderAppUpdateStatus()
@@ -3974,7 +3971,7 @@ async function doAppUpdateDownload() {
     appUpdateState.state = "error"
   } finally {
     appUpdateBusy = false
-    if (btn) { btn.disabled = false; btn.textContent = "Download Update" }
+    if (btn) { btn.disabled = false; btn.textContent = "Update Now" }
     renderAppUpdateActions()
   }
 }
@@ -4010,17 +4007,6 @@ async function doAppUpdateInstall() {
 }
 
 function wireAppUpdates() {
-  // The manual release link must work even if the updater bridge is absent.
-  const openReleaseBtn = document.getElementById("app-update-open-release")
-  if (openReleaseBtn) openReleaseBtn.onclick = async () => {
-    if (!vibe.openExternal) return
-    try {
-      const res = await vibe.openExternal({ url: APP_RELEASES_URL })
-      if (res && res.ok === false) throw new Error(res.error || "Could not open the download page")
-    } catch (err) {
-      showError("Could not open the download page", (err && err.message) || String(err), { key: "app-update-release" })
-    }
-  }
   if (!vibe.appUpdateStatus && !vibe.onAppUpdateEvent) return
   if (appUpdateOff) { try { appUpdateOff() } catch {}; appUpdateOff = null }
   if (vibe.onAppUpdateEvent) appUpdateOff = vibe.onAppUpdateEvent(applyAppUpdateEvent)

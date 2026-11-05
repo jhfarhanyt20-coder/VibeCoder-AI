@@ -13,9 +13,10 @@ Critical rules (do not skip):
    an ordinary commit. Release flow: bump `package.json` +
    `package-lock.json`, run `npm test`, commit, push `master`, tag `v<version>`,
    push the tag. The tag must match the version.
-3. **Keep a manual update path.** App Updates must offer Check for Updates,
-   Download Update (even when auto-download is off, without changing the saved
-   preference), and an Open download page link to the latest release.
+3. **Keep a manual update path.** App Updates must offer Check for Updates and
+   an Update Now button that starts the in-app download even when auto-download
+   is off (without changing the saved preference), followed by Install &
+   Restart. Manual update never means sending the user to a web page.
 4. **Never commit when tests are red.**
 5. **Never commit** `node_modules/`, `release/`, `dist/`, `.env*`, logs, or
    `VibeCoderAI-live-fixed/core/llm/http.zip`.

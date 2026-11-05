@@ -28,11 +28,12 @@ same repository. Therefore:
 - **A manual update path must always exist.** The App Updates page must keep
   working when both automatic settings are off:
   1. **Check for Updates** works purely on demand;
-  2. **Download Update** appears when a release is available, downloads it, and
-     never changes the saved auto-download preference;
-  3. **Open download page** links to the latest GitHub Release so a user can
-     always download the installer by hand.
-  Never ship a build where the only update path depends on auto-update.
+  2. when a release is available, **Update Now** starts the download inside the
+     app and never changes the saved auto-download preference;
+  3. after the download, **Install & Restart** completes the update.
+  Manual update means one click in the app that starts the download — never a
+  detour to a website. Never ship a build where the only update path depends
+  on auto-update.
 
 ## 2. Release contract
 

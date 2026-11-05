@@ -312,6 +312,7 @@ Thin vertical slice first:
 | 2026-11-05 | Release | `v0.3.0` App Updates manual check/download/install + release-page fallback | CI green; installer + `latest.yml` + blockmap uploaded; manual flow verified |
 | 2026-11-05 | Release | `v0.3.1` corrected manual update to stay entirely in-app | CI green; installer + `latest.yml` + blockmap uploaded |
 | 2026-11-05 | Phase 11 | bounded live shell + safe stdin + project TypeScript diagnostics | +3 core tests; 125 IPC handlers; full suite green |
+| 2026-11-05 | Release | `v0.3.2` live shell + project diagnostics | CI green; installer + `latest.yml` + blockmap uploaded |
 
 ---
 

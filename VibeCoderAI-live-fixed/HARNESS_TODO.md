@@ -330,6 +330,7 @@ Thin vertical slice first:
 | 2026-11-05 | Phase 11 | bounded live shell + safe stdin + project TypeScript diagnostics | +3 core tests; 125 IPC handlers; full suite green |
 | 2026-11-05 | Release | `v0.3.2` live shell + project diagnostics | CI green; installer + `latest.yml` + blockmap uploaded |
 | 2026-11-05 | Phase 12 | detailed context usage + durable background completion/input prompts | +2 core tests; full suite green |
+| 2026-11-05 | Release | `v0.3.3` usage details + durable/intelligent background shell results | CI green; installer + `latest.yml` + blockmap uploaded |
 
 ---
 

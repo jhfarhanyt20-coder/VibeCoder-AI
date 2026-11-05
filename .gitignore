@@ -22,3 +22,6 @@ npm-debug.log*
 
 # stale artifact (do not ship)
 VibeCoderAI-live-fixed/core/llm/http.zip
+
+# local notes
+New Text Document.txt

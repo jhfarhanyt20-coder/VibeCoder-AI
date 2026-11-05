@@ -290,6 +290,7 @@ Thin vertical slice first:
 | 2026-11-04 | Phase 9 | Connector resources/OAuth + Extension lifecycle + per-step tool snapshot | +4 tests, full suite green |
 | 2026-11-04 | Phase 10 | Pulse/Lock UI + scoped permissions + Rewind menu + docs | +1 UI regression, full suite green |
 | 2026-11-05 | Release | `v0.2.0` published to GitHub Releases | CI green; installer + `latest.yml` + blockmap uploaded; auto-update verified |
+| 2026-11-05 | Release | `v0.3.0` App Updates manual check/download/install + release-page fallback | CI green; installer + `latest.yml` + blockmap uploaded; manual flow verified |
 
 ---
 

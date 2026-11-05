@@ -1,6 +1,6 @@
 {
   "name": "vibe-core",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "VibeCoder AI engine: own CLI, own SDK, 3 LLM formats, auto-compaction. Zero dependencies.",
   "license": "UNLICENSED",
   "author": {

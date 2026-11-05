@@ -71,6 +71,27 @@ Every action result has a common shape:
 Plain string returns remain supported. Output is clipped before it enters
 history or the Trail.
 
+## Live shell jobs
+
+Every shell command is a bounded job with a file-backed log. Long-running jobs
+can move to the background without being killed. Output is coalesced into small
+live events and shown in the running-jobs panel and active action row. A user or
+the `shellInput` action can send bounded text, Enter or EOF to the process;
+session ownership is checked on every input. Stop still kills the child tree.
+
+This is a safe stdin/stdout pipe, not a terminal emulator. Programs that need
+raw terminal mode, cursor control or full PTY semantics remain future optional
+work and require an explicitly approved native dependency.
+
+## Project diagnostics
+
+JSON, JavaScript and Python syntax checks continue to run automatically after
+file actions. The read-only `diagnostics` action adds targeted TypeScript
+syntax and semantic/type errors when that project already has TypeScript under
+its own `node_modules`. VibeCoder installs nothing. Loading project-installed
+compiler code goes through Guardrails, runs in an isolated bounded worker, and
+falls back with a clear message when no provider is available.
+
 ## Playbooks
 
 A Playbook is a lazily loaded workflow:

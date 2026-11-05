@@ -52,6 +52,9 @@ const { newId, homeDir } = require("./util")
 
 const KEEP_OUTPUT = 64 * 1024 // per-job in-memory tail (full output stays in the file)
 const EXITED_LIMIT = 25 // settled jobs kept for status/output lookups
+const LIVE_OUTPUT_LIMIT = 16 * 1024 // one renderer event can never grow without bound
+const LIVE_OUTPUT_DELAY = 40 // coalesce noisy processes without making output feel delayed
+const INPUT_LIMIT = 64 * 1024 // one stdin write; prevents accidental unbounded IPC payloads
 const jobs = new Map()
 
 function shellDir(sessionID) {
@@ -93,7 +96,7 @@ function trimHistory() {
  * `done` resolves with the final info; `backgrounded` resolves as soon as the
  * job is moved to the background (it does not stop the process).
  */
-function createShell({ sessionID, command, cwd, background = false, env, emit } = {}) {
+function createShell({ sessionID, command, cwd, background = false, env, emit, toolCallId } = {}) {
   const id = newId("sh")
   const win = process.platform === "win32"
   const file = path.join(shellDir(sessionID), id + ".out")
@@ -114,6 +117,9 @@ function createShell({ sessionID, command, cwd, background = false, env, emit } 
     size: 0,
     cancelled: false,
     emit: typeof emit === "function" ? emit : null,
+    toolCallId: toolCallId || undefined,
+    stdin: null,
+    stdinEnded: false,
   }
 
   let doneResolve
@@ -122,6 +128,8 @@ function createShell({ sessionID, command, cwd, background = false, env, emit } 
   const backgrounded = new Promise((r) => (bgResolve = r))
   let stream = null
   let settled = false
+  let liveBuffer = ""
+  let liveTimer = null
 
   const info = () => jobInfo(job)
 
@@ -130,13 +138,24 @@ function createShell({ sessionID, command, cwd, background = false, env, emit } 
     if (bgResolve) bgResolve(info())
   }
 
+  const flushLive = () => {
+    if (liveTimer) clearTimeout(liveTimer)
+    liveTimer = null
+    if (!liveBuffer || !job.emit) { liveBuffer = ""; return }
+    const delta = liveBuffer
+    liveBuffer = ""
+    try { job.emit({ type: "shell.output", shell: info(), delta }) } catch {}
+  }
+
   const settle = (status, code, signal) => {
     if (settled) return
     settled = true
+    flushLive()
     job.status = status
     job.exit = code == null ? undefined : code
     job.signal = signal || undefined
     job.completed = Date.now()
+    job.stdinEnded = true
     try {
       if (stream) stream.end()
     } catch {}
@@ -156,6 +175,7 @@ function createShell({ sessionID, command, cwd, background = false, env, emit } 
       env: { ...process.env, ...(env || {}) },
     })
     job.pid = child.pid
+    job.stdin = child.stdin || null
   } catch (e) {
     job.output = `Failed to start shell: ${e.message}`
     job.status = "error"
@@ -177,9 +197,17 @@ function createShell({ sessionID, command, cwd, background = false, env, emit } 
     try {
       stream && stream.write(text)
     } catch {}
+    if (job.emit) {
+      liveBuffer = clipTail(liveBuffer + text, LIVE_OUTPUT_LIMIT)
+      if (!liveTimer) {
+        liveTimer = setTimeout(flushLive, LIVE_OUTPUT_DELAY)
+        if (typeof liveTimer.unref === "function") liveTimer.unref()
+      }
+    }
   }
   child.stdout.on("data", add)
   child.stderr.on("data", add)
+  if (child.stdin) child.stdin.on("error", () => { job.stdinEnded = true })
 
   child.on("error", (e) => {
     job.output = clipTail(job.output + `\nFailed to start shell: ${e.message}`, KEEP_OUTPUT)
@@ -217,6 +245,10 @@ function createShell({ sessionID, command, cwd, background = false, env, emit } 
         job.cancelled = true
         if (job.status === "running") killTree(child)
         return info()
+      },
+      /** Send input to a process that is waiting on stdin. */
+      input(text, options) {
+        return input(id, text, options)
       },
     }
   }
@@ -262,6 +294,8 @@ function jobInfo(job) {
     ...(job.signal !== undefined ? { signal: job.signal } : {}),
     backgrounded: job.backgrounded,
     size: job.size,
+    writable: job.status === "running" && !job.stdinEnded && !!job.stdin && !job.stdin.destroyed,
+    ...(job.toolCallId ? { toolCallId: job.toolCallId } : {}),
   }
 }
 
@@ -281,6 +315,32 @@ function output(id, max = 30000) {
   const job = jobs.get(id)
   if (!job) return undefined
   return clipTail(job.output, Math.max(1, Number(max) || 30000))
+}
+
+/**
+ * Send bounded text to a running job's stdin. This is a safe pipe-based
+ * interaction layer, not a PTY: programs that require terminal cursor control
+ * or raw mode still need a future audited PTY integration.
+ */
+function input(id, text = "", { newline = true, eof = false } = {}) {
+  const job = jobs.get(id)
+  if (!job) throw new Error("This shell no longer exists.")
+  if (job.status !== "running") throw new Error("This shell is no longer running.")
+  if (!job.stdin || job.stdinEnded || job.stdin.destroyed || !job.stdin.writable) {
+    throw new Error("This shell is not accepting input.")
+  }
+  let value = String(text == null ? "" : text)
+  if (value.includes("\0")) throw new Error("Shell input cannot contain a null byte.")
+  if (Buffer.byteLength(value) > INPUT_LIMIT) throw new Error(`Shell input is limited to ${INPUT_LIMIT} bytes per send.`)
+  if (newline && !/[\r\n]$/.test(value)) value += "\n"
+  const bytes = Buffer.byteLength(value)
+  if (value) job.stdin.write(value)
+  if (eof) {
+    job.stdinEnded = true
+    job.stdin.end()
+  }
+  try { if (job.emit) job.emit({ type: "shell.input", shell: jobInfo(job), bytes, eof: !!eof }) } catch {}
+  return { ...jobInfo(job), bytes, eof: !!eof }
 }
 
 /**
@@ -324,10 +384,12 @@ module.exports = {
   get,
   list,
   output,
+  input,
   cancel,
   cancelSession,
   cancelAll,
   size,
   killTree,
   KEEP_OUTPUT,
+  INPUT_LIMIT,
 }

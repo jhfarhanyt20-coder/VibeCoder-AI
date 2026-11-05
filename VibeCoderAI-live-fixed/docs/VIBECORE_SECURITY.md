@@ -7,6 +7,9 @@ Use this checklist before shipping a build that changes agent execution.
 - [ ] Locks are evaluated before all approvals and ordinary Guardrails.
 - [ ] A saved `always` approval cannot lift a Lock or a persona denial.
 - [ ] Compound shell commands are checked segment by segment.
+- [ ] Shell stdin is session-scoped, bounded per send and allowed only while the process is writable.
+- [ ] Live shell output events are bounded and never added to the durable Trail.
+- [ ] Project-local compiler execution goes through normal command Guardrails.
 - [ ] Paths outside the workspace require an explicit directory decision.
 - [ ] Read-only parallelism includes only actions with no side effects.
 - [ ] Recipe shell fences are never executed by the Recipe loader.

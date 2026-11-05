@@ -76,6 +76,7 @@ var vibe = window.vibe ?? {
   setCompactionSettings: async (value) => ({ ok: true, data: { auto: value?.auto !== false, model: value?.model || null } }),
   listShells: async () => ({ ok: true, data: [] }),
   shellOutput: async () => ({ ok: true, data: { output: "" } }),
+  shellInput: async () => ({ ok: true, data: { bytes: 0 } }),
   backgroundSession: async () => ({ ok: true, data: { moved: [] } }),
   cancelShell: async () => ({ ok: true, data: {} }),
   listPermissionRequests: async () => ({ ok: true, data: [] }),
@@ -273,11 +274,57 @@ function notifyAgent(title, body) {
 /* The agent keeps working while the app sits in the background. A chip in the
    top-left of the chat shows that; clicking it opens the list of running jobs
    and lets the user stop them. */
-const bgJob = { startedAt: 0, noteShown: false, timer: null }
+const bgJob = { startedAt: 0, noteShown: false, timer: null, panelSignature: "" }
 
 /* every job that is currently running: the agent run + the open tool calls +
    the background shells ({ kind, title, at, shellId?, backgrounded?, file? }) */
 const runningJobs = new Map()
+const shellInputDrafts = new Map()
+
+function terminalText(value, max = 12000) {
+  const clean = String(value || "")
+    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b\[[0-?]*[ -\/]*[@-~]/g, "")
+    .replace(/\r(?!\n)/g, "\n")
+  return clean.length > max ? clean.slice(-max) : clean
+}
+
+function bgJobPanelSignature() {
+  return JSON.stringify([...runningJobs.entries()].map(([key, job]) => [
+    key, job.kind, job.title, !!job.backgrounded, job.writable !== false,
+  ]))
+}
+
+function refreshBgJobTimes() {
+  document.querySelectorAll("#bg-job-list .bji-time[data-at]").forEach((el) => {
+    const bits = [jobElapsed(Number(el.dataset.at) || Date.now())]
+    if (el.dataset.backgrounded === "true") bits.push("background")
+    el.textContent = bits.join(" · ")
+  })
+}
+
+function updateShellOutputView(shellID, output) {
+  const el = [...document.querySelectorAll("#bg-job-list .bji-output")].find((node) => node.dataset.shellId === shellID)
+  if (!el) return
+  el.textContent = terminalText(output) || "Waiting for output…"
+  el.scrollTop = el.scrollHeight
+}
+
+async function sendRunningShellInput(shellID, { eof = false } = {}) {
+  if (!state.activeSessionID || !vibe.shellInput) return
+  const text = shellInputDrafts.get(shellID) || ""
+  try {
+    const res = await vibe.shellInput({ sessionID: state.activeSessionID, shellID, text, enter: !eof, eof })
+    if (!res || res.ok === false) throw new Error(res?.error || "Could not send input")
+    shellInputDrafts.set(shellID, "")
+    const job = runningJobs.get(`shell:${shellID}`)
+    if (job && eof) job.writable = false
+    renderBgJobPanel()
+    hideError("shell-input")
+  } catch (error) {
+    showError("Could not send shell input", String(error?.message || error), { key: "shell-input" })
+  }
+}
 
 function jobElapsed(at) {
   const secs = Math.max(0, Math.round((Date.now() - at) / 1000))
@@ -301,6 +348,7 @@ function renderBgJobPanel() {
   const list = $("bg-job-list")
   if (!list) return
   list.textContent = ""
+  bgJob.panelSignature = bgJobPanelSignature()
   const now = Date.now()
   const jobs = [...runningJobs.entries()]
   if (!jobs.length) {
@@ -324,10 +372,48 @@ function renderBgJobPanel() {
     title.title = job.title || key
     const time = document.createElement("div")
     time.className = "bji-time"
+    time.dataset.at = String(job.at || now)
+    time.dataset.backgrounded = String(!!(job.shellId && job.backgrounded))
     const bits = [jobElapsed(job.at || now)]
     if (job.shellId && job.backgrounded) bits.push("background")
     time.textContent = bits.join(" · ")
     body.append(title, time)
+    if (job.shellId) {
+      const output = document.createElement("pre")
+      output.className = "bji-output"
+      output.dataset.shellId = job.shellId
+      output.textContent = terminalText(job.output) || "Waiting for output…"
+      body.appendChild(output)
+      if (job.writable !== false) {
+        const inputRow = document.createElement("div")
+        inputRow.className = "bji-input-row"
+        const field = document.createElement("input")
+        field.className = "bji-input"
+        field.type = "text"
+        field.placeholder = "Send input to the running process…"
+        field.value = shellInputDrafts.get(job.shellId) || ""
+        field.oninput = () => shellInputDrafts.set(job.shellId, field.value)
+        field.onkeydown = (event) => {
+          if (event.key !== "Enter" || event.shiftKey) return
+          event.preventDefault()
+          shellInputDrafts.set(job.shellId, field.value)
+          sendRunningShellInput(job.shellId)
+        }
+        const send = document.createElement("button")
+        send.className = "bji-input-send"
+        send.type = "button"
+        send.textContent = "Send"
+        send.onclick = () => { shellInputDrafts.set(job.shellId, field.value); sendRunningShellInput(job.shellId) }
+        const eof = document.createElement("button")
+        eof.className = "bji-input-eof"
+        eof.type = "button"
+        eof.textContent = "EOF"
+        eof.title = "Close input for this process"
+        eof.onclick = () => { shellInputDrafts.set(job.shellId, field.value); sendRunningShellInput(job.shellId, { eof: true }) }
+        inputRow.append(field, send, eof)
+        body.appendChild(inputRow)
+      }
+    }
     const acts = document.createElement("div")
     acts.className = "bji-acts"
     // OpenCode's Ctrl+B: a blocking shell can be sent to the background while it
@@ -444,7 +530,10 @@ function renderBgJob() {
   if (!agentRun && shells.length) label = shells.length > 1 ? `Background · ${shells.length}` : "Background"
   else if (jobs.length > 1) label = `Running · ${jobs.length}`
   $("bg-job-text").textContent = label
-  if (!$("bg-job-panel").hidden) renderBgJobPanel()
+  if (!$("bg-job-panel").hidden) {
+    if (bgJob.panelSignature !== bgJobPanelSignature()) renderBgJobPanel()
+    else refreshBgJobTimes()
+  }
   if (!bgJob.timer) {
     bgJob.timer = setInterval(() => {
       if (!bgJobActive()) {
@@ -553,13 +642,21 @@ async function refreshShellJobs() {
       if (sh.status !== "running") continue
       const key = `shell:${sh.id}`
       const prev = runningJobs.get(key) || {}
+      let output = prev.output || ""
+      if (typeof vibe.shellOutput === "function") {
+        const tail = await vibe.shellOutput({ sessionID: state.activeSessionID, shellID: sh.id, max: 12000 }).catch(() => null)
+        if (tail?.ok) output = typeof tail.data === "string" ? tail.data : (tail.data?.output || output)
+      }
       runningJobs.set(key, {
+        ...prev,
         kind: "Shell",
         title: String(sh.command || "shell"),
         at: sh.started || prev.at || Date.now(),
         shellId: sh.id,
         backgrounded: !!sh.backgrounded,
-        ...prev,
+        writable: sh.writable !== false,
+        toolCallId: sh.toolCallId || prev.toolCallId || "",
+        output: terminalText(output),
       })
     }
     renderBgJob()
@@ -3578,12 +3675,35 @@ vibe.onEvent(async (event) => {
         title: String(sh.command || "shell"),
         at: sh.started || Date.now(),
         shellId: sh.id,
-        backgrounded: !!sh.background,
+        backgrounded: !!(sh.backgrounded || sh.background),
         cwd: sh.cwd || "",
         file: sh.file || "",
+        writable: sh.writable !== false,
+        toolCallId: sh.toolCallId || "",
+        output: "",
       })
       renderBgJob()
     }
+  }
+  if (type === "session.shell.output") {
+    const sh = data.shell ?? {}
+    const delta = String(data.delta || "")
+    const key = `shell:${sh.id}`
+    const job = runningJobs.get(key)
+    if (job) {
+      job.output = terminalText((job.output || "") + delta)
+      job.writable = sh.writable !== false
+      updateShellOutputView(sh.id, job.output)
+    }
+    const toolCallId = sh.toolCallId || job?.toolCallId
+    const out = toolCallId ? actOut(`tool:${toolCallId}`) : null
+    if (out) out.textContent = terminalText((out.textContent || "") + delta, 30000)
+  }
+  if (type === "session.shell.input") {
+    const sh = data.shell ?? {}
+    const job = runningJobs.get(`shell:${sh.id}`)
+    if (job) job.writable = sh.writable !== false
+    if (!$("bg-job-panel")?.hidden) renderBgJobPanel()
   }
   if (type === "session.shell.backgrounded") {
     const sh = data.shell ?? {}
@@ -3594,6 +3714,7 @@ vibe.onEvent(async (event) => {
   if (type === "session.shell.ended" || type === "session.shell.completed") {
     const sh = data.shell ?? {}
     runningJobs.delete(`shell:${sh.id}`)
+    shellInputDrafts.delete(sh.id)
     renderBgJob()
   }
   if (type === "session.permissions" || type === "session.tool.called") {

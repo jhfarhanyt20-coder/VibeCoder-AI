@@ -32,23 +32,24 @@ additive হবে। ডিফল্টে পুরোনো behaviour বদ�
 
 ## 2. Baseline (এটা আবার check করতে হবে)
 
-শেষ full test run: **2026-11-04 — সব pass**
+শেষ full test run: **2026-11-05 — সব pass**
 
 ```text
 npm test
-core-test.mjs                 110 passed
+core-test.mjs                 113 passed
 agents-test.mjs                11 passed
 skills-test.mjs                 8 passed
 harness-test.mjs               23 passed
-electron-backend-smoke.cjs     124 IPC handlers
+electron-backend-smoke.cjs     125 IPC handlers
 compaction-ui-regression       PASS
 subagent-ui-regression         PASS
 harness-ui-regression          PASS
-app-updater-test                7 passed
+app-update-ui-regression        PASS
+app-updater-test                8 passed
 ```
 
-Working tree-তে আগের অনেক uncommitted change আছে। **সেগুলো আমাদের commit-এ
-ঢোকানো যাবে না।** আমাদের নতুন ফাইল + minimal integration edit আলাদা রাখতে হবে।
+প্রতিটি commit-এর আগে working tree inspect করতে হবে। User-এর unrelated local
+file commit করা যাবে না; বিশেষ করে ignored local notes কখনও release tag-এ নয়।
 
 ---
 
@@ -256,6 +257,24 @@ are isolated from the run.
 `docs/VIBECORE_SECURITY.md`. The Electron backend now exposes Trail and complete
 Rewind APIs; 124 IPC handlers pass preload coverage.
 
+### Phase 11 — Live Shell + Project Diagnostics
+- [x] stream bounded shell output to the UI in real time
+- [x] safe stdin / newline / EOF controls for running shell jobs
+- [x] agent-facing shell input action with normal Guardrails
+- [x] optional project-local TypeScript semantic diagnostics
+- [x] explicit diagnostics action with graceful syntax-only fallback
+- [x] Electron/UI/core regression tests
+
+**Constraint:** no new runtime dependency. This phase adds a safe pipe-based
+interactive layer, not a terminal emulator. Full PTY semantics remain optional
+until an audited native PTY dependency is explicitly approved.
+
+**Phase 11 result:** done (+3 core tests; full suite green). Shell output is
+coalesced and bounded, stdin is size/session/writable-checked, and both UI and
+agent can send Enter or EOF. TypeScript semantic diagnostics run in an isolated
+bounded worker only when that project already provides TypeScript and after the
+normal Guardrail decision; VibeCoder installs no package.
+
 ---
 
 ## 6. Priority
@@ -291,6 +310,8 @@ Thin vertical slice first:
 | 2026-11-04 | Phase 10 | Pulse/Lock UI + scoped permissions + Rewind menu + docs | +1 UI regression, full suite green |
 | 2026-11-05 | Release | `v0.2.0` published to GitHub Releases | CI green; installer + `latest.yml` + blockmap uploaded; auto-update verified |
 | 2026-11-05 | Release | `v0.3.0` App Updates manual check/download/install + release-page fallback | CI green; installer + `latest.yml` + blockmap uploaded; manual flow verified |
+| 2026-11-05 | Release | `v0.3.1` corrected manual update to stay entirely in-app | CI green; installer + `latest.yml` + blockmap uploaded |
+| 2026-11-05 | Phase 11 | bounded live shell + safe stdin + project TypeScript diagnostics | +3 core tests; 125 IPC handlers; full suite green |
 
 ---
 

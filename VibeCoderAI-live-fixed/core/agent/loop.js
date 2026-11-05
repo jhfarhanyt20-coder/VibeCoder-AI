@@ -157,7 +157,7 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
   const resolve = (name) => activeTools.find((t) => t.name === name) || activeTools.find((t) => t.name === TOOL_ALIASES[String(name || "").toLowerCase()])
 
   // Pulse: pure reads can run together. Side-effect tools stay serial below.
-  const READ_ONLY = new Set(["read", "list", "grep", "glob"])
+  const READ_ONLY = new Set(["read", "list", "grep", "glob", "diagnostics"])
   const isReadOnly = (call) => {
     const tool = resolve(call && call.name)
     return !!tool && READ_ONLY.has(tool.name)

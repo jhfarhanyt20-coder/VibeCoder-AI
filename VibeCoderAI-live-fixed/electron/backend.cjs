@@ -478,7 +478,12 @@ function onEngineEvent(ev) {
     case "question.ask": emitUI("form.created", sid, { form: ev.form }); break
     case "question.replied": emitUI("form.replied", sid, { form: ev.form, answers: ev.answers }); break
     case "question.cancelled": emitUI("form.cancelled", sid, { form: ev.form, message: ev.message }); break
+    case "shell.started": emitUI("session.shell.started", sid, { shell: ev.shell }); break
+    case "shell.output": emitUI("session.shell.output", sid, { shell: ev.shell, delta: ev.delta || "" }); break
+    case "shell.input": emitUI("session.shell.input", sid, { shell: ev.shell, bytes: ev.bytes || 0, eof: !!ev.eof }); break
     case "shell.backgrounded": emitUI("session.shell.backgrounded", sid, { shell: ev.shell }); break
+    case "shell.ended": emitUI("session.shell.ended", sid, { shell: ev.shell }); break
+    case "shell.completed": emitUI("session.shell.completed", sid, { shell: ev.shell, output: ev.output || "" }); break
     case "todo.update": emitUI("todo.updated", sid, data); break
     default: emitUI(ev.type || "engine.event", sid, data)
   }
@@ -621,6 +626,7 @@ const handlers = {
   },
   listShells: async (a = {}) => engine.listShells(idOf(a)),
   shellOutput: async (a = {}) => engine.shellOutput(a.shellID || a.id, a.max),
+  shellInput: async (a = {}) => engine.shellInput(idOf(a), a.shellID || a.shellId || a.id, a.text || "", { newline: a.enter !== false, eof: a.eof === true }),
   backgroundSession: async (a = {}) => engine.backgroundSession(idOf(a)),
   backgroundShell: async (a = {}) => engine.backgroundShell(idOf(a), a.shellID || a.id),
   cancelShell: async (a = {}) => ({ cancelled: engine.cancelShell(idOf(a), a.shellID || a.id) }),
@@ -902,7 +908,7 @@ const handlers = {
 const preloadNames = [
   "info","setMode","getAllUsage","clearSessionRules","browserCreateTab","browserCloseTab","browserListTabs","browserCurrent","browserNavigate","browserScreenshot","browserEvaluate","browserSnapshot","browserClick","browserFill","browserPress","browserScroll",
   "listSessions","createSession","getMessages","renameSession","deleteSession","revertSession","undoSession","listSnapshots","listStepSnapshots","previewSnapshot","undoStepSession","redoSession","listRedo","getTrail","prompt","resumeRun","interrupt","compactSession","getCompactionSettings","setCompactionSettings",
-  "listShells","shellOutput","backgroundSession","backgroundShell","cancelShell","setPermissions","listPermissionRequests","replyPermission","listForms","replyForm","cancelForm",
+  "listShells","shellOutput","shellInput","backgroundSession","backgroundShell","cancelShell","setPermissions","listPermissionRequests","replyPermission","listForms","replyForm","cancelForm",
   "listModels","listAllModels","listModelLimits","setModel","providerCatalog","providerList","providerSave","providerRemove","providerDisabled","providerKey","providerModels","providerModel","providerMeta",
   "cwd","setDirectory","getDirectory","gitBranch","pickProject","pickAttachments","readAttachment","ensureAgent","switchAgent","listAgents","setAgentDisabled","mcpList","mcpAdd","mcpRemove","subagentCreate","subagentList","subagentStatus","subagentResult","subagentDetails","subagentResume","subagentStop","subagentToggle",
   "pluginList","pluginAdd","pluginRemove","builtins","installBuiltinPlugin","removeBuiltinPlugin","marketplace","installSkill","removeSkill","installCustomSkill","removeCustomSkill","importGitHubSkills","registryAdd","registryRemove","memoryPath","memoryList","memoryAdd","memoryRemove","openMemoryFile","todoList","todoSave","cliInfo","cliInstallTested","cliUpdateCheck","authStatus","authConnect","authDisconnect","upgradeInfo","startUpgrade","ownerScan","ownerVerify","notify","openExternal","restartEvents","logError","openErrorLog","appUpdateStatus","appUpdateSetPrefs"

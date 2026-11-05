@@ -16,7 +16,7 @@ const playbookStore = require("../harness/playbooks")
 const forms = require("../forms")
 const { applyEdit, fileGuard } = require("./editkit")
 const snapshots = require("../store/snapshots")
-const { diagnose } = require("./diagnostics")
+const { diagnose, inspect: inspectDiagnostics, format: formatDiagnostics } = require("./diagnostics")
 
 const MAX_OUT = 30000
 const clip = (s, n = MAX_OUT) => (s.length <= n ? s : s.slice(0, n / 2) + `\n\n... [${s.length - n} chars truncated] ...\n\n` + s.slice(-n / 2))
@@ -170,6 +170,7 @@ const bash = {
       background,
       env,
       emit: c.emit,
+      toolCallId: c.toolCallId,
     })
     const ms = a.timeout === 0 ? 0 : Math.min(a.timeout || 120000, 600000)
     // Every shell is announced when it starts (background or blocking), so the
@@ -247,6 +248,54 @@ const bash = {
         if (timer.unref) timer.unref()
       }
     })
+  },
+}
+
+const shellInput = {
+  name: "shellInput",
+  description:
+    "Send text, Enter, or EOF to a running shell job that is waiting for input. " +
+    "Use the shell ID returned by bash. This is live stdin over a safe pipe, not a full terminal emulator; " +
+    "do not use it to poll for output.",
+  parameters: {
+    type: "object",
+    properties: {
+      shellId: { type: "string", description: "Running shell ID (for example sh_abc123)" },
+      text: { type: "string", description: "Text to send. May be empty when sending Enter or EOF." },
+      enter: { type: "boolean", description: "Append a newline (press Enter). Defaults to true." },
+      eof: { type: "boolean", description: "Close stdin after this send (Ctrl+D / end of input)." },
+    },
+    required: ["shellId"],
+  },
+  perm: (a) => ({ tool: "bash", subject: `input ${a.shellId}` }),
+  paths: () => [],
+  run(a, c) {
+    if (!c.engine || typeof c.engine.shellInput !== "function") throw new Error("Live shell input is unavailable in this context.")
+    const result = c.engine.shellInput(c.session && c.session.id, a.shellId, a.text || "", { newline: a.enter !== false, eof: a.eof === true })
+    return `Sent ${result.bytes} byte${result.bytes === 1 ? "" : "s"} to ${a.shellId}${result.eof ? " and closed stdin" : ""}.`
+  },
+}
+
+const diagnostics = {
+  name: "diagnostics",
+  description:
+    "Run targeted syntax and type diagnostics for one file. Use this after editing TypeScript/JavaScript when type correctness matters. " +
+    "For TypeScript it uses the project's own installed compiler without installing packages or running project source. " +
+    "Loading a project compiler still goes through normal command Guardrails; unsupported projects return a clear fallback message.",
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "File to diagnose" },
+      semantic: { type: "boolean", description: "Include project TypeScript semantic/type diagnostics when available. Defaults to true." },
+    },
+    required: ["path"],
+  },
+  perm: (a, c) => ({ tool: a.semantic === false ? "read" : "bash", subject: `diagnostics ${resolvePath(c.cwd, a.path)}` }),
+  paths: (a, c) => [resolvePath(c.cwd, a.path)],
+  run(a, c) {
+    const abs = resolvePath(c.cwd, a.path)
+    const report = inspectDiagnostics(abs, { semantic: a.semantic !== false })
+    return formatDiagnostics(report, abs)
   },
 }
 
@@ -1098,7 +1147,7 @@ const apply_patch = {
   },
 }
 
-const ALL = [read, write, edit, multiedit, apply_patch, list, bash, grep, glob, todowrite, question, webfetch, playbook, skill, memory, subagentResult, subagentStatus, subagentStop]
+const ALL = [read, write, edit, multiedit, apply_patch, list, bash, shellInput, diagnostics, grep, glob, todowrite, question, webfetch, playbook, skill, memory, subagentResult, subagentStatus, subagentStop]
 
 // Browser tools (optional - require electron backend)
 try {

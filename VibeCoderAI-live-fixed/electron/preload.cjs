@@ -68,6 +68,7 @@ const api = {
   // background shell jobs
   listShells: call("listShells"),
   shellOutput: call("shellOutput"),
+  shellInput: call("shellInput"),
   backgroundSession: call("backgroundSession"),
   backgroundShell: call("backgroundShell"),
   cancelShell: call("cancelShell"),

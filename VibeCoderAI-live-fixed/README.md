@@ -94,7 +94,7 @@ Provider selection is resolved against a fresh disk-backed `providerCatalog` bef
 - Regression coverage includes a real engine test proving an unsafe compaction does not send an LLM request, plus source wiring checks for the UI/event path.
 
 
-## OpenCode-parity changes (this build)
+## VibeCoder engine changes (this build)
 
 1. **Prompt bug fixed**: `${agentName}` was printed literally; the leaked example model name is gone.
 2. **Per-model prompt notes** (`modelHints` in `core/agent/prompt.js`: gpt/o-series, gemini, deepseek/grok/qwen/kimi/llama/glm) + a short *Code conduct* block (no commit/push unless asked, follow conventions, `file:line` references, secrets, todo usage, prefer dedicated tools) + git repo/branch in the environment block.
@@ -102,10 +102,11 @@ Provider selection is resolved against a fresh disk-backed `providerCatalog` bef
 4. **Edit**: exact match first, then a matcher chain (line-trimmed -> whitespace-normalized -> indentation-flexible -> block-anchor) that re-indents the replacement; CRLF kept. **Read-before-edit** and "file changed since you read it" are enforced per session (`core/tools/editkit.js`).
 5. **New tools**: `list` (tree), `multiedit` (ordered edits, all-or-nothing), `apply_patch` (`*** Begin Patch` envelope: update/add/delete/move, atomic, per-file permission).
 6. **Undo**: before write/edit/multiedit/apply_patch the original file is captured once per turn. `/undo` in `vibe chat`, `session.undo()` in the SDK, `POST /session/:id/undo`, `undoSession` in the Electron IPC. Subagent edits count toward the parent's turn. Shell side effects are not captured. `revertSession` is unchanged (messages only).
-7. **Diagnostics (LSP-lite)**: after an edit, syntax errors in `.json`, `.js/.mjs/.cjs` (`node --check`) and `.py` (`ast.parse`, if python exists) are returned in the same tool result.
-8. Removed stale files: `core/llm/http.zip` and the one-off `electron/fix-*.js`, `add-event-handler.js`, `event-wiring.js`, `proper-add-events.js`, `electron/frontend/cleanup.js`.
+7. **Project diagnostics**: after an edit, syntax errors in `.json`, `.js/.mjs/.cjs` (`node --check`) and `.py` (`ast.parse`, if Python exists) return in the same result. The `diagnostics` action also uses a project's installed TypeScript compiler for targeted semantic/type errors, behind normal Guardrails and without installing a package.
+8. **Live background shells**: long-running commands stream bounded output into the running-jobs panel and active tool row. The user or agent can send text/Enter/EOF through safe session-scoped stdin, while Stop and Background continue to work.
+9. Removed stale files: `core/llm/http.zip` and the one-off `electron/fix-*.js`, `add-event-handler.js`, `event-wiring.js`, `proper-add-events.js`, `electron/frontend/cleanup.js`.
 
-Not done: real LSP servers, `websearch` / `codesearch`, a UI button for undo (the API is wired through preload; the "Edit & resend" dialog still only removes messages).
+Optional future work: a native PTY terminal and persistent multi-language LSP servers. The current pipe-based shell and project TypeScript diagnostics deliberately avoid adding native/runtime dependencies.
 
 ## License
 

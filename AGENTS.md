@@ -12,7 +12,9 @@ Critical rules (do not skip):
 2. **Users only receive updates through a tagged GitHub Release**, not through
    an ordinary commit. Release flow: bump `package.json` +
    `package-lock.json`, run `npm test`, commit, push `master`, tag `v<version>`,
-   push the tag. The tag must match the version.
+   push the tag. The tag must match the version. Increment exactly one patch at
+   a time (`0.3.1` → `0.3.2`); never skip or bump minor/major unless the user
+   explicitly changes this rule.
 3. **Keep a manual update path.** App Updates must offer Check for Updates and
    an Update Now button that starts the in-app download even when auto-download
    is off (without changing the saved preference), followed by Install &

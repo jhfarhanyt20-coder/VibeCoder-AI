@@ -561,6 +561,13 @@ class Engine {
   shellOutput(shellID, max) {
     return jobs.output(shellID, max)
   }
+  /** Send stdin to one running shell. The session boundary is always enforced. */
+  shellInput(id, shellID, text, options) {
+    const job = jobs.get(shellID)
+    if (!job) throw new Error("This shell no longer exists.")
+    if (job.sessionID && id && job.sessionID !== id) throw new Error("This shell belongs to another session.")
+    return jobs.input(shellID, text, options)
+  }
   /** Ctrl+B: move every blocking shell command of this session to the background. */
   backgroundSession(id) {
     const moved = jobs.backgroundSession(id)

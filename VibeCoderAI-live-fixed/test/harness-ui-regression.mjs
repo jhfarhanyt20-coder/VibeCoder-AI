@@ -32,8 +32,18 @@ assert.match(app, /function addHarnessNote/)
 assert.match(app, /Step \$\{pulse\.step\}/)
 assert.match(css, /\.rewind-menu/)
 assert.match(css, /\.harness-note\.locked/)
+assert.match(preload, /shellInput: call\("shellInput"\)/)
+assert.match(backend, /shellInput: async/)
+for (const event of ["session.shell.started", "session.shell.output", "session.shell.input", "session.shell.ended", "session.shell.completed"]) {
+  assert.match(backend, new RegExp(event.replaceAll(".", "\\.")), `backend does not map ${event}`)
+}
+assert.match(app, /async function sendRunningShellInput/)
+assert.match(app, /type === "session\.shell\.output"/)
+assert.match(app, /vibe\.shellInput\(/)
+assert.match(css, /\.bji-output/)
+assert.match(css, /\.bji-input-row/)
 
 const syntax = spawnSync(process.execPath, ["--check", path.join(root, "renderer", "app.js")], { encoding: "utf8" })
 assert.equal(syntax.status, 0, syntax.stderr || syntax.stdout)
 
-console.log("PASS harness UI regression: Pulse, scoped permissions and Rewind controls are wired end-to-end")
+console.log("PASS harness UI regression: Pulse, permissions, Rewind and live shell controls are wired end-to-end")

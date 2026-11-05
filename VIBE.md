@@ -1,9 +1,9 @@
 # VibeCoder AI — Project Rules (read this first)
 
 Last updated: 2026-11-05
-Current release: **0.3.0** (tag `v0.3.0`, published 2026-11-05)
-Release assets verified: `VibeCoderAI-v2-0.3.0.exe`,
-`VibeCoderAI-v2-0.3.0.exe.blockmap`, `latest.yml` (`version: 0.3.0`)
+Current release: **0.3.1** (tag `v0.3.1`, published 2026-11-05)
+Release assets verified: `VibeCoderAI-v2-0.3.1.exe`,
+`VibeCoderAI-v2-0.3.1.exe.blockmap`, `latest.yml` (`version: 0.3.1`)
 Repository: https://github.com/jhfarhanyt20-coder/VibeCoder-AI — **PUBLIC**
 Application directory: `VibeCoderAI-live-fixed/`
 License: proprietary, all rights reserved. See `LICENSE`.
@@ -40,7 +40,9 @@ same repository. Therefore:
 1. The version lives in `VibeCoderAI-live-fixed/package.json` and the two root
    entries of `VibeCoderAI-live-fixed/package-lock.json`. Keep them identical.
 2. For every release:
-   - bump the version with semver (for example `0.2.0` → `0.3.0`);
+   - increment **only the patch number by exactly one** (for example
+     `0.3.1` → `0.3.2` → `0.3.3`). Do not skip a patch and do not bump the
+     minor/major number unless the user explicitly changes this rule;
    - run `npm test` from `VibeCoderAI-live-fixed`;
    - commit the intended files and push `master`;
    - create tag `v<version>` on that commit and push the tag.
@@ -82,6 +84,9 @@ same repository. Therefore:
   Recipes, Extensions, Connectors and OAuth.
 - `core/store/snapshots.js` — Rewind turn/step snapshots and the redo stack.
 - `core/agent/loop.js` — Pulse run/step events, action contract, parallel reads.
+- `core/jobs.js` — bounded live shell output, background lifecycle and safe stdin.
+- `core/tools/diagnostics*.js` — syntax checks plus Guardrail-protected,
+  project-local TypeScript semantic diagnostics.
 - `core/subagents/index.js` — Crew limits and the result contract.
 - `core/engine.js` — wiring for every harness subsystem.
 - `electron/backend.cjs`, `electron/preload.cjs` — IPC bridge.

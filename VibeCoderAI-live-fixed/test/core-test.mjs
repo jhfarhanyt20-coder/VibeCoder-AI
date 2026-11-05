@@ -419,6 +419,45 @@ test("diagnostics: syntax errors come back in the same tool result", async () =>
   } finally { fs.rmSync(d, { recursive: true, force: true }) }
 })
 
+test("diagnostics: project TypeScript reports a targeted semantic type error", async () => {
+  const diagnostics = require("../core/tools/diagnostics")
+  const { byName } = require("../core/tools")
+  const scratch = path.join(process.cwd(), ".vibe-scratch")
+  fs.mkdirSync(scratch, { recursive: true })
+  const project = fs.mkdtempSync(path.join(scratch, "diag-ts-"))
+  try {
+    const sourceDir = path.join(project, "src")
+    fs.mkdirSync(sourceDir)
+    const file = path.join(sourceDir, "value.ts")
+    fs.writeFileSync(path.join(project, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, target: "ES2022" }, include: ["src/**/*.ts"] }))
+    fs.writeFileSync(file, 'const count: number = "wrong"\nexport { count }\n')
+    assert.ok(diagnostics.findProjectTypeScript(file), "test project should discover the app tree's installed TypeScript compiler")
+    const report = diagnostics.inspect(file, { semantic: true })
+    assert.equal(report.available, true, report.note || "TypeScript diagnostics unavailable")
+    assert.ok(report.diagnostics.some((item) => item.code === 2322), JSON.stringify(report))
+    const tool = byName("diagnostics")
+    assert.equal(tool.perm({ path: file }, { cwd: project }).tool, "bash", "project compiler execution must remain Guardrail-protected")
+    const output = tool.run({ path: file }, { cwd: project })
+    assert.match(output, /TS2322/)
+  } finally {
+    fs.rmSync(project, { recursive: true, force: true })
+  }
+})
+
+test("diagnostics: TypeScript without a local compiler fails gracefully", () => {
+  const diagnostics = require("../core/tools/diagnostics")
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "vibe-diag-no-ts-"))
+  try {
+    const file = path.join(project, "value.ts")
+    fs.writeFileSync(file, "const value: number = 1\n")
+    const report = diagnostics.inspect(file, { semantic: true })
+    assert.equal(report.available, false)
+    assert.match(report.note, /No project-local TypeScript compiler/i)
+  } finally {
+    fs.rmSync(project, { recursive: true, force: true })
+  }
+})
+
 test("permissions: ask -> deny blocks bash; ask -> always remembers; external dir guarded", async () => {
   const marker = path.join(tmp(), "ran.txt")
   const { m, vibe, s, dir } = await setup(({ n }) => {
@@ -1020,6 +1059,31 @@ test("foreground timeout moves the command to the background instead of killing 
   assert.ok(info && info.id === started.shell.id, "cancel returns the job info")
 })
 
+test("background shell streams live output and accepts bounded stdin", async () => {
+  const jobs = require("../core/jobs")
+  const dir = tmp()
+  const events = []
+  const h = jobs.createShell({
+    sessionID: "job-input-test",
+    command: `node -e "process.stdin.once('data',function(d){console.log('stdin:'+d.toString().trim());process.exit(0)})"`,
+    cwd: dir,
+    background: true,
+    toolCallId: "call_input_1",
+    emit: (event) => events.push(event),
+  })
+  const sent = h.input("hello-live-shell")
+  assert.ok(sent.bytes > 0)
+  assert.equal(sent.toolCallId, "call_input_1")
+  const done = await h.done
+  assert.equal(done.status, "completed")
+  assert.equal(done.writable, false)
+  assert.match(jobs.output(h.id), /stdin:hello-live-shell/)
+  const live = events.filter((event) => event.type === "shell.output")
+  assert.ok(live.length > 0, "expected at least one live shell.output event")
+  assert.match(live.map((event) => event.delta).join(""), /stdin:hello-live-shell/)
+  assert.throws(() => jobs.input(h.id, "too late"), /no longer running/i)
+})
+
 test("engine: notice/backgroundSession/cancelShell drive the shell job registry", async () => {
   const { m, vibe, s } = await setup(() => ({ chunks: [...chat.text("ok"), ...chat.end(1, 1)] }))
   try {
@@ -1034,6 +1098,7 @@ test("engine: notice/backgroundSession/cancelShell drive the shell job registry"
     assert.match(after[after.length - 1].parts[0].text, /state=completed/)
     const moved = eng.backgroundSession(s.id)
     assert.ok(moved.some((j) => j.id === h.id), "blocking shell moved to the background")
+    assert.throws(() => eng.shellInput("different-session", h.id, "x"), /another session/i)
     const cancelled = eng.cancelShell(s.id, h.id)
     assert.ok(cancelled && cancelled.id === h.id)
   } finally {

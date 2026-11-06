@@ -301,10 +301,14 @@ queue; interactive prompts reach the agent while the process is still alive.
 - [x] agent is instructed to read the stream itself, never ask for copy/paste
 - [x] secrets still require the user; no auto-answer of passwords/codes
 - [x] core/UI regression tests
+- [x] optional `skin.css` loaded after `theme.css` (visual only)
+- [x] remove the last inline style attribute so CSP `style-src 'self'` passes
+- [x] regression test forbids future inline styles in renderer HTML
 
 **Phase 13 result:** done (+2 core tests; full suite green). The terminal stream
 is now part of the model context: no user copy/paste is required to explain a
-stuck or long-running process. The UI is unchanged.
+stuck or long-running process. The optional skin is a separate stylesheet, so
+the renderer stays compliant with `style-src 'self'`.
 
 ---
 
@@ -348,6 +352,8 @@ Thin vertical slice first:
 | 2026-11-05 | Release | `v0.3.3` usage details + durable/intelligent background shell results | CI green; installer + `latest.yml` + blockmap uploaded |
 | 2026-11-06 | Phase 13 | agent-readable live terminal stream + blocking-prompt takeover | +2 core tests; full suite green |
 | 2026-11-06 | Release | `v0.3.4` terminal output reaches the agent without copy/paste | CI green; installer + `latest.yml` + blockmap uploaded |
+| 2026-11-06 | Hotfix | optional Graphite skin + CSP-safe update bar | no inline styles; full suite green |
+| 2026-11-06 | Release | `v0.3.5` skin + CSP fix | CI green; installer + `latest.yml` + blockmap uploaded |
 
 ---
 

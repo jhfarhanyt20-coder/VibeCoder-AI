@@ -1,9 +1,9 @@
 # VibeCoder AI — Project Rules (read this first)
 
 Last updated: 2026-11-06
-Current release: **0.3.4** (tag `v0.3.4`, published 2026-11-06)
-Release assets verified: `VibeCoderAI-v2-0.3.4.exe`,
-`VibeCoderAI-v2-0.3.4.exe.blockmap`, `latest.yml` (`version: 0.3.4`)
+Current release: **0.3.5** (tag `v0.3.5`, published 2026-11-06)
+Release assets verified: `VibeCoderAI-v2-0.3.5.exe`,
+`VibeCoderAI-v2-0.3.5.exe.blockmap`, `latest.yml` (`version: 0.3.5`)
 Repository: https://github.com/jhfarhanyt20-coder/VibeCoder-AI — **PUBLIC**
 Application directory: `VibeCoderAI-live-fixed/`
 License: proprietary, all rights reserved. See `LICENSE`.
@@ -41,7 +41,7 @@ same repository. Therefore:
    entries of `VibeCoderAI-live-fixed/package-lock.json`. Keep them identical.
 2. For every release:
    - increment **only the patch number by exactly one** (for example
-     `0.3.1` → `0.3.2` → `0.3.3` → `0.3.4`). Do not skip a patch and do not bump the
+     `0.3.1` → `0.3.2` → `0.3.3` → `0.3.4` → `0.3.5`). Do not skip a patch and do not bump the
      minor/major number unless the user explicitly changes this rule;
    - run `npm test` from `VibeCoderAI-live-fixed`;
    - commit the intended files and push `master`;
@@ -86,6 +86,10 @@ same repository. Therefore:
   background so the tool call can return with its output.
 - Context usage keeps provider-reported reasoning/cache categories separate and
   avoids counting them once inside input/output and again as detail fields.
+- The renderer CSP is `style-src 'self'`. Never add inline `style="..."` attributes
+  or inline `<style>` blocks to renderer HTML; put rules in `theme.css`/`skin.css`
+  and update dynamic values through element CSSOM (`el.style.width = ...`).
+  Optional visual skins are separate stylesheets linked after `theme.css`.
 
 ## 4. Naming and clean-room rules
 

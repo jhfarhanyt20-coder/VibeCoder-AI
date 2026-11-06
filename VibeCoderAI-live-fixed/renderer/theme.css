@@ -1670,6 +1670,7 @@ body {
   overflow: hidden;
 }
 .app-update-bar-fill {
+  width: 0;
   height: 100%;
   background: var(--accent);
   border-radius: 999px;

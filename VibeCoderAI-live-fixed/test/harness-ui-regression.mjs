@@ -13,6 +13,9 @@ const backend = read("electron/backend.cjs")
 const preload = read("electron/preload.cjs")
 const messages = read("electron/messages.cjs")
 
+// CSP is style-src 'self': inline style attributes are blocked by the renderer.
+assert.doesNotMatch(html, /\sstyle=/, "renderer HTML must not use inline style attributes")
+assert.match(html, /<link rel="stylesheet" href="skin\.css" \/>/)
 for (const id of ["btn-rewind", "rewind-menu", "rewind-summary", "rewind-files", "rewind-step", "rewind-turn", "rewind-redo"]) {
   assert.match(html, new RegExp(`id=["']${id}["']`), `missing Rewind UI element ${id}`)
 }

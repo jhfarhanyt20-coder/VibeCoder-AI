@@ -23,5 +23,8 @@ npm-debug.log*
 # stale artifact (do not ship)
 VibeCoderAI-live-fixed/core/llm/http.zip
 
+# local renderer backup (not part of the build)
+VibeCoderAI-live-fixed/renderer/renderer.zip
+
 # local notes
 New Text Document.txt

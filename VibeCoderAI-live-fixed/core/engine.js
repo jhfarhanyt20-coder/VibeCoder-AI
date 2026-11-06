@@ -563,6 +563,21 @@ class Engine {
   shellOutput(shellID, max) {
     return jobs.output(shellID, max)
   }
+  /** One shell job, scoped to the session that owns it. */
+  getShell(id, shellID) {
+    const job = jobs.get(shellID)
+    if (!job) return undefined
+    if (job.sessionID && id && job.sessionID !== id) throw new Error("This shell belongs to another session.")
+    return job
+  }
+  /** Live terminal tail (and optional byte range) for the agent. */
+  readShellOutput(id, shellID, opts = {}) {
+    const job = this.getShell(id, shellID)
+    if (!job) throw new Error(`Shell ${shellID} does not exist anymore.`)
+    const read = jobs.readOutput(shellID, opts)
+    if (!read) throw new Error(`Shell ${shellID} does not exist anymore.`)
+    return { shell: job, ...read }
+  }
   /** Send stdin to one running shell. The session boundary is always enforced. */
   shellInput(id, shellID, text, options) {
     const job = jobs.get(shellID)
@@ -640,6 +655,7 @@ class Engine {
     }
     session.pendingShellResults = [...pending.filter((item) => item && item.id !== entry.id), entry].slice(-20)
     if (Array.isArray(session.pendingShellPrompts)) session.pendingShellPrompts = session.pendingShellPrompts.filter((item) => item?.id !== entry.id)
+    if (Array.isArray(session.pendingShellProgress)) session.pendingShellProgress = session.pendingShellProgress.filter((item) => item?.id !== entry.id)
     this.store.save(session)
     // Engine-level delivery does not depend on the old run's already-closed
     // event queue, so the running-job chip always clears.
@@ -669,6 +685,87 @@ class Engine {
     this._emit(id, { type: "shell.waiting", shell, prompt: entry.prompt, durable: true })
     this._scheduleShellResume(id)
     return entry
+  }
+
+  /**
+   * Keep a bounded progress snapshot for a long-running background job. It is
+   * attached at the next safe model boundary (or the next user prompt), so the
+   * agent learns what the terminal is doing without the user copying output.
+   */
+  recordShellProgress(id, shell, output) {
+    if (!shell || !shell.id || !shell.backgrounded || shell.status !== "running") return null
+    let session
+    try { session = this.store.get(id) } catch { return null }
+    const entry = {
+      id: shell.id,
+      command: String(shell.command || "").slice(0, 4000),
+      description: String(shell.description || "").slice(0, 500),
+      intent: String(shell.intent || "").slice(0, 2000),
+      started: shell.started || 0,
+      output: String(output || "").slice(-12000),
+      captured: Date.now(),
+    }
+    const pending = Array.isArray(session.pendingShellProgress) ? session.pendingShellProgress : []
+    session.pendingShellProgress = [...pending.filter((item) => item && item.id !== entry.id), entry].slice(-8)
+    try { this.store.save(session) } catch {}
+    return entry
+  }
+
+  _takeShellProgressParts(session) {
+    const pending = Array.isArray(session.pendingShellProgress) ? session.pendingShellProgress : []
+    if (!pending.length) return []
+    session.pendingShellProgress = []
+    return pending.map((item) => {
+      const elapsed = item.started ? Math.max(0, Math.round((Date.now() - item.started) / 1000)) : 0
+      return {
+        type: "text",
+        agentOnly: true,
+        shellProgressId: item.id,
+        text: [
+          `[Background shell progress: ${item.id}]`,
+          `Requested work: ${item.intent || item.description || "Run the background command and use its result."}`,
+          `Command: ${item.command || "(unknown)"}`,
+          `Still running${elapsed ? ` (${Math.floor(elapsed / 60)}m ${elapsed % 60}s)` : ""}.`,
+          "Recent terminal output:",
+          item.output || "(no output yet)",
+          "Continue with independent work; the completion notice will follow. Never ask the user to copy terminal output - use shellOutput when you need the current stream.",
+        ].join("\n"),
+      }
+    })
+  }
+
+  /** Compact live snapshot of running shells, attached to every real user prompt. */
+  _runningShellParts(session) {
+    const pendingIDs = new Set([
+      ...(session.pendingShellResults || []).map((item) => item?.id),
+      ...(session.pendingShellPrompts || []).map((item) => item?.id),
+    ])
+    let shells = []
+    try { shells = jobs.list(session.id) } catch { shells = [] }
+    shells = shells
+      .filter((shell) => shell && shell.status === "running" && !pendingIDs.has(shell.id))
+      .slice(-3)
+    if (!shells.length) return []
+    return shells.map((shell) => {
+      const elapsed = shell.started ? Math.max(0, Math.round((Date.now() - shell.started) / 1000)) : 0
+      const read = jobs.readOutput(shell.id, { max: 6000 })
+      return {
+        type: "text",
+        agentOnly: true,
+        shellSnapshotId: shell.id,
+        text: [
+          `[Live terminal: ${shell.id}]`,
+          `Requested work: ${shell.intent || shell.description || "(not recorded)"}`,
+          `Command: ${shell.command || "(unknown)"}`,
+          `Status: running${shell.backgrounded ? ", background" : ""}${elapsed ? `, ${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : ""}${shell.waitingForInput ? ", waiting for input" : ""}`,
+          "Recent terminal output:",
+          (read && read.text) || "(no output yet)",
+          shell.waitingForInput
+            ? "This process is waiting for input. Use shellInput with this shell ID; never enter secrets."
+            : "Use shellOutput with this shell ID for more, or wait for the completion notice.",
+        ].join("\n"),
+      }
+    })
   }
 
   _takeShellResultParts(session) {
@@ -783,7 +880,12 @@ class Engine {
       // but are not shown as a chat bubble.
       const parts = opts.agentOnly ? [{ type: "text", text: String(text), agentOnly: true }] : [{ type: "text", text: String(text) }]
       if (recipe) parts.push({ type: "text", text: recipe.text, agentOnly: true, recipe: recipe.id })
-      parts.unshift(...this._takeShellResultParts(session), ...this._takeSubagentResultParts(session))
+      // A real user prompt gets a fresh live snapshot of every running shell, so
+      // the agent sees the terminal state even if the user did not paste output.
+      // The fresh snapshot supersedes stale automatic progress notices.
+      const running = opts.agentOnly ? [] : this._runningShellParts(session)
+      if (!opts.agentOnly) session.pendingShellProgress = []
+      parts.unshift(...running, ...this._takeShellResultParts(session), ...this._takeSubagentResultParts(session))
       // image files arrive as { mime, data } (base64) and become canonical image parts
       for (const f of Array.isArray(opts.files) ? opts.files : []) {
         if (f && f.data && String(f.mime || "").startsWith("image/")) parts.push({ type: "image", mime: f.mime, data: f.data })
@@ -1002,6 +1104,7 @@ class Engine {
       summaryApiKey: summary.apiKey,
       summaryWarning: summary.warning,
       takePendingResults: () => this._takeShellResultParts(session),
+      takePendingProgress: () => this._takeShellProgressParts(session),
     })
       .catch((e) => {
         emit({

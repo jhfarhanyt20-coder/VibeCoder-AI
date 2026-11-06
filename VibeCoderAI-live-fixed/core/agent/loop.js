@@ -142,7 +142,7 @@ function splitCommand(cmd) {
   return out.length ? out : [s.trim()]
 }
 
-async function runLoop({ session, store, profile, apiKey, emit, signal, askPermission, agentName, agent = null, extraSystem, maxSteps = 100, extraTools = () => [], waitExtraTools = null, isOrphan = () => false, engine = null, compactionConfig = null, summaryProfile = null, summaryApiKey = "", summaryWarning = "", takePendingResults = null }) {
+async function runLoop({ session, store, profile, apiKey, emit, signal, askPermission, agentName, agent = null, extraSystem, maxSteps = 100, extraTools = () => [], waitExtraTools = null, isOrphan = () => false, engine = null, compactionConfig = null, summaryProfile = null, summaryApiKey = "", summaryWarning = "", takePendingResults = null, takePendingProgress = null }) {
   // V-07: an agent definition can cap the run. An explicit maxSteps wins.
   if (agent && Number(agent.steps) > 0 && maxSteps === 100) maxSteps = Math.floor(Number(agent.steps))
   const agentSystem = agent && typeof agent.system === "string" ? agent.system.trim() : ""
@@ -302,7 +302,10 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
     // Attach its durable intent/result at the next safe model boundary so the
     // agent cannot forget what the command was for or start dependent work
     // without seeing its exit status and output.
-    const pendingResults = typeof takePendingResults === "function" ? takePendingResults() : []
+    const pendingResults = [
+      ...(typeof takePendingProgress === "function" ? takePendingProgress() : []),
+      ...(typeof takePendingResults === "function" ? takePendingResults() : []),
+    ]
     if (pendingResults.length) {
       const last = session.messages[session.messages.length - 1]
       if (last?.role === "user" && (last.parts || []).some((part) => part.type === "tool_result")) last.parts.push(...pendingResults)

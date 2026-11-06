@@ -36,7 +36,7 @@ additive হবে। ডিফল্টে পুরোনো behaviour বদ�
 
 ```text
 npm test
-core-test.mjs                 115 passed
+core-test.mjs                 117 passed
 agents-test.mjs                11 passed
 skills-test.mjs                 8 passed
 harness-test.mjs               23 passed
@@ -291,6 +291,21 @@ context rows now receive normalized provider values without changing the UI.
 Background jobs retain why they ran and cannot silently finish in an expired
 queue; interactive prompts reach the agent while the process is still alive.
 
+### Phase 13 — Agent-Readable Terminal Stream
+- [x] `shellList` shows every running/recent shell with state and exact command
+- [x] `shellOutput` reads live output/status, with incremental `sinceBytes`
+- [x] every real user prompt carries a bounded live snapshot of running shells
+- [x] long background jobs report bounded progress at safe model boundaries
+- [x] blocking foreground commands waiting for input move to the background
+- [x] returned tool result includes the terminal tail that caused the wait
+- [x] agent is instructed to read the stream itself, never ask for copy/paste
+- [x] secrets still require the user; no auto-answer of passwords/codes
+- [x] core/UI regression tests
+
+**Phase 13 result:** done (+2 core tests; full suite green). The terminal stream
+is now part of the model context: no user copy/paste is required to explain a
+stuck or long-running process. The UI is unchanged.
+
 ---
 
 ## 6. Priority
@@ -331,6 +346,8 @@ Thin vertical slice first:
 | 2026-11-05 | Release | `v0.3.2` live shell + project diagnostics | CI green; installer + `latest.yml` + blockmap uploaded |
 | 2026-11-05 | Phase 12 | detailed context usage + durable background completion/input prompts | +2 core tests; full suite green |
 | 2026-11-05 | Release | `v0.3.3` usage details + durable/intelligent background shell results | CI green; installer + `latest.yml` + blockmap uploaded |
+| 2026-11-06 | Phase 13 | agent-readable live terminal stream + blocking-prompt takeover | +2 core tests; full suite green |
+| 2026-11-06 | Release | `v0.3.4` terminal output reaches the agent without copy/paste | CI green; installer + `latest.yml` + blockmap uploaded |
 
 ---
 

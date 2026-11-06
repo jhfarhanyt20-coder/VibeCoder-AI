@@ -95,6 +95,16 @@ delivered to the agent before process completion. The agent can send ordinary
 input through `shellInput`; passwords, passphrases, API keys and verification
 codes are never answered automatically and must be requested from the user.
 
+The terminal stream is part of the agent context, not only the UI. `shellList`
+lists running/recent jobs and `shellOutput` returns a bounded live tail plus an
+incremental byte offset. Every real user prompt also carries a snapshot of the
+running shells (intent, command, elapsed time, waiting state and recent output),
+and long jobs report bounded progress at safe model boundaries. A blocking
+foreground command that stays at an input prompt is moved to the background after
+a short quiet period, so the tool call returns with the terminal tail instead of
+hanging until the run is stopped. The agent is instructed to read this stream
+itself and never to ask the user to copy terminal output.
+
 ## Context usage
 
 Provider-reported token details use one canonical shape: uncached input,

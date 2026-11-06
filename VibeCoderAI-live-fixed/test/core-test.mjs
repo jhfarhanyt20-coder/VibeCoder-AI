@@ -1199,6 +1199,96 @@ test("background shell input prompt reaches the agent before completion", async 
   }
 })
 
+test("running terminal output reaches the agent automatically and through shellOutput", async () => {
+  let started = false
+  const { m, vibe, s } = await setup(({ body }) => {
+    const wire = JSON.stringify(body.messages || [])
+    if (!started) {
+      started = true
+      return {
+        chunks: [
+          ...chat.tool("bg-live-1", "bash", {
+            command: `node -e "console.log('STEP_ONE');setTimeout(function(){console.log('STEP_TWO')},300);setTimeout(function(){},6000)"`,
+            description: "Start the long process and follow its terminal output",
+            background: true,
+          }),
+          ...chat.end(20, 2, "tool_calls"),
+        ],
+      }
+    }
+    if (/What is the terminal doing\?/.test(wire) && !/"name":"shellOutput"/.test(wire)) {
+      assert.match(wire, /Live terminal: sh_[0-9a-f]+/, "the next user prompt carries a live terminal snapshot")
+      assert.match(wire, /STEP_ONE/, "the snapshot contains real process output")
+      const id = /Live terminal: (sh_[0-9a-f]+)/.exec(wire)[1]
+      return { chunks: [...chat.tool("read-live-1", "shellOutput", { shellId: id }), ...chat.end(30, 2, "tool_calls")] }
+    }
+    if (/"name":"shellOutput"/.test(wire)) {
+      assert.match(wire, /STEP_TWO/, "shellOutput returns the current terminal stream")
+      return { chunks: [...chat.text("Read STEP_ONE and STEP_TWO directly from the terminal stream."), ...chat.end(40, 5)] }
+    }
+    return { chunks: [...chat.text("Background process started."), ...chat.end(20, 3)] }
+  })
+  const off = vibe.event.subscribe(() => {})
+  try {
+    await collect(vibe.session.prompt(s.id, "Start the long process in the background."))
+    await new Promise((resolve) => setTimeout(resolve, 700))
+    await collect(vibe.session.prompt(s.id, "What is the terminal doing?"))
+    const session = vibe.engine.getSession(s.id)
+    assert.ok(session.messages.some((message) => (message.parts || []).some((part) => part.shellSnapshotId && /STEP_ONE/.test(part.text || ""))), "the live snapshot is durable in history")
+    const shells = vibe.engine.listShells(s.id)
+    for (const shell of shells) if (shell.status === "running") vibe.engine.cancelShell(s.id, shell.id)
+  } finally {
+    off()
+    m.close()
+  }
+})
+
+test("a blocking command waiting for a key is moved to the background with its output", async () => {
+  const { m, vibe, s } = await setup(({ n, body }) => {
+    const wire = JSON.stringify(body.messages || [])
+    if (n === 0) return {
+      chunks: [
+        ...chat.tool("fg-wait-1", "bash", {
+          command: `node -e "console.log('BUILD OK main.exe');console.log('Press any key to continue . . .');process.stdin.once('data',function(){console.log('AFTER_KEY');process.exit(0)})"`,
+          description: "Run the build script and handle its final prompt",
+        }),
+        ...chat.end(20, 2, "tool_calls"),
+      ],
+    }
+    if (n === 1) {
+      assert.match(wire, /waiting for input/i, "the blocking tool returns the live prompt instead of hanging")
+      assert.match(wire, /BUILD OK main\.exe/, "the partial terminal output comes back with the prompt")
+      const waiting = /Background shell needs input: (sh_[0-9a-f]+)/.exec(wire) || /Live terminal: (sh_[0-9a-f]+)/.exec(wire)
+      const id = waiting ? waiting[1] : null
+      if (id && !/"name":"shellInput"/.test(wire)) {
+        return { chunks: [...chat.tool("fg-send-enter-1", "shellInput", { shellId: id, text: "", enter: true }), ...chat.end(30, 2, "tool_calls")] }
+      }
+      return { chunks: [...chat.text("Waiting for the process to finish."), ...chat.end(30, 4)] }
+    }
+    if (/Background shell result/.test(wire) && /AFTER_KEY/.test(wire)) {
+      return { chunks: [...chat.text("The build script exited after AFTER_KEY."), ...chat.end(40, 6)] }
+    }
+    return { chunks: [...chat.text("Still waiting for the durable result."), ...chat.end(40, 4)] }
+  })
+  let resolveFinished
+  const finished = new Promise((resolve) => { resolveFinished = resolve })
+  const off = vibe.event.subscribe((event) => {
+    if (event.type === "text.delta" && /exited after AFTER_KEY/.test(event.delta || "")) resolveFinished(event)
+  })
+  try {
+    await collect(vibe.session.prompt(s.id, "Run the build script and do not finish while it waits for input."))
+    await Promise.race([
+      finished,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("a blocking prompt was never surfaced to the agent")), 12000)),
+    ])
+    const session = vibe.engine.getSession(s.id)
+    assert.ok(session.messages.some((message) => (message.parts || []).some((part) => part.shellResultId && /AFTER_KEY/.test(part.text || ""))), "the final output stays durable")
+  } finally {
+    off()
+    m.close()
+  }
+})
+
 test("engine: notice/backgroundSession/cancelShell drive the shell job registry", async () => {
   const { m, vibe, s } = await setup(() => ({ chunks: [...chat.text("ok"), ...chat.end(1, 1)] }))
   try {

@@ -185,6 +185,9 @@ const bash = {
       onWaiting: durableCompletion && typeof c.engine.recordShellWaiting === "function"
         ? (info, prompt, output) => c.engine.recordShellWaiting(c.session?.id, info, prompt, output)
         : null,
+      onProgress: durableCompletion && typeof c.engine.recordShellProgress === "function"
+        ? (info, output) => c.engine.recordShellProgress(c.session?.id, info, output)
+        : null,
     })
     const ms = a.timeout === 0 ? 0 : Math.min(a.timeout || 120000, 600000)
     // Every shell is announced when it starts (background or blocking), so the
@@ -196,11 +199,21 @@ const bash = {
       "Repeatedly sleeping and reading or searching the output file is polling, not useful work. " +
       "You may read the current output if it lets you do useful work now, but do not repeatedly check it while waiting for the command to finish. " +
       "Keep working on anything that does not depend on the result. " +
-      "If you have nothing else to do, end your response; you will be resumed automatically when the command finishes."
-    const backgroundText = (why) =>
-      `${why ? why + "\n\n" : ""}` +
-      `Command moved to the background (shell ID: ${h.id}).\nOutput is streaming to: ${h.file}\n\n` +
-      bgNotice
+      "If you have nothing else to do, end your response; you will be resumed automatically when the command finishes. " +
+      "The terminal stream belongs to you: use shellOutput / shellList to inspect it yourself, and never ask the user to copy terminal output."
+    const backgroundText = (why) => {
+      const live = h.info()
+      const read = jobs.readOutput(h.id, { max: 12000 })
+      const tail = read && read.text ? read.text.trimEnd() : ""
+      const waiting = live.waitingForInput
+        ? `The process is waiting for input. Use shellInput with this shell ID. Never enter passwords, API keys or verification codes yourself - ask the user.`
+        : ""
+      return `${why ? why + "\n\n" : ""}` +
+        `Command moved to the background (shell ID: ${h.id}).\nOutput is streaming to: ${h.file}\n\n` +
+        (tail ? `Live output so far:\n${tail}\n\n` : "") +
+        (waiting ? `${waiting}\n\n` : "") +
+        bgNotice
+    }
 
     return new Promise((resolve) => {
       let settled = false
@@ -289,6 +302,80 @@ const shellInput = {
     if (!c.engine || typeof c.engine.shellInput !== "function") throw new Error("Live shell input is unavailable in this context.")
     const result = c.engine.shellInput(c.session && c.session.id, a.shellId, a.text || "", { newline: a.enter !== false, eof: a.eof === true })
     return `Sent ${result.bytes} byte${result.bytes === 1 ? "" : "s"} to ${a.shellId}${result.eof ? " and closed stdin" : ""}.`
+  },
+}
+
+function describeShell(shell) {
+  const elapsed = shell?.started ? Math.max(0, Math.round((Date.now() - shell.started) / 1000)) : 0
+  const when = elapsed ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : "just now"
+  const state = shell?.status === "running"
+    ? `running${shell.backgrounded ? ", background" : ""}${shell.waitingForInput ? ", waiting for input" : ""}`
+    : `${shell?.status || "unknown"}${shell?.exit !== undefined ? `, exit ${shell.exit}` : ""}`
+  return `${shell?.id || "?"} - ${state} - ${when} - ${shell?.command || "(unknown command)"}`
+}
+
+const shellList = {
+  name: "shellList",
+  description:
+    "List the shell jobs of this session (running first, then recently finished). " +
+    "Each row shows the shell ID, live state, elapsed time and exact command. " +
+    "Use it before shellOutput/shellInput when you do not know the shell ID, and whenever the user asks what is running.",
+  parameters: {
+    type: "object",
+    properties: {
+      includeFinished: { type: "boolean", description: "Include recently finished jobs (default true)." },
+    },
+  },
+  perm: () => ({ tool: "read", subject: "shell:list" }),
+  paths: () => [],
+  run(a, c) {
+    if (!c.engine || typeof c.engine.listShells !== "function") throw new Error("Shell jobs are unavailable in this context.")
+    let list = c.engine.listShells(c.session && c.session.id) || []
+    if (a.includeFinished === false) list = list.filter((shell) => shell.status === "running")
+    if (!list.length) return "No shell jobs for this session."
+    list = [...list].sort((x, y) => {
+      if (x.status === "running" && y.status !== "running") return -1
+      if (y.status === "running" && x.status !== "running") return 1
+      return (y.started || 0) - (x.started || 0)
+    })
+    return list.map(describeShell).join("\n")
+  },
+}
+
+const shellOutput = {
+  name: "shellOutput",
+  description:
+    "Read the live output and exact status of a shell job started by bash. " +
+    "This is the same terminal stream the user sees, captured automatically: never ask the user to copy terminal output. " +
+    "Use it when a background job is slow or looks stuck, before answering questions about it, and to follow a long build. " +
+    "For incremental reads pass the returned `next` byte offset as sinceBytes. " +
+    "This is a read, not a poll loop: call it when you need the current state, then wait for the completion notice.",
+  parameters: {
+    type: "object",
+    properties: {
+      shellId: { type: "string", description: "Shell ID from bash or shellList" },
+      max: { type: "integer", description: "Maximum characters to return (default 12000, max 30000)" },
+      sinceBytes: { type: "integer", description: "Only return output after this byte offset (from a previous read's next value)" },
+    },
+    required: ["shellId"],
+  },
+  perm: (a) => ({ tool: "read", subject: `shell:${a.shellId}` }),
+  paths: () => [],
+  run(a, c) {
+    if (!c.engine || typeof c.engine.readShellOutput !== "function") throw new Error("Shell output is unavailable in this context.")
+    const result = c.engine.readShellOutput(c.session && c.session.id, a.shellId, {
+      max: a.max,
+      since: a.sinceBytes,
+    })
+    const header = [
+      `Shell: ${describeShell(result.shell)}`,
+      `Bytes: ${result.bytes}${a.sinceBytes != null ? ` (read from ${a.sinceBytes})` : ""}`,
+      `Next: shellOutput({ shellId: "${a.shellId}", sinceBytes: ${result.offset} })`,
+      result.shell?.waitingForInput ? "This process is waiting for input. Use shellInput; never enter secrets." : "",
+    ].filter(Boolean).join("\n")
+    const body = result.text ? result.text : "(no new output)"
+    const truncated = result.truncated ? "\n[... more output available; call again with the Next offset]" : ""
+    return `${header}\n\n${body}${truncated}`
   },
 }
 
@@ -1163,7 +1250,7 @@ const apply_patch = {
   },
 }
 
-const ALL = [read, write, edit, multiedit, apply_patch, list, bash, shellInput, diagnostics, grep, glob, todowrite, question, webfetch, playbook, skill, memory, subagentResult, subagentStatus, subagentStop]
+const ALL = [read, write, edit, multiedit, apply_patch, list, bash, shellList, shellOutput, shellInput, diagnostics, grep, glob, todowrite, question, webfetch, playbook, skill, memory, subagentResult, subagentStatus, subagentStop]
 
 // Browser tools (optional - require electron backend)
 try {

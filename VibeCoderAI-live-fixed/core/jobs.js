@@ -55,6 +55,8 @@ const EXITED_LIMIT = 25 // settled jobs kept for status/output lookups
 const LIVE_OUTPUT_LIMIT = 16 * 1024 // one renderer event can never grow without bound
 const LIVE_OUTPUT_DELAY = 40 // coalesce noisy processes without making output feel delayed
 const INPUT_LIMIT = 64 * 1024 // one stdin write; prevents accidental unbounded IPC payloads
+const PROGRESS_INTERVAL = 90 * 1000 // long-running jobs report progress at most this often
+const PROMPT_QUIET = 1500 // a blocking job is moved to the background only after its prompt stays put
 const jobs = new Map()
 
 function inputPrompt(output) {
@@ -112,7 +114,7 @@ function trimHistory() {
  * `done` resolves with the final info; `backgrounded` resolves as soon as the
  * job is moved to the background (it does not stop the process).
  */
-function createShell({ sessionID, command, cwd, background = false, env, emit, toolCallId, description, intent, onSettled, onWaiting } = {}) {
+function createShell({ sessionID, command, cwd, background = false, env, emit, toolCallId, description, intent, onSettled, onWaiting, onProgress } = {}) {
   const id = newId("sh")
   const win = process.platform === "win32"
   const file = path.join(shellDir(sessionID), id + ".out")
@@ -138,6 +140,9 @@ function createShell({ sessionID, command, cwd, background = false, env, emit, t
     intent: String(intent || "").slice(0, 2000),
     onSettled: typeof onSettled === "function" ? onSettled : null,
     onWaiting: typeof onWaiting === "function" ? onWaiting : null,
+    onProgress: typeof onProgress === "function" ? onProgress : null,
+    lastProgress: 0,
+    autoBackgroundTimer: null,
     waitingForInput: false,
     waitingPrompt: "",
     waitingUiSignature: "",
@@ -169,11 +174,37 @@ function createShell({ sessionID, command, cwd, background = false, env, emit, t
       try { job.onWaiting(info(), prompt, clipTail(job.output, 30000)) } catch {}
       return
     }
-    if (job.waitingUiSignature === signature || !job.emit) return
-    job.waitingUiSignature = signature
-    try { job.emit({ type: "shell.waiting", shell: info(), prompt }) } catch {}
+    if (job.waitingUiSignature !== signature && job.emit) {
+      job.waitingUiSignature = signature
+      try { job.emit({ type: "shell.waiting", shell: info(), prompt }) } catch {}
+    }
+    // A blocking command that sits at "Press any key", a Y/N question or a
+    // credential prompt can never finish on its own. Move it to the background
+    // once the prompt has stayed quiet, so the tool call returns and the agent
+    // can read the output and answer with shellInput.
+    if (job.backgrounded || job.autoBackgroundTimer || job.status !== "running") return
+    job.autoBackgroundTimer = setTimeout(() => {
+      job.autoBackgroundTimer = null
+      if (job.status !== "running" || job.backgrounded) return
+      if (!inputPrompt(job.output)) return
+      job.backgrounded = true
+      if (typeof job.backgroundResolve === "function") job.backgroundResolve()
+      notifyWaiting()
+    }, PROMPT_QUIET)
+    if (typeof job.autoBackgroundTimer.unref === "function") job.autoBackgroundTimer.unref()
   }
   job.notifyWaiting = notifyWaiting
+
+  // Long background jobs report their live tail periodically so the agent can
+  // understand what the process is doing without the user copying a terminal.
+  const maybeProgress = () => {
+    if (!job.backgrounded || !job.onProgress || job.status !== "running") return
+    const now = Date.now()
+    if (!job.lastProgress) job.lastProgress = job.started
+    if (now - job.lastProgress < PROGRESS_INTERVAL || !job.output) return
+    job.lastProgress = now
+    try { job.onProgress(info(), clipTail(job.output, 12000)) } catch {}
+  }
 
   // Let background()/backgroundSession() (called by id) wake the tool's race.
   job.backgroundResolve = () => {
@@ -192,6 +223,8 @@ function createShell({ sessionID, command, cwd, background = false, env, emit, t
   const settle = (status, code, signal) => {
     if (settled) return
     settled = true
+    if (job.autoBackgroundTimer) clearTimeout(job.autoBackgroundTimer)
+    job.autoBackgroundTimer = null
     flushLive()
     job.status = status
     job.exit = code == null ? undefined : code
@@ -251,6 +284,7 @@ function createShell({ sessionID, command, cwd, background = false, env, emit, t
       }
     }
     notifyWaiting()
+    maybeProgress()
   }
   child.stdout.on("data", add)
   child.stderr.on("data", add)
@@ -372,6 +406,44 @@ function output(id, max = 30000) {
 }
 
 /**
+ * Read a job's live output, optionally only the bytes after `since`.
+ * The in-memory tail covers normal reads; `since` falls back to the output
+ * file so the agent can follow a long build without re-reading everything.
+ */
+function readOutput(id, { max = 12000, since = null } = {}) {
+  const job = jobs.get(id)
+  if (!job) return undefined
+  const limit = Math.max(1, Math.min(Number(max) || 12000, 30000))
+  if (since != null && Number.isFinite(Number(since))) {
+    const start = Math.max(0, Math.floor(Number(since)))
+    try {
+      const fd = fs.openSync(job.file, "r")
+      try {
+        const stat = fs.fstatSync(fd)
+        if (start >= stat.size) return { text: "", bytes: stat.size, offset: stat.size, truncated: false }
+        const len = Math.min(limit, stat.size - start)
+        const buf = Buffer.alloc(len)
+        fs.readSync(fd, buf, 0, len, start)
+        const end = start + len
+        return {
+          text: buf.toString("utf8"),
+          bytes: stat.size,
+          offset: end,
+          truncated: end < stat.size,
+        }
+      } finally {
+        fs.closeSync(fd)
+      }
+    } catch {
+      // The file can be briefly unavailable on Windows; the memory tail is
+      // still correct for the model, it just loses the byte offset.
+      return { text: clipTail(job.output, limit), bytes: job.size, offset: job.size, truncated: false }
+    }
+  }
+  return { text: clipTail(job.output, limit), bytes: job.size, offset: job.size, truncated: false }
+}
+
+/**
  * Send bounded text to a running job's stdin. This is a safe pipe-based
  * interaction layer, not a PTY: programs that require terminal cursor control
  * or raw mode still need a future audited PTY integration.
@@ -389,6 +461,8 @@ function input(id, text = "", { newline = true, eof = false } = {}) {
   if (newline && !/[\r\n]$/.test(value)) value += "\n"
   const bytes = Buffer.byteLength(value)
   if (value) job.stdin.write(value)
+  if (job.autoBackgroundTimer) clearTimeout(job.autoBackgroundTimer)
+  job.autoBackgroundTimer = null
   job.waitingForInput = false
   job.waitingPrompt = ""
   job.waitingUiSignature = ""
@@ -442,6 +516,7 @@ module.exports = {
   get,
   list,
   output,
+  readOutput,
   input,
   cancel,
   cancelSession,

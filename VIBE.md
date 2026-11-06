@@ -1,9 +1,9 @@
 # VibeCoder AI — Project Rules (read this first)
 
-Last updated: 2026-11-05
-Current release: **0.3.3** (tag `v0.3.3`, published 2026-11-05)
-Release assets verified: `VibeCoderAI-v2-0.3.3.exe`,
-`VibeCoderAI-v2-0.3.3.exe.blockmap`, `latest.yml` (`version: 0.3.3`)
+Last updated: 2026-11-06
+Current release: **0.3.4** (tag `v0.3.4`, published 2026-11-06)
+Release assets verified: `VibeCoderAI-v2-0.3.4.exe`,
+`VibeCoderAI-v2-0.3.4.exe.blockmap`, `latest.yml` (`version: 0.3.4`)
 Repository: https://github.com/jhfarhanyt20-coder/VibeCoder-AI — **PUBLIC**
 Application directory: `VibeCoderAI-live-fixed/`
 License: proprietary, all rights reserved. See `LICENSE`.
@@ -41,7 +41,7 @@ same repository. Therefore:
    entries of `VibeCoderAI-live-fixed/package-lock.json`. Keep them identical.
 2. For every release:
    - increment **only the patch number by exactly one** (for example
-     `0.3.1` → `0.3.2` → `0.3.3`). Do not skip a patch and do not bump the
+     `0.3.1` → `0.3.2` → `0.3.3` → `0.3.4`). Do not skip a patch and do not bump the
      minor/major number unless the user explicitly changes this rule;
    - run `npm test` from `VibeCoderAI-live-fixed`;
    - commit the intended files and push `master`;
@@ -78,6 +78,12 @@ same repository. Therefore:
   Y/N, password/code prompts) must be surfaced to the agent before completion.
   The agent may use `shellInput` for non-secret answers, but must ask the user
   for every password, passphrase, API key or verification code.
+- The terminal stream belongs to the agent, not just the UI. `shellList` and
+  `shellOutput` expose live output/status, every real user prompt carries a
+  bounded snapshot of running shells, and long jobs report progress. The agent
+  must read that stream itself and must never ask the user to copy terminal
+  output. A blocking foreground command that waits for input is moved to the
+  background so the tool call can return with its output.
 - Context usage keeps provider-reported reasoning/cache categories separate and
   avoids counting them once inside input/output and again as detail fields.
 

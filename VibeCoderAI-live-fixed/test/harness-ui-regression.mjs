@@ -9,13 +9,74 @@ const read = (file) => fs.readFileSync(path.join(root, file), "utf8")
 const html = read("renderer/index.html")
 const app = read("renderer/app.js")
 const css = read("renderer/theme.css")
+const skin = read("renderer/skin.css")
+const obsidian = read("renderer/obsidian.css")
 const backend = read("electron/backend.cjs")
 const preload = read("electron/preload.cjs")
 const messages = read("electron/messages.cjs")
+const main = read("electron/main.cjs")
+const themeBoot = read("renderer/theme.js")
 
 // CSP is style-src 'self': inline style attributes are blocked by the renderer.
 assert.doesNotMatch(html, /\sstyle=/, "renderer HTML must not use inline style attributes")
 assert.match(html, /<link rel="stylesheet" href="skin\.css" \/>/)
+assert.match(skin, /consistent application surfaces and settings finish/)
+assert.match(html, /<link rel="stylesheet" href="obsidian\.css" \/>/)
+assert.ok(html.indexOf('href="obsidian.css"') > html.indexOf('href="skin.css"'), "Obsidian must load after the base skin")
+assert.match(obsidian, /Obsidian production skin/)
+for (const selector of ["#btn-new-task", ".settings-nav", ".ctx-menu", ".dlg-box", ".modal", ".file-row"]) {
+  assert.ok(obsidian.includes(`html[data-theme="obsidian"] ${selector}`), `Obsidian is missing scoped ${selector}`)
+}
+assert.doesNotMatch(obsidian, /(^|\n)\s*:root\s*[,\{]/, "Obsidian must not override the original themes")
+for (const theme of ["obsidian", "dark", "amoled", "light", "system"]) {
+  assert.match(html, new RegExp(`<option value=["']${theme}["']`), `missing Appearance option ${theme}`)
+}
+assert.match(app, /const THEMES = \[[^\]]*["']obsidian["'][^\]]*["']dark["'][^\]]*["']amoled["'][^\]]*["']light["'][^\]]*["']system["'][^\]]*\]/)
+assert.match(themeBoot, /resolved === ["']obsidian["']/)
+assert.match(main, /nativeImage\.createFromDataURL\(/, "Windows title-bar icon must use a transparent image")
+assert.match(app, /tone === ["']warning["']/)
+assert.match(app, /Saved, but this format may not work[\s\S]*tone: ["']warning["']/)
+assert.match(css, /\.error-banner\[data-tone=["']warning["']\]/)
+assert.match(obsidian, /\.error-banner\[data-tone=\"warning\"\]/)
+assert.match(app, /function normalizedFontPx\(/)
+assert.match(app, /raw < 4 \? raw \* 14 : raw/)
+assert.match(app, /localStorage\.setItem\(FONT_KEY, String\(n\)\)/)
+assert.match(app, /--range-pct/)
+assert.match(themeBoot, /savedFont < 4 \? savedFont \* 14 : savedFont/)
+assert.match(css, /--range-pct/)
+assert.match(css, /\.settings-page input:not\(\[type="checkbox"\]\):not\(\[type="radio"\]\):not\(\[type="range"\]\)/)
+assert.match(skin, /\.settings-page input:not\(\[type="checkbox"\]\):not\(\[type="radio"\]\):not\(\[type="range"\]\)/)
+for (const label of [
+  "General", "App Updates", "Appearance", "Model settings", "Browser Use",
+  "Computer Use", "Keyboard Shortcuts", "Memory", "Subagents", "Marketplace",
+  "Plugins", "MCP Servers", "Skills", "Commands", "Hooks", "Usage", "Privacy",
+]) {
+  assert.ok(html.includes(`>${label}<`) || html.includes(`> ${label}<`), `Settings navigation lost ${label}`)
+}
+
+// Product UI copy is English-only: no Bangla script and no Banglish strings.
+const banglaScript = /[\u0980-\u09FF]/
+const banglishCopy = /\b(notun|naam|ashbe|jayota|nijei|shudhu|pathate|parlam|banaye|dekhai|ekhane|korbe|korle|hobe|theke|kichu|kono|apni|tumi|mone|gulo|jabe|dekhao)\b/i
+for (const [file, source] of [["renderer/index.html", html], ["renderer/app.js", app]]) {
+  assert.doesNotMatch(source, banglaScript, `${file} must not contain Bangla UI copy`)
+  assert.doesNotMatch(source, banglishCopy, `${file} must not contain Banglish UI copy`)
+}
+
+// The V brand mark collapses the sidebar and leaves an accessible restore
+// button in the main pane. The preference survives a restart.
+for (const id of ["app-sidebar", "btn-sidebar-toggle", "btn-sidebar-restore"]) {
+  assert.match(html, new RegExp(`id=["']${id}["']`), `missing sidebar control ${id}`)
+}
+assert.match(app, /const SIDEBAR_HIDDEN_KEY = ["']vibe\.sidebarHidden["']/)
+assert.match(app, /classList\.toggle\(["']sidebar-hidden["']/)
+assert.match(app, /btn-sidebar-toggle["']\)\?\.addEventListener\(["']click["']/)
+assert.match(app, /btn-sidebar-restore["']\)\?\.addEventListener\(["']click["']/)
+assert.match(css, /\.shell\.sidebar-hidden \.sidebar/)
+assert.match(css, /\.sidebar-restore\[hidden\]/)
+assert.match(html, /id=["']jump-live["']/)
+assert.match(app, /\$\(["']messages["']\)\.addEventListener\(["']scroll["'], updateJumpButton/)
+assert.match(app, /\$\(["']main["']\)\?\.addEventListener\(["']wheel["']/)
+assert.match(app, /event\.preventDefault\(\)\s*\n\s*updateJumpButton\(\)/)
 for (const id of ["btn-rewind", "rewind-menu", "rewind-summary", "rewind-files", "rewind-step", "rewind-turn", "rewind-redo"]) {
   assert.match(html, new RegExp(`id=["']${id}["']`), `missing Rewind UI element ${id}`)
 }
@@ -60,6 +121,11 @@ assert.match(app, /data\.source === "shell-result"/)
 assert.match(app, /const waitingForShell =/)
 assert.match(app, /async function sendRunningShellInput/)
 assert.match(app, /type === "session\.shell\.output"/)
+assert.match(app, /function startShellJobSync\(/, "background shell snapshots must reconcile after missed renderer events")
+assert.match(app, /Number\(job\.outputSize \|\| 0\)/, "open background console panels must refresh from reconciled output snapshots")
+assert.match(app, /shellSyncTimer = setInterval/, "background shell reconciliation must run periodically")
+assert.match(app, /applyFinalShellOutput\(sh, finalOutput\)/, "completed shell snapshots must repair missing live output deltas")
+assert.match(app, /const missedStart = !job && !!sh\.id/, "output events must reconstruct a shell row if the start event was missed")
 assert.match(app, /vibe\.shellInput\(/)
 assert.match(css, /\.bji-output/)
 assert.match(css, /\.bji-input-row/)

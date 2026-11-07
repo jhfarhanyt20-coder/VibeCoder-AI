@@ -9,12 +9,15 @@
       var light = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
       resolved = light ? "light" : "dark"
     }
-    if (resolved === "amoled" || resolved === "light" || resolved === "dark") {
+    if (resolved === "obsidian" || resolved === "amoled" || resolved === "light" || resolved === "dark") {
       document.documentElement.dataset.theme = resolved
     }
-    var scale = localStorage.getItem("vibecoder.fontScale")
-    if (scale && Number(scale) > 0) {
-      document.documentElement.style.setProperty("--fs-scale", String(scale))
+    var savedFont = Number(localStorage.getItem("vibecoder.fontScale"))
+    if (Number.isFinite(savedFont) && savedFont > 0) {
+      // Accept both the old ratio format and the new displayed-pixel format.
+      var px = savedFont < 4 ? savedFont * 14 : savedFont
+      px = Math.min(18, Math.max(12, Math.round(px)))
+      document.documentElement.style.setProperty("--fs-scale", String(px / 14))
     }
   } catch (e) {
     /* the default theme is fine */

@@ -8,12 +8,21 @@
   <script src="theme.js"></script>
   <link rel="stylesheet" href="theme.css" />
   <link rel="stylesheet" href="skin.css" />
+  <link rel="stylesheet" href="obsidian.css" />
 </head>
 <body>
   <div class="shell">
     <!-- ============ SIDEBAR ============ -->
-    <aside class="sidebar">
+    <aside class="sidebar" id="app-sidebar">
       <div class="side-top">
+        <div class="brand">
+          <button class="brand-mark" id="btn-sidebar-toggle" type="button" title="Hide sidebar" aria-label="Hide sidebar" aria-controls="app-sidebar" aria-expanded="true">V</button>
+          <div class="brand-copy">
+            <strong>VibeCoder</strong>
+            <span>Workspace</span>
+          </div>
+        </div>
+
         <button class="side-item" id="btn-new-task">
           <span class="ic">✦</span>
           <span class="lbl">New Task</span>
@@ -65,6 +74,8 @@
 
     <!-- ============ MAIN ============ -->
     <main class="main empty" id="main">
+      <button class="sidebar-restore" id="btn-sidebar-restore" type="button" title="Show sidebar" aria-label="Show sidebar" aria-controls="app-sidebar" hidden>V</button>
+
       <div class="error-banner" id="error-banner" hidden role="alert" aria-live="assertive">
         <div class="error-head">
           <span class="error-icon">⚠</span>
@@ -371,7 +382,7 @@
                 <div class="s-name">Language</div>
                 <div class="s-desc">Choose the display language used by the application UI.</div>
               </div>
-              <select><option>System default</option><option>English</option><option>বাংলা</option></select>
+              <select><option>System default</option><option>English</option></select>
             </div>
 
             <div class="s-row">
@@ -590,9 +601,10 @@
             <div class="s-row">
               <div class="s-col">
                 <div class="s-name">App theme</div>
-                <div class="s-desc">Choose light, dark, AMOLED (pure black) or follow the system theme. The chat, the settings and every popup follow it.</div>
+                <div class="s-desc">Choose Obsidian, light, dark, AMOLED (pure black), or follow the system theme. The chat, settings, and every popup follow it.</div>
               </div>
               <select class="s-input s-select-compact" id="theme-select">
+                <option value="obsidian">◆ Obsidian</option>
                 <option value="dark">🌙 Dark</option>
                 <option value="amoled">🌑 AMOLED</option>
                 <option value="light">☀️ Light</option>
@@ -651,7 +663,7 @@
               </div>
 
               <div class="ml-group">Custom providers</div>
-              <div class="ml-empty" id="custom-provider-empty">Ekhane custom provider gulo dekhao jabe</div>
+              <div class="ml-empty" id="custom-provider-empty">Custom providers appear here</div>
               <div id="custom-provider-list"></div>
             </aside>
 
@@ -663,8 +675,8 @@
                   <div class="md-slot"></div>
                   <div class="md-slot"></div>
                 </div>
-                <p>Kono provider nai ekhne</p>
-                <small>Provider add korle ei jayota tar dekhai hobe</small>
+                <p>No providers yet</p>
+                <small>Add a provider to see its models here</small>
               </div>
               <div class="md-provider" id="md-opencode" hidden>
                 <div class="mdp-head">
@@ -698,7 +710,7 @@
                   <div class="mdp-logo" id="md-custom-logo">◈</div>
                   <div>
                     <div class="mdp-name" id="md-custom-name">Custom provider</div>
-                    <div class="mdp-sub" id="md-custom-sub">Apni nijei provider banaye model use korte paren</div>
+                    <div class="mdp-sub" id="md-custom-sub">You can create your own provider and use its models</div>
                   </div>
                   <div class="toggle on" id="toggle-provider" role="switch" aria-checked="true" tabindex="0" title="Enable / disable this provider"></div>
                 </div>
@@ -869,7 +881,7 @@
             <div class="s-row memory-add-row">
               <div class="s-col">
                 <div class="s-name">Add a memory</div>
-                <div class="s-desc">One short fact per line — e.g. “answers in Banglish”, “always run npm test before commit”.</div>
+                <div class="s-desc">One short fact per line — e.g. “prefers concise answers”, “always run npm test before commit”.</div>
               </div>
               <div class="memory-add-line">
                 <input class="s-input" id="memory-input" placeholder="Remember that …" />

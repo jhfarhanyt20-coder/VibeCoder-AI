@@ -1,8 +1,8 @@
 # VibeCoder AI — Project Rules (read this first)
 
-Last updated: 2026-11-06
-Current release: **0.3.5** (tag `v0.3.5`, published 2026-11-06)
-Release assets verified: `VibeCoderAI-v2-0.3.5.exe`,
+Last updated: 2026-11-07
+Current release target: **0.3.6** (tag `v0.3.6`)
+Previous verified release assets: `VibeCoderAI-v2-0.3.5.exe`,
 `VibeCoderAI-v2-0.3.5.exe.blockmap`, `latest.yml` (`version: 0.3.5`)
 Repository: https://github.com/jhfarhanyt20-coder/VibeCoder-AI — **PUBLIC**
 Application directory: `VibeCoderAI-live-fixed/`
@@ -68,8 +68,8 @@ same repository. Therefore:
   where removing them would break existing users. Do not surface those names
   as product branding.
 - Keep the current desktop visual design unless the user gives fresh explicit
-  approval for a redesign. The canceled production-UI concept is not a build
-  instruction; context-ring work is data wiring only.
+  approval for a redesign. The user approved a look-only redesign on 2026-11-07:
+  the visual layer may change, the wiring may not (see 3a).
 - A background shell result must never depend on an expired run queue. Persist
   its user intent, description, command, status, exit code and bounded output;
   attach it at the next safe model boundary and resume the agent when idle.
@@ -90,6 +90,41 @@ same repository. Therefore:
   or inline `<style>` blocks to renderer HTML; put rules in `theme.css`/`skin.css`
   and update dynamic values through element CSSOM (`el.style.width = ...`).
   Optional visual skins are separate stylesheets linked after `theme.css`.
+
+### 3a. UI contract — look may change, wiring may not
+
+The desktop redesign is **visual only**. These are fixed contracts:
+
+- Keep every `id="..."` used by `renderer/app.js`, `renderer/theme.js` or the
+  preload bridge. Do not rename, remove or duplicate IDs.
+- Keep every event binding and every `vibe.*` / preload / IPC method name. Do
+  not rename Electron channels or change their payload shape for a redesign.
+- Keep the DOM structure and class names that logic queries (`querySelector`,
+  `closest`, `data-*`, tool/message cards, composer controls). New wrappers are
+  allowed only when they do not change a selector used by code.
+- Change the look through CSS: `theme.css` variables (or a stylesheet linked
+  after it), spacing, type scale, colour, radius, shadow and motion. Prefer
+  additive rules; do not rewrite feature logic.
+- Never use inline `style="..."` or `<style>` blocks (CSP `style-src 'self'`).
+  Set dynamic values through the element's CSSOM.
+- The redesign must keep `npm test` green, especially
+  `test/harness-ui-regression.mjs`, `test/compaction-ui-regression.mjs`,
+  `test/subagent-ui-regression.mjs` and `test/app-update-ui-regression.mjs`.
+- Show the design and get approval before switching the live UI. Then apply it
+  behind a separate stylesheet where possible, so reverting is one link.
+
+The user selected the **Obsidian** direction on 2026-11-07. Its production
+visual layer is `renderer/obsidian.css`, linked after the existing `skin.css`
+and scoped only to `data-theme="obsidian"`. Obsidian is an additional Appearance
+option; Dark, AMOLED, Light and System keep their previous CSS and behaviour.
+Removing the one link removes Obsidian without changing renderer wiring or
+stored user data.
+
+**Baseline backup (never commit, never ship):**
+`VibeCoderAI-live-fixed/renderer-backups/pre-redesign-2026-11-07/`
+plus `pre-redesign-2026-11-07.zip` and `MANIFEST.txt` (SHA-256 of every file).
+The folder is gitignored. Restoring a file from the backup must reproduce the
+pre-redesign look and wiring exactly.
 
 ## 4. Naming and clean-room rules
 

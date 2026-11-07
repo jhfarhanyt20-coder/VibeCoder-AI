@@ -150,28 +150,39 @@ const $ = (id) => document.getElementById(id)
 /* ---------- visible error surface ----------
    Failures used to be swallowed (catch {}, console.warn) and the app could look
    idle while nothing was happening. Every important failure now lands here. */
-const errorState = { key: "", title: "", short: "", full: "", expanded: false }
+const errorState = { key: "", title: "", short: "", full: "", tone: "error", expanded: false }
 function showError(title, detail, opts = {}) {
   const full = String(detail ?? "").trim()
   const heading = String(title || "Something went wrong").trim()
+  const tone = opts.tone === "warning" || opts.tone === "success" ? opts.tone : "error"
+  const banner = $("error-banner")
   // "Retry" only makes sense for a run we can actually resend.
   const retryBtn = $("error-retry")
   if (retryBtn) retryBtn.hidden = !(opts.retry && state.lastSend && !state.running)
   if (!full && !heading) return
   const key = opts.key || `${heading}\n${full}`
-  if (errorState.key === key && errorState.full === full && !$("error-banner").hidden) return
+  if (errorState.key === key && errorState.full === full && errorState.tone === tone && !banner.hidden) return
   errorState.key = key
   errorState.title = heading
   errorState.full = full
   errorState.short = full.length > 1400 ? full.slice(0, 1400) + "…" : full
+  errorState.tone = tone
   errorState.expanded = false
+  banner.dataset.tone = tone
+  banner.setAttribute("role", tone === "error" ? "alert" : "status")
+  banner.setAttribute("aria-live", tone === "error" ? "assertive" : "polite")
   $("error-title").textContent = heading
   $("error-body").textContent = errorState.short
   $("error-details").hidden = full.length <= 1400
   $("error-details").textContent = "Show details"
-  $("error-banner").hidden = false
-  console.error(`[VibeCoder] ${heading}`, full)
-  try { window.vibe?.logError?.({ title: heading, detail: full }) } catch {}
+  $("error-open-log").hidden = tone !== "error"
+  banner.hidden = false
+  if (tone === "error") {
+    console.error(`[VibeCoder] ${heading}`, full)
+    try { window.vibe?.logError?.({ title: heading, detail: full }) } catch {}
+  } else {
+    console.warn(`[VibeCoder] ${heading}`, full)
+  }
 }
 function hideError(key) {
   if (key && errorState.key !== key) return
@@ -180,6 +191,7 @@ function hideError(key) {
   errorState.title = ""
   errorState.short = ""
   errorState.full = ""
+  errorState.tone = "error"
   errorState.expanded = false
 }
 if ($("error-close")) $("error-close").onclick = () => hideError()
@@ -280,6 +292,10 @@ const bgJob = { startedAt: 0, noteShown: false, timer: null, panelSignature: "" 
    the background shells ({ kind, title, at, shellId?, backgrounded?, file? }) */
 const runningJobs = new Map()
 const shellInputDrafts = new Map()
+const shellToolOutputs = new Map()
+const reconciledShellResults = new Set()
+let shellRefreshInFlight = false
+let shellSyncTimer = null
 
 function terminalText(value, max = 12000) {
   const clean = String(value || "")
@@ -292,6 +308,7 @@ function terminalText(value, max = 12000) {
 function bgJobPanelSignature() {
   return JSON.stringify([...runningJobs.entries()].map(([key, job]) => [
     key, job.kind, job.title, job.command, !!job.backgrounded, !!job.waitingForInput, job.writable !== false,
+    Number(job.outputSize || 0), String(job.output || "").length,
   ]))
 }
 
@@ -644,20 +661,86 @@ async function moveOrStopShell(shellID, move) {
  * Restore the commands that are still running when the app starts or the user
  * switches the session (the job registry lives in the backend, not here).
  */
+function applyFinalShellOutput(shell, output) {
+  const text = terminalText(output, 30000)
+  const toolCallId = shell?.toolCallId
+  if (!toolCallId) return
+  // Completion can arrive after the original tool event stream has closed. Keep
+  // the authoritative final tail until the tool row is available, then replace
+  // its streamed preview (which may have missed an IPC batch) with the snapshot.
+  const final = { text, status: shell?.status || "completed", exit: shell?.exit }
+  const out = actOut(`tool:${toolCallId}`)
+  if (out) {
+    const footer = `[process ${final.status}${final.exit !== undefined ? ` · exit ${final.exit}` : ""}]`
+    out.textContent = `${text || "Process completed with no output."}${text ? "\n\n" : ""}${footer}`
+    if (final.exit !== undefined) out.dataset.exitCode = String(final.exit)
+    else delete out.dataset.exitCode
+    const row = actEls.get(`tool:${toolCallId}`)
+    if (row) {
+      row.classList.remove("done", "failed")
+      row.classList.add(final.status === "completed" ? "done" : "failed")
+      const state = row.querySelector(".act-state")
+      if (state) state.textContent = final.status === "completed" ? "✓" : "✕"
+    }
+    shellToolOutputs.delete(toolCallId)
+  } else {
+    shellToolOutputs.set(toolCallId, final)
+    while (shellToolOutputs.size > 50) shellToolOutputs.delete(shellToolOutputs.keys().next().value)
+  }
+}
+
+/**
+ * Reconcile the renderer with the backend's authoritative shell registry.
+ * Event streams are low-latency hints, not the sole source of truth: if a
+ * window sleeps, an IPC event is missed, or a large burst is coalesced, this
+ * snapshot heals the running panel and the associated tool output.
+ */
 async function refreshShellJobs() {
-  if (!state.activeSessionID || typeof vibe.listShells !== "function") return
+  if (!state.activeSessionID || typeof vibe.listShells !== "function" || shellRefreshInFlight) return
+  const sessionID = state.activeSessionID
+  shellRefreshInFlight = true
   try {
-    const res = await vibe.listShells({ sessionID: state.activeSessionID })
-    if (!res || !res.ok) return
-    for (const sh of Array.isArray(res.data) ? res.data : []) {
-      if (sh.status !== "running") continue
+    const res = await vibe.listShells({ sessionID })
+    if (!res || !res.ok || sessionID !== state.activeSessionID) return
+    const shells = Array.isArray(res.data) ? res.data : []
+    let changed = false
+    for (const sh of shells) {
+      // A session switch can happen while a shellOutput IPC call is pending.
+      // Never let an older snapshot repopulate the newly selected session.
+      if (sessionID !== state.activeSessionID) break
+      if (!sh?.id) continue
       const key = `shell:${sh.id}`
       const prev = runningJobs.get(key) || {}
+      if (sh.status !== "running") {
+        // A completion event may have been lost while the app was suspended.
+        if ((prev.shellId || sh.toolCallId) && !reconciledShellResults.has(sh.id)) {
+          let finalOutput = prev.output || ""
+          if (typeof vibe.shellOutput === "function") {
+            const tail = await vibe.shellOutput({ sessionID, shellID: sh.id, max: 30000 }).catch(() => null)
+            if (sessionID !== state.activeSessionID) return
+            if (tail?.ok) finalOutput = typeof tail.data === "string" ? tail.data : (tail.data?.output || finalOutput)
+          }
+          if (sessionID !== state.activeSessionID) return
+          applyFinalShellOutput(sh, finalOutput)
+          reconciledShellResults.add(sh.id)
+          while (reconciledShellResults.size > 200) reconciledShellResults.delete(reconciledShellResults.values().next().value)
+          changed = true
+        }
+        if (prev.shellId) {
+          runningJobs.delete(key)
+          shellInputDrafts.delete(sh.id)
+          changed = true
+        }
+        continue
+      }
       let output = prev.output || ""
-      if (typeof vibe.shellOutput === "function") {
-        const tail = await vibe.shellOutput({ sessionID: state.activeSessionID, shellID: sh.id, max: 12000 }).catch(() => null)
+      const sizeChanged = Number(sh.size || 0) !== Number(prev.outputSize || 0)
+      if (typeof vibe.shellOutput === "function" && (sizeChanged || !prev.output)) {
+        const tail = await vibe.shellOutput({ sessionID, shellID: sh.id, max: 12000 }).catch(() => null)
+        if (sessionID !== state.activeSessionID) return
         if (tail?.ok) output = typeof tail.data === "string" ? tail.data : (tail.data?.output || output)
       }
+      if (sessionID !== state.activeSessionID) return
       runningJobs.set(key, {
         ...prev,
         kind: "Shell",
@@ -670,11 +753,32 @@ async function refreshShellJobs() {
         waitingForInput: !!sh.waitingForInput,
         toolCallId: sh.toolCallId || prev.toolCallId || "",
         output: terminalText(output),
+        outputSize: Number(sh.size || 0),
       })
+      changed = true
     }
-    renderBgJob()
-  } catch {}
+    if (changed) renderBgJob()
+  } catch {
+    // A transient bridge failure is recovered by the next scheduled snapshot.
+  } finally {
+    shellRefreshInFlight = false
+  }
 }
+
+function startShellJobSync() {
+  if (shellSyncTimer) return
+  shellSyncTimer = setInterval(() => {
+    if (document.hidden || !state.activeSessionID || shellRefreshInFlight) return
+    refreshShellJobs()
+  }, 2200)
+  if (shellSyncTimer && typeof shellSyncTimer.unref === "function") shellSyncTimer.unref()
+}
+
+startShellJobSync()
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refreshShellJobs()
+})
+window.addEventListener("focus", () => refreshShellJobs())
 
 /* ---------- background auto-continue ---------- */
 
@@ -994,7 +1098,7 @@ function showCompaction(status, opts = {}) {
     meta.textContent = `${opts.reason || "manual"}${source}${model}${tokens}`
     const summary = String(opts.text || opts.summary || "").trim()
     const complete = [summary, opts.projectContext || "", status === "overbudget" ? `⚠ ${opts.error || "The next request is still estimated to exceed the input budget."}` : ""].filter(Boolean).join("\n\n")
-    if (window.renderMarkdown) sum.innerHTML = window.renderMarkdown(complete)
+    if (window.renderMarkdownInto) window.renderMarkdownInto(sum, complete)
     else sum.textContent = complete
     sum.hidden = !complete
     // Keep the newly generated checkpoint visible immediately; users can still
@@ -1157,7 +1261,7 @@ function renderSessions() {
       // Electron has no prompt() -> the themed dialog with a text field
       const nn = await showPrompt({
         title: "Rename session",
-        message: "Session er notun naam:",
+        message: "New session name:",
         defaultValue: s.title || "",
         okText: "Save",
       })
@@ -1184,7 +1288,7 @@ function renderSessions() {
     del.onclick = async (e) => {
       e.stopPropagation()
       const ok = await showConfirm(
-        `"${s.title || s.id.slice(0, 8)}" delete korbe? Ei session ar thakbe na.`,
+        `Delete "${s.title || s.id.slice(0, 8)}"? This session will be permanently removed.`,
         "Delete session",
         "Delete",
       )
@@ -1284,6 +1388,44 @@ async function newTask() {
 $("btn-new-task").onclick = newTask
 $("show-more").onclick = () => ($("session-list").style.maxHeight = "none")
 
+/* ---------- sidebar collapse (click the V mark) ---------- */
+const SIDEBAR_HIDDEN_KEY = "vibe.sidebarHidden"
+
+function sidebarIsHidden() {
+  return !!document.querySelector(".shell")?.classList.contains("sidebar-hidden")
+}
+
+function applySidebarHidden(hidden, moveFocus = false) {
+  const shell = document.querySelector(".shell")
+  if (shell) shell.classList.toggle("sidebar-hidden", !!hidden)
+  const sidebar = document.querySelector(".sidebar")
+  if (sidebar) {
+    sidebar.setAttribute("aria-hidden", hidden ? "true" : "false")
+    sidebar.toggleAttribute("inert", !!hidden)
+  }
+  const restore = $("btn-sidebar-restore")
+  if (restore) restore.hidden = !hidden
+  const toggle = $("btn-sidebar-toggle")
+  if (toggle) {
+    toggle.setAttribute("aria-expanded", hidden ? "false" : "true")
+    toggle.title = hidden ? "Show sidebar" : "Hide sidebar"
+  }
+  try {
+    localStorage.setItem(SIDEBAR_HIDDEN_KEY, hidden ? "1" : "0")
+  } catch {
+    // Storage can be unavailable; the toggle still works for this run.
+  }
+  if (moveFocus) requestAnimationFrame(() => (hidden ? restore : toggle)?.focus())
+}
+
+$("btn-sidebar-toggle")?.addEventListener("click", () => applySidebarHidden(!sidebarIsHidden(), true))
+$("btn-sidebar-restore")?.addEventListener("click", () => applySidebarHidden(false, true))
+try {
+  if (localStorage.getItem(SIDEBAR_HIDDEN_KEY) === "1") applySidebarHidden(true)
+} catch {
+  // Ignore a blocked storage read.
+}
+
 /* ---------- chat ---------- */
 /* Stick to the bottom while streaming, but let the user scroll up freely.
    The floating arrow appears whenever the user is away from the newest chat,
@@ -1316,6 +1458,28 @@ if ($("jump-live")) {
   }
 }
 
+// When the sidebar is collapsed, the chat stays at a readable line length and
+// leaves wide margins. Treat those empty margins as part of the chat's scroll
+// surface, without stealing wheel input from the composer or other controls.
+$("main")?.addEventListener("wheel", (event) => {
+  if (!sidebarIsHidden() || event.ctrlKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return
+  const target = event.target instanceof Element ? event.target : null
+  if (!target || target.closest(
+    "#messages, #composer, #subagent-composer, .retry-inline, .bg-job, .todo-panel, " +
+      ".error-banner, .jump-live, button, input, textarea, select, [contenteditable='true']",
+  )) return
+
+  const messages = $("messages")
+  const max = Math.max(0, messages.scrollHeight - messages.clientHeight)
+  if (!max) return
+  const scale = event.deltaMode === 1 ? 24 : event.deltaMode === 2 ? messages.clientHeight : 1
+  const next = Math.max(0, Math.min(max, messages.scrollTop + event.deltaY * scale))
+  if (next === messages.scrollTop) return
+  messages.scrollTop = next
+  event.preventDefault()
+  updateJumpButton()
+}, { passive: false })
+
 function addMsg(role, text, cls = "", images = []) {
   const el = document.createElement("div")
   el.className = `msg ${role}`
@@ -1324,7 +1488,8 @@ function addMsg(role, text, cls = "", images = []) {
   const bubble = el.querySelector(".bubble")
   if (role === "assistant" && cls !== "thinking") {
     // Render markdown for assistant messages (not for "Thinking..." placeholder)
-    bubble.innerHTML = window.renderMarkdown(text)
+    if (window.renderMarkdownInto) window.renderMarkdownInto(bubble, text)
+    else bubble.textContent = text
   } else {
     bubble.textContent = text
   }
@@ -1882,7 +2047,7 @@ function compactionHistoryEl(m) {
   const sum = document.createElement("div")
   sum.className = "ctxd-sum"
   const complete = [String(m.summary || "").trim(), String(m.projectContext || "").trim()].filter(Boolean).join("\n\n")
-  if (window.renderMarkdown) sum.innerHTML = window.renderMarkdown(complete)
+  if (window.renderMarkdownInto) window.renderMarkdownInto(sum, complete)
   else sum.textContent = complete
   sum.hidden = !complete
   head.onclick = () => el.classList.toggle("open")
@@ -3027,7 +3192,8 @@ function typingFlush() {
   }
   if (typing.el) {
     // Render final text as markdown
-    typing.el.innerHTML = window.renderMarkdown(typing.full)
+    if (window.renderMarkdownInto) window.renderMarkdownInto(typing.el, typing.full)
+    else typing.el.textContent = typing.full
     scrollChat()
   }
   typing.el = null
@@ -3158,7 +3324,7 @@ vibe.onEvent(async (event) => {
           : String(data.text || "")
         sum.classList.toggle("waiting", waiting)
         if (waiting) sum.textContent = text
-        else if (window.renderMarkdown) sum.innerHTML = window.renderMarkdown(text)
+        else if (window.renderMarkdownInto) window.renderMarkdownInto(sum, text)
         else sum.textContent = text
         sum.hidden = !text
         const meta = el.querySelector(".ctxd-meta")
@@ -3649,6 +3815,15 @@ vibe.onEvent(async (event) => {
         metadata: data.metadata,
       }, data.id)
     }
+    const finalShell = shellToolOutputs.get(data.id)
+    if (finalShell) {
+      const out = actOut(`tool:${data.id}`)
+      if (out) {
+        out.textContent = finalShell.text || (finalShell.status === "completed" ? "Process completed with no output." : `Process ${finalShell.status}.`)
+        if (finalShell.exit !== undefined) out.dataset.exitCode = String(finalShell.exit)
+      }
+      shellToolOutputs.delete(data.id)
+    }
     // keep the finished tool visible in the status line until the next one
   }
   if (type === "session.tool.failed") {
@@ -3719,7 +3894,26 @@ vibe.onEvent(async (event) => {
     const sh = data.shell ?? {}
     const delta = String(data.delta || "")
     const key = `shell:${sh.id}`
-    const job = runningJobs.get(key)
+    let job = runningJobs.get(key)
+    const missedStart = !job && !!sh.id
+    if (missedStart) {
+      // An output delta is itself enough to reconstruct the lightweight job row
+      // if the renderer missed shell.started during a sleep/reconnect.
+      job = {
+        kind: "Shell",
+        title: String(sh.description || sh.intent || sh.command || "shell"),
+        command: String(sh.command || ""),
+        at: sh.started || Date.now(),
+        shellId: sh.id,
+        backgrounded: !!sh.backgrounded,
+        writable: sh.writable !== false,
+        waitingForInput: !!sh.waitingForInput,
+        toolCallId: sh.toolCallId || "",
+        output: "",
+      }
+      runningJobs.set(key, job)
+      renderBgJob()
+    }
     if (job) {
       job.output = terminalText((job.output || "") + delta)
       job.writable = sh.writable !== false
@@ -3754,6 +3948,13 @@ vibe.onEvent(async (event) => {
   }
   if (type === "session.shell.ended" || type === "session.shell.completed") {
     const sh = data.shell ?? {}
+    const job = runningJobs.get(`shell:${sh.id}`)
+    if (type === "session.shell.completed") {
+      const finalOutput = terminalText(data.output || job?.output || "", 30000)
+      applyFinalShellOutput(sh, finalOutput)
+      if (sh.id) reconciledShellResults.add(sh.id)
+      while (reconciledShellResults.size > 200) reconciledShellResults.delete(reconciledShellResults.values().next().value)
+    }
     runningJobs.delete(`shell:${sh.id}`)
     shellInputDrafts.delete(sh.id)
     renderBgJob()
@@ -5411,14 +5612,14 @@ function renderModelList(filter = "") {
   if (state.models.length === 0) {
     const d = document.createElement("div")
     d.className = "mr-loading"
-    d.textContent = "Login korle model ekhane ashbe"
+    d.textContent = "Models will appear here after sign-in"
     box.appendChild(d)
     return
   }
   if (hits.length === 0) {
     const d = document.createElement("div")
     d.className = "mr-none"
-    d.textContent = `Kichu pa'i nai — "${filter}"`
+    d.textContent = `No models found for "${filter}"`
     box.appendChild(d)
     return
   }
@@ -5657,7 +5858,7 @@ function renderWorkspaces() {
       // Electron has no prompt() -> the themed dialog with a text field
       const nn = await showPrompt({
         title: "Rename workspace",
-        message: "Workspace er notun naam:",
+        message: "New workspace name:",
         defaultValue: ws.name,
         okText: "Save",
       })
@@ -5674,7 +5875,7 @@ function renderWorkspaces() {
     del.title = "Delete"
     del.onclick = async (e) => {
       e.stopPropagation()
-      if (!(await showConfirm(`"${ws.name}" delete korbe? (project folder delete hobe na, shudhu list theke)`))) return
+      if (!(await showConfirm(`Delete "${ws.name}"? The project folder stays on disk; only its list entry is removed.`))) return
       workspaces = workspaces.filter((w) => w.dir !== ws.dir)
       saveWorkspaces()
       if (projectDir === ws.dir) {
@@ -5837,7 +6038,7 @@ $("btn-add-workspace").onclick = async () => {
 
 $("btn-clear-workspaces").onclick = async () => {
   if (!workspaces.length) return
-  if (!(await showConfirm("Sob workspace list theke delete korbe?"))) return
+  if (!(await showConfirm("Remove every workspace from the list?"))) return
   workspaces = []
   saveWorkspaces()
   projectDir = null
@@ -6213,7 +6414,7 @@ async function saveProvider() {
     if (!res || res.ok === false) throw new Error(res?.error || "Could not save the provider")
     hideError("providers")
     hideError("providers-key")
-    if (res.data?.warning) showError("Saved, but this format may not work", String(res.data.warning), { key: "providers" })
+    if (res.data?.warning) showError("Saved, but this format may not work", String(res.data.warning), { key: "providers", tone: "warning" })
     providerState.selectedId = res.data?.id || d.id
     providerState.draft = {
       ...d,
@@ -6242,7 +6443,7 @@ async function saveProvider() {
 async function deleteProvider() {
   const d = providerState.draft
   if (!d || d.isNew) return
-  if (!(await showConfirm(`"${d.name}" delete korbe? Provider ar tar modelগুলো আর থাকবে না।`))) return
+  if (!(await showConfirm(`Delete "${d.name}"? The provider and its models will be removed.`))) return
   try {
     const res = await vibe.providerRemove({ id: d.id, scope: d.scope, directory: projectDir })
     if (!res || res.ok === false) throw new Error(res?.error || "Could not delete the provider")
@@ -6697,7 +6898,7 @@ function handleSubagentEvent(data) {
       view.liveText = ""
     }
     view.liveText += String(data.delta)
-    if (window.renderMarkdown) view.liveBubble.innerHTML = window.renderMarkdown(view.liveText)
+    if (window.renderMarkdownInto) window.renderMarkdownInto(view.liveBubble, view.liveText)
     else view.liveBubble.textContent = view.liveText
     scrollChat()
     return
@@ -7533,10 +7734,10 @@ $("owner-code")?.addEventListener("keydown", (e) => {
   }
 })
 
-/* ---------- the theme (dark / amoled / light / system) ---------- */
+/* ---------- the theme (Obsidian + original dark / amoled / light / system) ---------- */
 const THEME_KEY = "vibecoder.theme"
 const FONT_KEY = "vibecoder.fontScale"
-const THEMES = ["dark", "amoled", "light", "system"]
+const THEMES = ["obsidian", "dark", "amoled", "light", "system"]
 
 function currentTheme() {
   try {
@@ -7571,15 +7772,30 @@ function applyTheme(name, save = true) {
 }
 
 /* the interface text size (only the text, not the icons) */
+function normalizedFontPx(value) {
+  const raw = Number(value)
+  if (!Number.isFinite(raw) || raw <= 0) return 14
+  // Releases before this control stored a ratio (for example 1.0714 for
+  // 15px). New values are stored as the actual number shown beside the slider.
+  const px = raw < 4 ? raw * 14 : raw
+  return Math.min(18, Math.max(12, Math.round(px)))
+}
+
 function applyFontScale(px, save = true) {
-  const n = Math.min(18, Math.max(12, Math.round(Number(px) || 14)))
+  const n = normalizedFontPx(px)
   document.documentElement.style.setProperty("--fs-scale", String(n / 14))
   const range = $("font-size-range")
-  if (range && range.value !== String(n)) range.value = String(n)
+  if (range) {
+    if (range.value !== String(n)) range.value = String(n)
+    const min = Number(range.min) || 12
+    const max = Number(range.max) || 18
+    const pct = max > min ? ((n - min) / (max - min)) * 100 : 0
+    range.style.setProperty("--range-pct", `${pct}%`)
+  }
   const label = $("font-size-value")
   if (label) label.textContent = `${n} px`
   if (save) {
-    try { localStorage.setItem(FONT_KEY, String(n / 14)) } catch {}
+    try { localStorage.setItem(FONT_KEY, String(n)) } catch {}
   }
 }
 
@@ -7589,7 +7805,7 @@ $("font-size-range")?.addEventListener("input", (e) => applyFontScale(e.target.v
 applyTheme(currentTheme(), false)
 try {
   const stored = localStorage.getItem(FONT_KEY)
-  applyFontScale(stored ? Math.round(Number(stored) * 14) : 14, false)
+  applyFontScale(stored || 14, false)
 } catch {
   applyFontScale(14, false)
 }
@@ -8056,7 +8272,7 @@ function questionCardEl(form) {
     if (r.ok) settleQuestionCard(el, "answered", answer)
     else {
       submit.disabled = false
-      hint.textContent = "⚠ " + (r.error || "Answer pathate parlam na")
+      hint.textContent = "⚠ " + (r.error || "Could not send the answer")
     }
   }
 

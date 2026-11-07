@@ -5,7 +5,7 @@
  * (in-process engine) + the `vibe serve` HTTP/SSE API started in backend.cjs.
  */
 const path = require("path")
-const { app, BrowserWindow, Menu, clipboard, shell } = require("electron")
+const { app, BrowserWindow, Menu, clipboard, shell, nativeImage } = require("electron")
 const { initBackend, shutdownBackend } = require("./backend.cjs")
 const updater = require("./updater.cjs")
 
@@ -50,6 +50,15 @@ function appIcon() {
   return cands.find((x) => x && require("fs").existsSync(x))
 }
 
+function transparentTitleBarIcon() {
+  // A non-empty transparent image prevents Windows from falling back to the
+  // executable/Electron icon in the native title bar. Keeping the native frame
+  // preserves minimize/maximize/close, snapping and every existing theme.
+  return nativeImage.createFromDataURL(
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAATSURBVDhPYxgFo2AUjAIwYGAAAAQQAAGnRHxjAAAAAElFTkSuQmCC",
+  )
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1360,
@@ -57,7 +66,10 @@ function createWindow() {
     minWidth: 980,
     minHeight: 640,
     title: "VibeCoder AI",
-    icon: appIcon(),
+    // Keep the packaged/taskbar application identity, but do not paint the
+    // tiny icon in the Windows native title bar. Other platforms keep the
+    // normal app icon.
+    icon: process.platform === "win32" ? transparentTitleBarIcon() : appIcon(),
     backgroundColor: "#0b0d12",
     show: false,
     autoHideMenuBar: true,

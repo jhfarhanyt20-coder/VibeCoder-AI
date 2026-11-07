@@ -23,6 +23,12 @@ npm-debug.log*
 # stale artifact (do not ship)
 VibeCoderAI-live-fixed/core/llm/http.zip
 
+# local UI backups (not shipped, not committed)
+VibeCoderAI-live-fixed/renderer-backups/
+
+# local UI concept previews (the approved production skin lives in renderer/)
+VibeCoderAI-live-fixed/design/
+
 # local renderer backup (not part of the build)
 VibeCoderAI-live-fixed/renderer/renderer.zip
 

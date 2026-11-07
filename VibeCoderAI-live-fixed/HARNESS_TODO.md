@@ -4,7 +4,7 @@
 > প্রথমে এই ফাইল পড়বে, তারপর প্রথম unchecked phase থেকে কাজ শুরু করবে।
 > প্রতিটা phase শেষে "Progress Log" আপডেট করবে।
 
-Last updated: 2026-11-04
+Last updated: 2026-11-07
 App root: `VibeCoderAI-live-fixed`
 Git root: `C:\Users\farhan\Downloads\VibeCoderAI-live-provider-browser-fixed`
 Git HEAD at start: `9d8a18a`
@@ -32,11 +32,12 @@ additive হবে। ডিফল্টে পুরোনো behaviour বদ�
 
 ## 2. Baseline (এটা আবার check করতে হবে)
 
-শেষ full test run: **2026-11-05 — সব pass**
+শেষ full test run: **2026-11-07 — সব pass**
 
 ```text
 npm test
-core-test.mjs                 117 passed
+shell-output-regression.cjs    PASS (100,000 chars, ordered)
+core-test.mjs                 120 passed
 agents-test.mjs                11 passed
 skills-test.mjs                 8 passed
 harness-test.mjs               23 passed
@@ -354,6 +355,7 @@ Thin vertical slice first:
 | 2026-11-06 | Release | `v0.3.4` terminal output reaches the agent without copy/paste | CI green; installer + `latest.yml` + blockmap uploaded |
 | 2026-11-06 | Hotfix | optional Graphite skin + CSP-safe update bar | no inline styles; full suite green |
 | 2026-11-06 | Release | `v0.3.5` skin + CSP fix | CI green; installer + `latest.yml` + blockmap uploaded |
+| 2026-11-07 | Hardening + UI | lossless UTF-8/large shell stream + real exit codes; English-only UI; Obsidian as an additive theme; sidebar collapse; semantic warnings; font slider persistence | 120 core; 11 agents; 8 skills; 23 harness; 125 IPC; full suite green |
 
 ---
 

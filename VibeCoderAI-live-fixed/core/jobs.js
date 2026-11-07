@@ -48,7 +48,29 @@ function psChain(cmd) {
 const fs = require("fs")
 const path = require("path")
 const { spawn } = require("child_process")
+const { StringDecoder } = require("string_decoder")
 const { newId, homeDir } = require("./util")
+
+// PowerShell 5.1 serializes its own error/warning records as CLIXML when the
+// script arrives through -EncodedCommand. Native tool output stays plain text.
+// Decode those records back to readable lines so neither the UI nor the agent
+// ever sees XML envelopes in the terminal stream.
+const CLIXML_HEAD = "#< CLIXML"
+const XML_ENTITIES = { lt: "<", gt: ">", quot: '"', apos: "'", amp: "&" }
+
+function xmlUnescape(text) {
+  return String(text || "")
+    .replace(/_x([0-9A-Fa-f]{4})_/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/&(lt|gt|quot|apos|amp);/g, (_, name) => XML_ENTITIES[name])
+}
+
+function decodeClixmlRecords(buffer) {
+  const out = []
+  const record = /<S S="[^"]*">([\s\S]*?)<\/S>/g
+  let match
+  while ((match = record.exec(buffer))) out.push(xmlUnescape(match[1]))
+  return out.join("")
+}
 
 const KEEP_OUTPUT = 64 * 1024 // per-job in-memory tail (full output stays in the file)
 const EXITED_LIMIT = 25 // settled jobs kept for status/output lookups
@@ -57,6 +79,7 @@ const LIVE_OUTPUT_DELAY = 40 // coalesce noisy processes without making output f
 const INPUT_LIMIT = 64 * 1024 // one stdin write; prevents accidental unbounded IPC payloads
 const PROGRESS_INTERVAL = 90 * 1000 // long-running jobs report progress at most this often
 const PROMPT_QUIET = 1500 // a blocking job is moved to the background only after its prompt stays put
+const ENCODED_LIMIT = 28000 // Windows caps one process command line at 32767 chars
 const jobs = new Map()
 
 function inputPrompt(output) {
@@ -159,6 +182,7 @@ function createShell({ sessionID, command, cwd, background = false, env, emit, t
   let settled = false
   let liveBuffer = ""
   let liveTimer = null
+  let scriptFile = null
 
   const info = () => jobInfo(job)
 
@@ -215,9 +239,23 @@ function createShell({ sessionID, command, cwd, background = false, env, emit, t
     if (liveTimer) clearTimeout(liveTimer)
     liveTimer = null
     if (!liveBuffer || !job.emit) { liveBuffer = ""; return }
-    const delta = liveBuffer
-    liveBuffer = ""
-    try { job.emit({ type: "shell.output", shell: info(), delta }) } catch {}
+
+    // Never truncate a burst to fit one renderer event. The old tail-clipping
+    // behavior silently discarded the *beginning* of fast build/compiler output
+    // whenever more than LIVE_OUTPUT_LIMIT characters arrived inside one batch.
+    // Split the complete stream into bounded events instead, preserving order.
+    while (liveBuffer.length) {
+      let cut = Math.min(LIVE_OUTPUT_LIMIT, liveBuffer.length)
+      // Avoid splitting a UTF-16 surrogate pair at an event boundary.
+      if (cut < liveBuffer.length) {
+        const last = liveBuffer.charCodeAt(cut - 1)
+        const next = liveBuffer.charCodeAt(cut)
+        if (last >= 0xD800 && last <= 0xDBFF && next >= 0xDC00 && next <= 0xDFFF) cut++
+      }
+      const delta = liveBuffer.slice(0, cut)
+      liveBuffer = liveBuffer.slice(cut)
+      try { job.emit({ type: "shell.output", shell: info(), delta }) } catch {}
+    }
   }
 
   const settle = (status, code, signal) => {
@@ -235,6 +273,10 @@ function createShell({ sessionID, command, cwd, background = false, env, emit, t
     try {
       if (stream) stream.end()
     } catch {}
+    if (scriptFile) {
+      try { fs.unlinkSync(scriptFile) } catch {}
+      scriptFile = null
+    }
     trimHistory()
     doneResolve(info())
     if (job.onSettled) {
@@ -244,7 +286,36 @@ function createShell({ sessionID, command, cwd, background = false, env, emit, t
 
   let child
   try {
-    const args = win ? ["-NoProfile", "-NonInteractive", "-Command", psChain(String(command || ""))] : ["-lc", String(command || "")]
+    // PowerShell 5.1 inherits legacy console encodings on many Windows installs.
+    // Explicit UTF-8 keeps native-tool output readable by the agent and renderer.
+    // EncodedCommand also avoids quoting/injection edge cases when user paths or
+    // scripts contain quotes, newlines, or non-ASCII characters.
+    const powershellScript = win
+      ? [
+          "$ProgressPreference = 'SilentlyContinue'",
+          "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)",
+          "$OutputEncoding = [Console]::OutputEncoding",
+          "$global:LASTEXITCODE = $null",
+          "& {",
+          psChain(String(command || "")),
+          "$global:VIBE_SUCCESS = $?",
+          "}",
+          "if ($global:VIBE_SUCCESS) { exit 0 } elseif ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE } else { exit 1 }",
+        ].join("\n")
+      : ""
+    const encodedPowerShell = win ? Buffer.from(powershellScript, "utf16le").toString("base64") : ""
+    let args
+    if (!win) {
+      args = ["-lc", String(command || "")]
+    } else if (encodedPowerShell.length <= ENCODED_LIMIT) {
+      args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodedPowerShell]
+    } else {
+      // A very long inline script would exceed the Windows command-line limit
+      // once base64-encoded. Run it from a private temp file instead.
+      scriptFile = path.join(shellDir(sessionID), id + ".ps1")
+      fs.writeFileSync(scriptFile, "\uFEFF" + powershellScript, "utf8")
+      args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptFile]
+    }
     child = spawn(win ? "powershell.exe" : "bash", args, {
       cwd: job.cwd,
       // A background job must survive an interrupt of the agent run. On POSIX a
@@ -256,9 +327,14 @@ function createShell({ sessionID, command, cwd, background = false, env, emit, t
     job.pid = child.pid
     job.stdin = child.stdin || null
   } catch (e) {
+    if (scriptFile) {
+      try { fs.unlinkSync(scriptFile) } catch {}
+      scriptFile = null
+    }
     job.output = `Failed to start shell: ${e.message}`
     job.status = "error"
     job.completed = Date.now()
+    jobs.set(id, job)
     doneResolve(info())
     backgroundedResolveNoop()
     return handle()
@@ -269,16 +345,77 @@ function createShell({ sessionID, command, cwd, background = false, env, emit, t
     stream.on("error", () => {})
   } catch {}
 
-  const add = (d) => {
-    const text = d.toString()
+  // Decode each stream incrementally. Buffer.toString("utf8") per data event
+  // corrupts any multi-byte character split across OS pipe chunks (common with
+  // Bengali/emoji output and fast native tools).
+  const stdoutDecoder = new StringDecoder("utf8")
+  const stderrDecoder = new StringDecoder("utf8")
+
+  // stderr arrives either as plain native output or as a CLIXML document. Hold
+  // only the unfinished XML tail so complete error records stream live.
+  let stderrMode = "unknown" // unknown | plain | clixml
+  let stderrBuffer = ""
+  const emitClixml = () => {
+    const text = decodeClixmlRecords(stderrBuffer)
+    if (text) add(text.replace(/\r?\n?$/, "\n"))
+    const lastRecord = stderrBuffer.lastIndexOf("</S>")
+    stderrBuffer = lastRecord === -1 ? stderrBuffer : stderrBuffer.slice(lastRecord + 4)
+    if (stderrBuffer.length > 256 * 1024) stderrBuffer = stderrBuffer.slice(-4096)
+    const lastTag = stderrBuffer.lastIndexOf("<")
+    if (lastTag > 0) stderrBuffer = stderrBuffer.slice(lastTag)
+  }
+  const pushStderr = (text) => {
+    if (!text) return
+    if (stderrMode === "plain") return add(text)
+    stderrBuffer += text
+    if (stderrMode === "unknown") {
+      if (stderrBuffer.length < CLIXML_HEAD.length) {
+        if (CLIXML_HEAD.startsWith(stderrBuffer)) return
+        stderrMode = "plain"
+        const raw = stderrBuffer
+        stderrBuffer = ""
+        return add(raw)
+      }
+      if (!stderrBuffer.startsWith(CLIXML_HEAD)) {
+        stderrMode = "plain"
+        const raw = stderrBuffer
+        stderrBuffer = ""
+        return add(raw)
+      }
+      stderrMode = "clixml"
+      const firstObj = stderrBuffer.indexOf("<Objs")
+      stderrBuffer = firstObj === -1 ? "" : stderrBuffer.slice(firstObj)
+    }
+    emitClixml()
+  }
+  const flushStderr = () => {
+    if (stderrMode === "plain") {
+      if (stderrBuffer) add(stderrBuffer)
+      stderrBuffer = ""
+      return
+    }
+    if (stderrMode === "unknown") {
+      if (stderrBuffer) add(stderrBuffer)
+      stderrBuffer = ""
+      return
+    }
+    emitClixml()
+    const leftover = stderrBuffer.replace(/<[^>]*>/g, "").trim()
+    if (leftover) add(leftover + "\n")
+    stderrBuffer = ""
+  }
+
+  const add = (text) => {
+    text = String(text || "")
     job.output = clipTail(job.output + text, KEEP_OUTPUT)
     job.size += Buffer.byteLength(text)
     try {
       stream && stream.write(text)
     } catch {}
     if (job.emit) {
-      liveBuffer = clipTail(liveBuffer + text, LIVE_OUTPUT_LIMIT)
-      if (!liveTimer) {
+      liveBuffer += text
+      if (liveBuffer.length >= LIVE_OUTPUT_LIMIT) flushLive()
+      else if (!liveTimer) {
         liveTimer = setTimeout(flushLive, LIVE_OUTPUT_DELAY)
         if (typeof liveTimer.unref === "function") liveTimer.unref()
       }
@@ -286,8 +423,8 @@ function createShell({ sessionID, command, cwd, background = false, env, emit, t
     notifyWaiting()
     maybeProgress()
   }
-  child.stdout.on("data", add)
-  child.stderr.on("data", add)
+  child.stdout.on("data", (chunk) => add(stdoutDecoder.write(chunk)))
+  child.stderr.on("data", (chunk) => pushStderr(stderrDecoder.write(chunk)))
   if (child.stdin) child.stdin.on("error", () => { job.stdinEnded = true })
 
   child.on("error", (e) => {
@@ -295,6 +432,11 @@ function createShell({ sessionID, command, cwd, background = false, env, emit, t
     settle("error")
   })
   child.on("close", (code, signal) => {
+    // Flush incomplete trailing sequences before the final output is persisted
+    // or delivered to the model.
+    add(stdoutDecoder.end())
+    pushStderr(stderrDecoder.end())
+    flushStderr()
     // A user cancel already recorded "cancelled"; keep that status.
     if (job.cancelled) settle("cancelled", code, signal)
     else settle(code === 0 ? "completed" : "error", code, signal)

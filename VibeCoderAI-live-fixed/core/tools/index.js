@@ -117,9 +117,9 @@ const bash = {
   description:
     "Execute a shell command and return its output. " +
     (process.platform === "win32"
-      ? "Commands run on Windows using PowerShell. Use `;` as a command separator (`&&` is auto-converted, but avoid `||`, `<<EOF` and other bash-only syntax). For anything multi-step or script-like, write and run a Python script (`python file.py` or `python -c \"...\"`) instead of chaining shell commands. " +
+      ? "Commands run on Windows using PowerShell with UTF-8 output. Use `;` as a command separator (`&&` is supported at top level; avoid `||`, `<<EOF` and other bash-only syntax). For CMD-only built-ins or batch syntax, explicitly use `cmd.exe /d /s /c \"your command\"`. For anything multi-step or script-like, write and run a Python script (`python file.py` or `python -c \"...\"`) instead of chaining shell commands. " +
         "PowerShell aliases: `curl` = Invoke-WebRequest, `ls` = Get-ChildItem, `cat` = Get-Content, `rm` = Remove-Item. " +
-        "Use the full cmdlet names when you need certainty. "
+        "Use the full cmdlet names when you need certainty. The result includes stdout, stderr, and the real process exit status; inspect all of them before deciding a build or command succeeded. "
       : "") +
     "Quote file paths containing spaces or special characters. " +
     "Prefer dedicated tools over shell commands when possible. " +

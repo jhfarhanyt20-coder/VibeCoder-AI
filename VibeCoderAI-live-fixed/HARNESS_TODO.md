@@ -356,6 +356,7 @@ Thin vertical slice first:
 | 2026-11-06 | Hotfix | optional Graphite skin + CSP-safe update bar | no inline styles; full suite green |
 | 2026-11-06 | Release | `v0.3.5` skin + CSP fix | CI green; installer + `latest.yml` + blockmap uploaded |
 | 2026-11-07 | Hardening + UI | lossless UTF-8/large shell stream + real exit codes; English-only UI; Obsidian as an additive theme; sidebar collapse; semantic warnings; font slider persistence | 120 core; 11 agents; 8 skills; 23 harness; 125 IPC; full suite green |
+| 2026-11-07 | Release | `v0.3.6` reliable shell output + Obsidian/UI hardening | CI green; installer (115,673,926 bytes) + `latest.yml` + blockmap uploaded; latest updater metadata verified |
 
 ---
 

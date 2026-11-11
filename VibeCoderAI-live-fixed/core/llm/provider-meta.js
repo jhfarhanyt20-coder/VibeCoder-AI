@@ -358,4 +358,17 @@ async function lookupModel({ modelId, baseURL, apiKey, format = "chat", headers 
   return { found: false }
 }
 
-module.exports = { repairBaseUrl, repairProfile, listRemoteModels, ollamaShow, modelsDev, reloadModelsDevFromDisk, catalogLookup, builtinLookup, lookupModel, KNOWN, HOST_FORMATS, TO_UI, TO_ENGINE }
+function modelPricing(profile, home) {
+  const model = (profile.models || []).find((m) => m.id === profile.model)
+  if (model?.pricing || profile.pricing) return model?.pricing || profile.pricing
+  const providers = { "api.openai.com": "openai", "api.anthropic.com": "anthropic", "api.deepseek.com": "deepseek", "api.groq.com": "groq", "api.x.ai": "xai", "openrouter.ai": "openrouter", "generativelanguage.googleapis.com": "google" }
+  let pid
+  try { pid = providers[new URL(profile.baseURL).hostname] } catch {}
+  if (!pid || !home) return null
+  try {
+    const catalog = JSON.parse(fs.readFileSync(path.join(home, "models.dev.json"), "utf8"))
+    return catalog[pid]?.models?.[profile.model]?.cost || null
+  } catch { return null }
+}
+
+module.exports = { repairBaseUrl, repairProfile, listRemoteModels, ollamaShow, modelsDev, reloadModelsDevFromDisk, catalogLookup, modelPricing, builtinLookup, lookupModel, KNOWN, HOST_FORMATS, TO_UI, TO_ENGINE }

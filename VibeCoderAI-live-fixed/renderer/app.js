@@ -902,7 +902,8 @@ function updateUsageRing() {
   $("ctx-cw").textContent = fmt(t.cache && t.cache.write)
   $("ctx-steps").textContent = fmt(tot.steps)
   $("ctx-total").textContent = fmt(tot.all)
-  $("ctx-cost").textContent = tot.cost ? `$${tot.cost.toFixed(tot.cost < 1 ? 4 : 2)}` : "$0.00"
+  $("ctx-cost").textContent = tot.unknownCost && !tot.cost ? "Unknown" : `${tot.estimated ? "≈ " : ""}$${tot.cost.toFixed(6)}${tot.unknownCost ? " + unknown" : ""}`
+  $("ctx-cost").title = tot.unknownCost ? "Some requests have no reported cost or reliable pricing. This is not your provider account balance." : tot.estimated ? "Estimated USD cost from model pricing, not a provider account debit." : "USD request cost reported by the provider."
 
   // When auto-compaction will kick in for the picked model.
   const ceiling = limit ? U.autoCompactAt(limit) : 0
@@ -1042,17 +1043,8 @@ async function maybeAutoCompact(delay = 1200) {
 function updateRunBadge() {
   const b = $("run-badge")
   if (!b) return
-  if (state.running) {
-    b.hidden = false
-    const pulse = state.pulse
-    b.textContent = pulse?.step ? `● Step ${pulse.step}${pulse.tools ? ` · ${pulse.tools} actions` : ""}` : "● Running"
-  } else if (state.compacting) {
-    b.hidden = false
-    b.textContent = "● Compacting"
-  } else {
-    b.hidden = true
-    b.textContent = "● Running"
-  }
+  b.hidden = true
+  b.textContent = ""
 }
 
 function compactionStatusEl() {
@@ -1420,6 +1412,12 @@ function applySidebarHidden(hidden, moveFocus = false) {
 
 $("btn-sidebar-toggle")?.addEventListener("click", () => applySidebarHidden(!sidebarIsHidden(), true))
 $("btn-sidebar-restore")?.addEventListener("click", () => applySidebarHidden(false, true))
+document.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "b") {
+    event.preventDefault()
+    applySidebarHidden(!sidebarIsHidden(), true)
+  }
+})
 try {
   if (localStorage.getItem(SIDEBAR_HIDDEN_KEY) === "1") applySidebarHidden(true)
 } catch {
@@ -2097,6 +2095,7 @@ async function renderSessionHistory(sessionID) {
   if (sessionID !== state.activeSessionID || state.subagentView) return // user switched while loading
   const msgs = Array.isArray(res.data) ? res.data : (res.data?.data ?? [])
   renderHistoryMessages(msgs)
+  renderQueueStrip()
 }
 
 /* ---------- edit & resend a sent user message ---------- */
@@ -2315,59 +2314,68 @@ function openSession(id) {
 }
 
 /* ---------- queued prompts (typed while the agent is running) ---------- */
-const queuedPrompts = [] // { sid, text }
+const queuedPrompts = [] // { id, sid, text }
+const COMPOSER_DRAFT_KEY = "vibecoder.composerDraft"
+
+function saveComposerDraft() {
+  const ta = $("input")
+  try {
+    localStorage.setItem(COMPOSER_DRAFT_KEY, JSON.stringify({ text: ta.value, start: ta.selectionStart, end: ta.selectionEnd }))
+  } catch {}
+}
+
+try {
+  const draft = JSON.parse(localStorage.getItem(COMPOSER_DRAFT_KEY) || "null")
+  if (draft && typeof draft.text === "string") {
+    $("input").value = draft.text
+    $("input").setSelectionRange(draft.start || 0, draft.end || 0)
+  }
+} catch {}
+window.addEventListener("pagehide", saveComposerDraft)
+window.addEventListener("beforeunload", saveComposerDraft)
 
 function renderQueueStrip() {
-  const host = $("composer")
+  const host = $("messages")
   if (!host) return
-  let el = $("queue-strip")
-  const mine = queuedPrompts.filter((q) => q.sid === state.activeSessionID)
-  if (!mine.length) { if (el) el.remove(); return }
-  if (!el) {
-    el = document.createElement("div")
-    el.id = "queue-strip"
-    el.style.cssText = "display:flex;align-items:center;gap:8px;padding:6px 12px;font-size:12px;opacity:.85;border-bottom:1px solid rgba(255,255,255,.08)"
-    host.prepend(el)
+  host.querySelectorAll(".pending-prompt").forEach((el) => el.remove())
+  for (const item of queuedPrompts.filter((q) => q.sid === state.activeSessionID)) {
+    const bubble = addMsg("user", item.text)
+    const row = bubble.closest(".msg")
+    row.classList.add("pending-prompt")
+    row.dataset.pendingId = item.id
+    row.querySelector(".who").textContent = "You · Pending"
   }
-  el.textContent = ""
-  const label = document.createElement("span")
-  label.style.cssText = "flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-  label.textContent = `⏳ Queued (${mine.length}): ${mine[0].text.replace(/\s+/g, " ").slice(0, 120)}`
-  const x = document.createElement("button")
-  x.type = "button"
-  x.textContent = "✕"
-  x.title = "Remove queued message(s)"
-  x.style.cssText = "background:none;border:0;color:inherit;cursor:pointer"
-  x.onclick = () => { clearQueuedPrompts(); }
-  el.append(label, x)
 }
 
-function clearQueuedPrompts() {
-  queuedPrompts.length = 0
-  renderQueueStrip()
-}
-
-function queuePrompt() {
+async function queuePrompt() {
   const ta = $("input")
   const text = ta.value.trim()
   if (!text || !state.activeSessionID) return
-  queuedPrompts.push({ sid: state.activeSessionID, text })
+  const item = { id: crypto.randomUUID(), sid: state.activeSessionID, text }
+  queuedPrompts.push(item)
   ta.value = ""
+  saveComposerDraft()
   $("btn-send").disabled = false
   renderQueueStrip()
+  if (typeof vibe.queuePrompt === "function") {
+    try { await vibe.queuePrompt({ sessionID: item.sid, id: item.id, text }) } catch {}
+  }
+  if (!state.running) drainQueuedPrompt()
 }
 
 async function drainQueuedPrompt() {
-  if (state.running || sendInFlight || state.userStopped || state.retryTimer) return
-  const i = queuedPrompts.findIndex((q) => q.sid === state.activeSessionID)
-  if (i < 0) { renderQueueStrip(); return }
-  const [item] = queuedPrompts.splice(i, 1)
-  renderQueueStrip()
-  const ta = $("input")
-  if (ta.value.trim()) { // user is typing something new: put the queued text first, keep theirs
-    ta.value = item.text + "\n\n" + ta.value
-  } else ta.value = item.text
-  await send()
+  if (state.running || sendInFlight || state.stopping || state.retryTimer) return
+  const item = queuedPrompts.find((q) => q.sid === state.activeSessionID)
+  if (!item) { renderQueueStrip(); return }
+  sendInFlight = true
+  try {
+    if (await performSend(item.text)) queuedPrompts.splice(queuedPrompts.indexOf(item), 1)
+  } catch (e) {
+    showRunFailureInline(String(e?.message || e))
+  } finally {
+    sendInFlight = false
+    renderQueueStrip()
+  }
 }
 
 let sendInFlight = false
@@ -2391,9 +2399,9 @@ async function send() {
   }
 }
 
-async function performSend() {
+async function performSend(queuedText = null) {
   const ta = $("input")
-  const text = ta.value.trim()
+  const text = queuedText === null ? ta.value.trim() : queuedText
   if (!text && attachments.length === 0) return
   // A new message cancels a pending automatic retry (no double prompt).
   if (state.retryTimer) {
@@ -2471,7 +2479,7 @@ async function performSend() {
   }
   setMainEmpty(false)
   const files = []
-  for (const a of attachments) {
+  for (const a of queuedText === null ? attachments : []) {
     if (a.kind === "image" && a.dataUrl) {
       files.push({ uri: a.dataUrl, mime: a.mime || "image/png", name: a.name })
     } else if (a.path) {
@@ -2480,14 +2488,18 @@ async function performSend() {
     }
   }
   const fullText = sendText
-  ta.value = ""
-  const imageUrls = attachments
+  if (queuedText === null && ta.value.trim() === text) {
+    ta.value = ""
+    saveComposerDraft()
+  }
+  const sentAttachments = queuedText === null ? [...attachments] : []
+  const imageUrls = sentAttachments
     .filter((a) => a.kind === "image" && a.dataUrl)
     .map((a) => a.dataUrl)
-  const fileCount = attachments.length - imageUrls.length
+  const fileCount = sentAttachments.length - imageUrls.length
   let shown = sendText
   if (fileCount > 0) shown = (shown ? shown + " " : "") + `📎${fileCount}`
-  attachments.length = 0
+  if (queuedText === null) attachments.length = 0
   renderAttachments()
   const userMsgEl = addMsg("user", shown, "", imageUrls)
   attachUserActions(userMsgEl, sendText, "")
@@ -2561,6 +2573,7 @@ async function performSend() {
   // *inactivity* (any event from the run restarts it), not on the total run
   // time: a long task with tool calls must never be killed by a fixed limit.
   armRunWatchdog()
+  return true
 }
 
 /* ---------- inactivity watchdog ---------- */
@@ -3048,13 +3061,20 @@ $("btn-send").onclick = async () => {
     // stop the running agent
     state.userStopped = true
     state.interruptReason = "user"
-    clearQueuedPrompts() // Stop drops anything still waiting
+    state.stopping = true
     stopRetryCountdown()
     if (state.retryTimer) {
       clearTimeout(state.retryTimer)
       state.retryTimer = null
     }
-    if (state.activeSessionID) await vibe.interrupt({ sessionID: state.activeSessionID })
+    try {
+      const res = state.activeSessionID ? await vibe.interrupt({ sessionID: state.activeSessionID }) : { ok: true }
+      if (!res.ok) throw new Error(res.error || "Could not stop the agent.")
+    } catch (e) {
+      state.stopping = false
+      showRunFailureInline(String(e?.message || e))
+      return
+    }
     setRunning(false)
     state.retryBubble = null
     typingFlush()
@@ -3063,6 +3083,8 @@ $("btn-send").onclick = async () => {
       t.classList.remove("thinking")
       t.textContent = "⏹ Stopped"
     }
+    state.stopping = false
+    await drainQueuedPrompt()
     return
   }
   send()
@@ -3074,6 +3096,7 @@ $("input").addEventListener("keydown", (e) => {
   }
 })
 $("input").addEventListener("input", () => {
+  saveComposerDraft()
   $("btn-send").disabled = state.running ? false : !$("input").value.trim()
 })
 /* Ctrl/Cmd+C over a selection in the chat (outside inputs) copies it. The native
@@ -3205,6 +3228,21 @@ vibe.onEvent(async (event) => {
   const type = event?.type ?? ""
   const data = event?.data ?? {}
   const sid = data.sessionID
+
+  if (type === "session.prompts.attached") {
+    const ids = new Set(data.ids || [])
+    for (let i = queuedPrompts.length - 1; i >= 0; i--) {
+      if (queuedPrompts[i].sid === sid && ids.has(queuedPrompts[i].id)) queuedPrompts.splice(i, 1)
+    }
+    if (sid === state.activeSessionID) {
+      $("messages").querySelectorAll(".pending-prompt").forEach((row) => {
+        if (!ids.has(row.dataset.pendingId)) return
+        row.classList.remove("pending-prompt")
+        row.querySelector(".who").textContent = "You"
+      })
+    }
+    return
+  }
 
   // Anything the running session emits proves the run is still alive.
   if (state.running && sid && sid === state.activeSessionID) armRunWatchdog()
@@ -3350,7 +3388,7 @@ vibe.onEvent(async (event) => {
 
   // Live token usage for the context ring (no return: other handlers still run).
   if ((type === "session.step.ended" || type === "session.step.failed") && data.tokens && sid === state.activeSessionID) {
-    U.addStep(usage, data.assistantMessageID ?? `live-${Date.now()}`, data.tokens, data.cost)
+    U.addStep(usage, data.assistantMessageID ?? `live-${Date.now()}`, data.tokens, data.cost, data.costSource, data.model)
     updateUsageRing()
   }
 
@@ -7224,7 +7262,7 @@ async function loadUsage() {
       
       if (costEl) {
         const cost = usageData.totalCost || 0
-        costEl.textContent = cost > 0 ? `$${cost.toFixed(4)}` : "$0.0000"
+        costEl.textContent = usageData.unknownCost && !cost ? "Unknown" : `$${cost.toFixed(6)}${usageData.unknownCost ? " + unknown" : ""}`
       }
       
       if (countEl) {
@@ -7275,7 +7313,7 @@ async function loadUsage() {
         const cost = document.createElement("span")
         cost.className = "s-count"
         cost.style.cssText = "text-align: right; color: var(--accent);"
-        cost.textContent = `$${(s.estimatedCost || 0).toFixed(4)}`
+        cost.textContent = s.estimatedCost === null ? "Unknown" : `$${(s.estimatedCost || 0).toFixed(6)}`
         
         row.append(info, tokens, cost)
         listEl.appendChild(row)

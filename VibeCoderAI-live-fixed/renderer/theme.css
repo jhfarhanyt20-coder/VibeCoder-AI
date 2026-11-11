@@ -2269,6 +2269,8 @@ body {
   animation: pulse 1.1s ease-in-out infinite;
 }
 .run-badge[hidden] { display: none; }
+#composer #run-badge { display: none; }
+.pending-prompt .bubble { opacity: 0.75; border-style: dashed; }
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
@@ -3368,3 +3370,7 @@ body {
 .sidebar-restore:hover { background: var(--hover); border-color: var(--row-border-hover); }
 .sidebar-restore:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .sidebar-restore[hidden] { display: none; }
+
+.shell.sidebar-hidden .sidebar-restore { z-index: 60; }
+.shell.sidebar-hidden .main > .bg-job { left: 52px; }
+.shell.sidebar-hidden .main > .todo-panel { left: 52px; }

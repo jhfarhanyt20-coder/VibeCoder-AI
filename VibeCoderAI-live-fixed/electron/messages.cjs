@@ -124,6 +124,7 @@ function convertMessages(session) {
         },
       } } : {}),
       ...(model ? { model } : {}),
+      ...(m.usage?.cost !== undefined ? { cost: m.usage.cost, costSource: m.usage.costSource || "provider" } : {}),
       time: { created: session.updatedAt },
     })
     flushCompactions(i)

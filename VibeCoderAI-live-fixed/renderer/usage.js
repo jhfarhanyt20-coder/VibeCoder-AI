@@ -25,7 +25,7 @@
     const u = emptyUsage()
     for (const m of list) {
       if (m && m.type === "assistant" && m.tokens) {
-        u.steps.set(m.id, { tokens: m.tokens, cost: num(m.cost) })
+        u.steps.set(m.id, { tokens: m.tokens, cost: typeof m.cost === "number" ? m.cost : null, costSource: m.costSource })
       }
     }
     let compaction = -1
@@ -48,10 +48,10 @@
   }
 
   /** Live update from a `session.step.ended` event. */
-  function addStep(u, id, tokens, cost) {
+  function addStep(u, id, tokens, cost, costSource, model) {
     if (!tokens) return u
-    u.steps.set(id, { tokens, cost: num(cost) })
-    u.last = { tokens, modelKey: u.last ? u.last.modelKey : null }
+    u.steps.set(id, { tokens, cost: typeof cost === "number" ? cost : null, costSource })
+    u.last = { tokens, modelKey: modelKey(model) || (u.last ? u.last.modelKey : null) }
     return u
   }
 
@@ -76,12 +76,14 @@
   }
 
   function totals(u) {
-    const t = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, all: 0, cost: 0, steps: 0 }
+    const t = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, all: 0, cost: 0, steps: 0, unknownCost: 0, estimated: false }
     for (const s of u.steps.values()) {
       const k = s.tokens
       t.input += num(k.input); t.output += num(k.output); t.reasoning += num(k.reasoning)
       t.cacheRead += num(k.cache && k.cache.read); t.cacheWrite += num(k.cache && k.cache.write)
       t.cost += num(s.cost); t.steps++
+      if (s.cost === null) t.unknownCost++
+      if (s.costSource === "estimated") t.estimated = true
     }
     t.all = t.input + t.output + t.reasoning + t.cacheRead + t.cacheWrite
     return t

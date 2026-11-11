@@ -479,6 +479,7 @@ test("permissions: ask -> deny blocks bash; ask -> always remembers; external di
     return { chunks: [...chat.text("fine"), ...chat.end()] }
   })
   vibe.engine.permissionMode = "ask"
+  vibe.engine.rules.push({ tool: "bash", pattern: "*", action: "ask" }, { tool: "external_directory", pattern: "*", action: "ask" })
   fs.writeFileSync(path.join(os.tmpdir(), "outside.txt"), "secret")
   const asked = []
   const evs = []
@@ -502,6 +503,7 @@ test("permission 'always' adds a session rule", async () => {
     return { chunks: [...chat.text("ok"), ...chat.end()] }
   })
   vibe.engine.permissionMode = "ask"
+  vibe.engine.rules.push({ tool: "write", pattern: "*", action: "ask" })
   let asks = 0
   for await (const e of vibe.session.prompt(s.id, "write two")) {
     if (e.type === "permission.ask") {
@@ -778,7 +780,7 @@ test("assistant messages carry per-step token usage for the context ring", async
   const live = U.emptyUsage()
   U.addStep(live, "step", view.tokens, 0)
   assert.equal(U.contextUsed(live), 1290, "ring adds each normalized category exactly once")
-  assert.deepEqual(U.totals(live), { input: 834, output: 40, reasoning: 16, cacheRead: 300, cacheWrite: 100, all: 1290, cost: 0, steps: 1 })
+  assert.deepEqual(U.totals(live), { input: 834, output: 40, reasoning: 16, cacheRead: 300, cacheWrite: 100, all: 1290, cost: 0, steps: 1, unknownCost: 0, estimated: false })
 })
 
 
@@ -1954,7 +1956,7 @@ test("subagent respects parent ask/deny permissions for shell tools", async () =
     : { chunks: [...chat.text("blocked safely"), ...chat.end()] })
   const home = tmp()
   const dir = tmp()
-  const vibe = createVibe({ home, permission: "ask" })
+  const vibe = createVibe({ home, permission: "ask", rules: [{ tool: "bash", pattern: "*", action: "ask" }] })
   await vibe.profiles.upsert({ id: "mock", format: "openai-chat", baseURL: `http://127.0.0.1:${m.port}/v1`, model: "m", noAuth: true, contextLimit: 128000 })
   const s = await vibe.session.create({ dir, profile: "mock" })
   const asks = []
@@ -2159,7 +2161,7 @@ test("V-01: a subagent runs in its own session and never touches the parent hist
 
 test("V-04: browser.evaluate never persists an always-allow rule", async () => {
   const home = tmp()
-  const vibe = createVibe({ home, permission: "ask" })
+  const vibe = createVibe({ home, permission: "ask", rules: [{ tool: "bash", pattern: "*", action: "ask" }] })
   const s = vibe.engine.store.create({ dir: tmp(), profile: "mock" })
   const always = async (perm) => {
     const p = vibe.engine._ask(s, new AbortController().signal, () => {})(perm)
@@ -2203,7 +2205,7 @@ test("V-05: compound bash command is split and a denied tail blocks the whole ca
     : { chunks: [...chat.text("done"), ...chat.end()] })
   const home = tmp()
   const dir = tmp()
-  const vibe = createVibe({ home, permission: "ask" })
+  const vibe = createVibe({ home, permission: "ask", rules: [{ tool: "bash", pattern: "*", action: "ask" }] })
   await vibe.profiles.upsert({ id: "mock", format: "openai-chat", baseURL: `http://127.0.0.1:${m.port}/v1`, model: "m", noAuth: true, contextLimit: 128000 })
   const s = await vibe.session.create({ dir, profile: "mock" })
   const asked = []

@@ -615,3 +615,86 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .settings-nav { width: 206px; }
   .settings-content { padding: 28px 20px 56px; }
 }
+
+/* Match Obsidian's reading rhythm without changing each theme's palette. */
+html:not([data-theme="obsidian"]) .chat-scroll {
+  width: min(760px, calc(100% - 56px));
+  padding: 34px 0 12px;
+  gap: 22px;
+}
+html:not([data-theme="obsidian"]) .msg { min-width: 0; gap: 7px; font-family: var(--font-ui); letter-spacing: normal; }
+html:not([data-theme="obsidian"]) .msg.user { max-width: 76%; }
+html:not([data-theme="obsidian"]) .msg.user .who { align-self: flex-end; }
+html:not([data-theme="obsidian"]) .msg.user .bubble {
+  border: 1px solid var(--border);
+  border-radius: 14px 14px 4px 14px;
+  padding: 11px 15px;
+  font-size: calc(14px * var(--fs-scale, 1));
+  line-height: 1.62;
+}
+html:not([data-theme="obsidian"]) .msg.assistant { align-self: stretch; }
+html:not([data-theme="obsidian"]) .msg.assistant .bubble {
+  padding: 0 2px;
+  font-size: calc(14.5px * var(--fs-scale, 1));
+  line-height: 1.78;
+}
+html:not([data-theme="obsidian"]) .msg.assistant .bubble p { margin: 0 0 10px; }
+html:not([data-theme="obsidian"]) .msg.assistant .bubble p:last-child { margin-bottom: 0; }
+html:not([data-theme="obsidian"]) .msg.assistant .bubble ul,
+html:not([data-theme="obsidian"]) .msg.assistant .bubble ol { margin: 8px 0 12px; padding-left: 18px; }
+html:not([data-theme="obsidian"]) .msg.assistant .bubble li { margin: 4px 0; }
+
+html:not([data-theme="obsidian"]) .main .composer,
+html:not([data-theme="obsidian"]) .main:not(.empty) .composer {
+  width: min(760px, calc(100% - 56px));
+  margin-bottom: 20px;
+  padding: 12px 15px 10px;
+  border-radius: 16px;
+}
+html:not([data-theme="obsidian"]) .composer textarea {
+  font-family: var(--font-ui);
+  font-size: calc(13.5px * var(--fs-scale, 1));
+  line-height: 1.65;
+  letter-spacing: normal;
+  min-height: 26px;
+  max-height: 180px;
+  padding: 2px 2px 8px;
+}
+html:not([data-theme="obsidian"]) .composer-chips { flex-wrap: wrap; gap: 6px; }
+html:not([data-theme="obsidian"]) .composer .chip {
+  min-width: 0;
+  max-width: 100%;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-family: var(--font-ui);
+  font-size: calc(11.5px * var(--fs-scale, 1));
+}
+html:not([data-theme="obsidian"]) #chip-project-label,
+html:not([data-theme="obsidian"]) #chip-branch-label,
+html:not([data-theme="obsidian"]) #model-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+html:not([data-theme="obsidian"]) .composer-foot {
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+html:not([data-theme="obsidian"]) .composer-foot > .spacer { display: none; }
+html:not([data-theme="obsidian"]) .composer-foot > .menu-wrap { min-width: 0; flex: 0 0 auto; max-width: 100%; }
+html:not([data-theme="obsidian"]) .composer-foot > .menu-wrap:has(#btn-model) { flex: 1 1 140px; }
+html:not([data-theme="obsidian"]) #btn-model { width: 100%; min-width: 0; max-width: 300px; }
+html:not([data-theme="obsidian"]) .composer .mode-pill,
+html:not([data-theme="obsidian"]) .composer .mode-pill .mdl,
+html:not([data-theme="obsidian"]) .composer .ctx-btn {
+  font-family: var(--font-ui);
+  font-size: calc(11.5px * var(--fs-scale, 1));
+}
+html:not([data-theme="obsidian"]) .composer .mode-pill { gap: 5px; padding: 5px 8px; border-radius: 7px; }
+html:not([data-theme="obsidian"]) .composer .icon-btn { width: 28px; height: 28px; padding: 0; flex: 0 0 28px; }
+html:not([data-theme="obsidian"]) .composer .send { width: 32px; height: 32px; flex: 0 0 32px; margin-left: auto; border-radius: 9px; }
+html:not([data-theme="obsidian"]) .composer .run-badge { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+html:not([data-theme="obsidian"]) .composer .drop-menu { max-width: min(360px, calc(100vw - 40px)); min-width: min(260px, calc(100vw - 40px)); }

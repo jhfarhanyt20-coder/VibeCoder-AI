@@ -59,6 +59,7 @@ const api = {
 
   // runs
   prompt: call("prompt"),
+  queuePrompt: call("queuePrompt"),
   resumeRun: call("resumeRun"),
   interrupt: call("interrupt"),
   compactSession: call("compactSession"),

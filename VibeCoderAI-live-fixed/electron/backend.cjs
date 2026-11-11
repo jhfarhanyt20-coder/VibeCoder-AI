@@ -381,6 +381,7 @@ function onEngineEvent(ev) {
     return
   }
   switch (ev.type) {
+    case "prompts.attached": emitUI("session.prompts.attached", sid, { ids: ev.ids }); break
     case "text.delta": {
       if (!sid) break
       const state = runState.get(sid) || { assistantMessageID: `asst_${Date.now().toString(36)}`, ordinal: 0, text: "", reasoningStarted: false, failed: null }
@@ -433,7 +434,10 @@ function onEngineEvent(ev) {
     case "recipe.start": emitUI("session.recipe.started", sid, data); break
     case "usage":
       emitUI("session.step.ended", sid, {
-        assistantMessageID: `asst_${Date.now().toString(36)}`,
+        assistantMessageID: `${runState.get(sid)?.assistantMessageID || "usage"}-step-${ev.step || 0}`,
+        model: ev.model,
+        cost: ev.cost,
+        costSource: ev.costSource,
         tokens: {
           input: Number(ev.input) || 0,
           output: Number(ev.output) || 0,
@@ -554,8 +558,8 @@ const handlers = {
   getAllUsage: async (a = {}) => {
     const id = idOf(a)
     const sessions = id ? [engine.getSession(id)] : engine.listSessions({}).map((row) => engine.getSession(row.id))
-    const rows = sessions.map((s) => ({ id: s.id, title: s.title, tokens: (Number(s.usage?.totalInput) || 0) + (Number(s.usage?.totalOutput) || 0), inputTokens: Number(s.usage?.totalInput) || 0, outputTokens: Number(s.usage?.totalOutput) || 0, estimatedCost: 0 }))
-    return { sessions: rows, totalTokens: rows.reduce((n, r) => n + r.tokens, 0), totalCost: 0, using: id ? { ...sessions[0].usage } : undefined }
+    const rows = sessions.map((s) => ({ id: s.id, title: s.title, tokens: (Number(s.usage?.totalInput) || 0) + (Number(s.usage?.totalOutput) || 0), inputTokens: Number(s.usage?.totalInput) || 0, outputTokens: Number(s.usage?.totalOutput) || 0, estimatedCost: s.usage?.totalCost !== undefined ? Number(s.usage.totalCost) : null }))
+    return { sessions: rows, totalTokens: rows.reduce((n, r) => n + r.tokens, 0), totalCost: rows.reduce((n, r) => n + (r.estimatedCost || 0), 0), unknownCost: rows.some((r) => r.estimatedCost === null), using: id ? { ...sessions[0].usage } : undefined }
   },
   clearSessionRules: async (a = {}) => { const id = idOf(a); if (id) { const s = requireSession(id); s.rules = []; engine.store.save(s) }; return { cleared: true } },
   listSessions: async (a = {}) => engine.listSessions({ dir: a.all ? undefined : (a.directory || a.dir || currentDirectory) }),
@@ -616,7 +620,8 @@ const handlers = {
     setImmediate(() => { (async () => { for await (const _ev of vibe.session.resume(id, { summaryModel: "session" })) {} })().catch((e) => { const st = runState.get(id); if (st) st.failed = String(e?.message || e); flushText(id); flushReasoning(id); emitUI("session.execution.failed", id, { error: { message: String(e?.message || e) }, persisted: true }); runState.delete(id) }) })
     return { started: true, sessionID: id }
   },
-  interrupt: async (a = {}) => { await vibe.session.interrupt(idOf(a)); return { interrupted: true } },
+  queuePrompt: async (a = {}) => { const id = idOf(a); requireSession(id); return engine.queuePrompt(id, { id: a.id, text: a.text }) },
+  interrupt: async (a = {}) => { await engine.stop(idOf(a)); return { interrupted: true } },
   compactSession: async (a = {}) => vibe.session.compact(idOf(a), { reason: a.reason === "auto" ? "auto" : "manual", summaryModel: "session" }),
   getCompactionSettings: async () => engine.getCompactionConfig(),
   setCompactionSettings: async (a = {}) => {
@@ -925,7 +930,7 @@ const handlers = {
 
 const preloadNames = [
   "info","setMode","getAllUsage","clearSessionRules","browserCreateTab","browserCloseTab","browserListTabs","browserCurrent","browserNavigate","browserScreenshot","browserEvaluate","browserSnapshot","browserClick","browserFill","browserPress","browserScroll",
-  "listSessions","createSession","getMessages","renameSession","deleteSession","revertSession","undoSession","listSnapshots","listStepSnapshots","previewSnapshot","undoStepSession","redoSession","listRedo","getTrail","prompt","resumeRun","interrupt","compactSession","getCompactionSettings","setCompactionSettings",
+  "listSessions","createSession","getMessages","renameSession","deleteSession","revertSession","undoSession","listSnapshots","listStepSnapshots","previewSnapshot","undoStepSession","redoSession","listRedo","getTrail","prompt","queuePrompt","resumeRun","interrupt","compactSession","getCompactionSettings","setCompactionSettings",
   "listShells","shellOutput","shellInput","backgroundSession","backgroundShell","cancelShell","setPermissions","listPermissionRequests","replyPermission","listForms","replyForm","cancelForm",
   "listModels","listAllModels","listModelLimits","setModel","providerCatalog","providerList","providerSave","providerRemove","providerDisabled","providerKey","providerModels","providerModel","providerMeta",
   "cwd","setDirectory","getDirectory","gitBranch","pickProject","pickAttachments","readAttachment","ensureAgent","switchAgent","listAgents","setAgentDisabled","mcpList","mcpAdd","mcpRemove","subagentCreate","subagentList","subagentStatus","subagentResult","subagentDetails","subagentResume","subagentStop","subagentToggle",

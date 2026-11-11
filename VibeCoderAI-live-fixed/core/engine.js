@@ -488,6 +488,15 @@ class Engine {
   }
 
   // ---- running ----
+  queuePrompt(id, item) {
+    const run = this.runs.get(id)
+    if (!run || run.signal.aborted) throw new Error("Session is not running.")
+    if (!item?.id || !String(item.text || "").trim()) throw new Error("A pending message needs an ID and text.")
+    if (!run.userPrompts) run.userPrompts = []
+    if (!run.userPrompts.some((entry) => entry.id === item.id)) run.userPrompts.push({ id: item.id, text: String(item.text) })
+    return { queued: true }
+  }
+
   interrupt(id) {
     const c = this.runs.get(id)
     if (!c) return
@@ -1105,6 +1114,7 @@ class Engine {
       summaryWarning: summary.warning,
       takePendingResults: () => this._takeShellResultParts(session),
       takePendingProgress: () => this._takeShellProgressParts(session),
+      takePendingPrompts: () => (ctl.userPrompts || []).splice(0),
     })
       .catch((e) => {
         emit({

@@ -1,6 +1,6 @@
 "use strict"
 const llm = require("../llm")
-const { canonicalUsage, inputTotal, outputTotal } = require("../llm/usage")
+const { canonicalUsage, inputTotal, outputTotal, estimateCost } = require("../llm/usage")
 const tools = require("../tools")
 const compaction = require("./compaction")
 const { buildSystem } = require("./prompt")
@@ -142,7 +142,7 @@ function splitCommand(cmd) {
   return out.length ? out : [s.trim()]
 }
 
-async function runLoop({ session, store, profile, apiKey, emit, signal, askPermission, agentName, agent = null, extraSystem, maxSteps = 100, extraTools = () => [], waitExtraTools = null, isOrphan = () => false, engine = null, compactionConfig = null, summaryProfile = null, summaryApiKey = "", summaryWarning = "", takePendingResults = null, takePendingProgress = null }) {
+async function runLoop({ session, store, profile, apiKey, emit, signal, askPermission, agentName, agent = null, extraSystem, maxSteps = 100, extraTools = () => [], waitExtraTools = null, isOrphan = () => false, engine = null, compactionConfig = null, summaryProfile = null, summaryApiKey = "", summaryWarning = "", takePendingResults = null, takePendingProgress = null, takePendingPrompts = null }) {
   // V-07: an agent definition can cap the run. An explicit maxSteps wins.
   if (agent && Number(agent.steps) > 0 && maxSteps === 100) maxSteps = Math.floor(Number(agent.steps))
   const agentSystem = agent && typeof agent.system === "string" ? agent.system.trim() : ""
@@ -313,6 +313,15 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
       store.save(session)
       emit({ type: "shell.results.attached", count: pendingResults.length })
     }
+    const prompts = typeof takePendingPrompts === "function" ? takePendingPrompts() : []
+    for (const prompt of prompts) {
+      session.turnSeq = (session.turnSeq || 0) + 1
+      session.messages.push({ role: "user", parts: [{ type: "text", text: prompt.text }], turn: session.turnSeq, pendingID: prompt.id })
+    }
+    if (prompts.length) {
+      store.save(session)
+      emit({ type: "prompts.attached", ids: prompts.map((prompt) => prompt.id) })
+    }
     const system = sys()
     activeTools = allTools()
     toolSpecs = tools.specs(activeTools)
@@ -346,13 +355,15 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
         }
         else if (ev.type === "tool_call") calls.push(ev)
         else if (ev.type === "usage") {
-          stepUsage = canonicalUsage(ev)
+          const previous = stepUsage || canonicalUsage({})
+          stepUsage = estimateCost(canonicalUsage(ev), require("../llm/provider-meta").modelPricing(profile, engine?.home))
           const fullInput = inputTotal(stepUsage)
           const fullOutput = outputTotal(stepUsage)
           if (fullInput) session.usage.lastInput = fullInput
-          session.usage.totalInput += fullInput
-          session.usage.totalOutput += fullOutput
-          emit({ type: "usage", ...stepUsage })
+          session.usage.totalInput += fullInput - inputTotal(previous)
+          session.usage.totalOutput += fullOutput - outputTotal(previous)
+          if (stepUsage.cost !== undefined) session.usage.totalCost = (session.usage.totalCost || 0) + stepUsage.cost - (previous.cost || 0)
+          emit({ type: "usage", ...stepUsage, step: step + 1, model: { providerID: String(profile.id).split("/")[0], id: profile.model } })
         } else if (ev.type === "finish") finish = ev.reason
       }
     } catch (e) {
@@ -418,6 +429,7 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
       },
     })
     if (!calls.length) {
+      if (engine?.runs.get(session.id)?.userPrompts?.length) continue
       if (finalStep) finalized = true
       return emit({ type: "done", reason: finish, ...(finalStep ? { summarized: true } : {}) })
     }

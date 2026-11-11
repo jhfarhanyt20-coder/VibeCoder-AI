@@ -31,6 +31,7 @@ function canonicalUsage(value = {}) {
       read: number(value.cache?.read),
       write: number(value.cache?.write),
     },
+    ...(value.cost !== undefined && value.cost !== null && Number.isFinite(Number(value.cost)) && Number(value.cost) >= 0 ? { cost: Number(value.cost), costSource: value.costSource || "provider" } : {}),
   }
 }
 
@@ -65,6 +66,7 @@ function openAIUsage(raw = {}) {
     output: Math.max(0, totalOutput - reasoning),
     reasoning,
     cache: { read: cacheRead, write: cacheWrite },
+    cost: raw.cost,
   })
 }
 
@@ -83,6 +85,7 @@ function anthropicUsage(raw = {}) {
     output: Math.max(0, number(raw.output_tokens) - reasoning),
     reasoning,
     cache: { read: cacheRead, write: cacheWrite },
+    cost: raw.cost,
   })
 }
 
@@ -96,4 +99,18 @@ const outputTotal = (usage) => {
   return value.output + value.reasoning
 }
 
-module.exports = { canonicalUsage, openAIUsage, anthropicUsage, inputTotal, outputTotal }
+function estimateCost(usage, pricing) {
+  if (usage.cost !== undefined) return canonicalUsage(usage)
+  const u = canonicalUsage(usage)
+  if (!pricing) return u
+  const categories = [[u.input, pricing.input], [u.output + u.reasoning, pricing.output], [u.cache.read, pricing.cache_read], [u.cache.write, pricing.cache_write]]
+  let cost = 0
+  for (const [tokens, rate] of categories) {
+    if (!tokens) continue
+    if (rate === undefined || rate === null || !Number.isFinite(Number(rate)) || Number(rate) < 0) return u
+    cost += tokens * Number(rate) / 1e6
+  }
+  return { ...u, cost, costSource: "estimated" }
+}
+
+module.exports = { canonicalUsage, openAIUsage, anthropicUsage, inputTotal, outputTotal, estimateCost }

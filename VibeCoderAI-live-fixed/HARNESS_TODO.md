@@ -399,3 +399,5 @@ Thin vertical slice first:
 - Owner reviewed the running app and explicitly approved desktop/website push and release. Next patch is 0.3.9; public desktop update feed and private website source remain separate.
 - Full desktop tests and isolated Electron timeline checks passed before approval. Release verification is repeated after the version bump; release success still requires verifying the workflow and published installer/update assets.
 - See the latest separate verified changes backup for final verification results. The original recovery snapshot is not overwritten.
+- Release completed: desktop `5d5a5c0`, tag `v0.3.9`, Actions run `43275999969` succeeded; installer, blockmap and latest.yml verified, including the downloaded installer's SHA-512.
+- Private website `58e62f6` deployed successfully on Render (`dep-dbr0130ae00c739op0hg`); 17 tests and live browser smoke passed. Website uses the current 0.3.9 fallback when upstream metadata is unavailable. Real Google sign-in still requires an owner check; no credentials were used by automation.

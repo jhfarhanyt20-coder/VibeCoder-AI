@@ -460,13 +460,17 @@ test("diagnostics: project TypeScript reports a targeted semantic type error", a
 test("diagnostics: TypeScript without a local compiler fails gracefully", () => {
   const diagnostics = require("../core/tools/diagnostics")
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "vibe-diag-no-ts-"))
+  const existsSync = fs.existsSync
   try {
     const file = path.join(project, "value.ts")
     fs.writeFileSync(file, "const value: number = 1\n")
+    // Ancestor node_modules directories may contain a compiler even for an empty fixture.
+    fs.existsSync = (file) => !String(file).endsWith(path.join("node_modules", "typescript", "lib", "typescript.js")) && existsSync(file)
     const report = diagnostics.inspect(file, { semantic: true })
     assert.equal(report.available, false)
     assert.match(report.note, /No project-local TypeScript compiler/i)
   } finally {
+    fs.existsSync = existsSync
     fs.rmSync(project, { recursive: true, force: true })
   }
 })

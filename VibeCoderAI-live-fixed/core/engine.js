@@ -491,9 +491,15 @@ class Engine {
   queuePrompt(id, item) {
     const run = this.runs.get(id)
     if (!run || run.signal.aborted) throw new Error("Session is not running.")
-    if (!item?.id || !String(item.text || "").trim()) throw new Error("A pending message needs an ID and text.")
-    if (!run.userPrompts) run.userPrompts = []
-    if (!run.userPrompts.some((entry) => entry.id === item.id)) run.userPrompts.push({ id: item.id, text: String(item.text) })
+    const files = (Array.isArray(item?.files) ? item.files : []).filter((file) => file?.data && String(file.mime || "").startsWith("image/")).map((file) => ({ mime: file.mime, data: file.data }))
+    if (!item?.id || (!String(item.text || "").trim() && !files.length)) throw new Error("A pending message needs an ID and text or attachments.")
+    const session = this.store.get(id)
+    if (session.messages.some((message) => message.pendingID === item.id)) return { queued: false, attached: true }
+    const pending = Array.isArray(session.pendingPrompts) ? session.pendingPrompts : []
+    if (!pending.some((entry) => entry.id === item.id)) {
+      session.pendingPrompts = [...pending, { id: item.id, text: String(item.text || ""), files }]
+      try { this.store.save(session) } catch (error) { session.pendingPrompts = pending; throw error }
+    }
     return { queued: true }
   }
 
@@ -873,6 +879,9 @@ class Engine {
   async *prompt(id, text, opts = {}) {
     if (this.runs.has(id)) throw new Error("Session is busy")
     const session = this.store.get(id)
+    if (opts.pendingID && session.messages.some((message) => message.pendingID === opts.pendingID)) return
+    const queuedPrompt = opts.pendingID ? (session.pendingPrompts || []).find((item) => item.id === opts.pendingID) : null
+    if (queuedPrompt) { text = queuedPrompt.text; opts = { ...opts, files: queuedPrompt.files } }
     const recipe = !opts.agentOnly ? recipes.expandRecipe(text, { directory: session.dir, home: this.home }) : null
     const runOpts = recipe ? {
       ...opts,
@@ -883,8 +892,11 @@ class Engine {
     const profile = profiles.getProfile(session.profile, this.home)
     const apiKey = profiles.getKey(profile, this.home)
     const ctl = this._begin(id, opts)
+    let rollback = null
+    let persisted = false
     try {
       repairHistory(session.messages)
+      rollback = { messages: session.messages.slice(), turnSeq: session.turnSeq, title: session.title, pendingPrompts: session.pendingPrompts, pendingShellProgress: session.pendingShellProgress, pendingShellResults: session.pendingShellResults, pendingSubagentResults: session.pendingSubagentResults }
       // agentOnly prompts (the automatic background-run nudge) reach the model
       // but are not shown as a chat bubble.
       const parts = opts.agentOnly ? [{ type: "text", text: String(text), agentOnly: true }] : [{ type: "text", text: String(text) }]
@@ -905,12 +917,17 @@ class Engine {
         role: "user",
         parts,
         ...(opts.agentOnly ? {} : { turn: session.turnSeq }),
+        ...(opts.pendingID ? { pendingID: opts.pendingID } : {}),
         ...(recipe ? { recipe: { id: recipe.id, agent: recipe.agent || "", model: recipe.model || "" } } : {}),
       })
       if (session.title === "New session") session.title = String(text).replace(/\s+/g, " ").trim().slice(0, 60) || session.title
+      if (opts.pendingID) session.pendingPrompts = (session.pendingPrompts || []).filter((item) => item.id !== opts.pendingID)
       this.store.save(session)
+      persisted = true
+      if (opts.pendingID) this._emit(id, { type: "prompts.attached", ids: [opts.pendingID] })
       if (!opts.agentOnly) snapshots.clearRedo(this.home, id)
     } catch (e) {
+      if (rollback && !persisted) Object.assign(session, rollback)
       // a failed save (Windows file lock, full disk...) used to leave the run
       // registered for ever -> every later message said "previous run could not be stopped"
       if (this.runs.get(id) === ctl) this.runs.delete(id)
@@ -1114,7 +1131,7 @@ class Engine {
       summaryWarning: summary.warning,
       takePendingResults: () => this._takeShellResultParts(session),
       takePendingProgress: () => this._takeShellProgressParts(session),
-      takePendingPrompts: () => (ctl.userPrompts || []).splice(0),
+      takePendingPrompts: () => [...(session.pendingPrompts || [])],
     })
       .catch((e) => {
         emit({

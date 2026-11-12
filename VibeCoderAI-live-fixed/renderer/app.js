@@ -1444,11 +1444,21 @@ function updateJumpButton() {
   if (!btn) return
   const away = !nearBottom()
   btn.hidden = !away
+  const composer = $("composer")
+  const main = composer?.closest(".main")
+  if (composer && main) {
+    const box = composer.getBoundingClientRect()
+    const frame = main.getBoundingClientRect()
+    btn.style.left = `${Math.min(box.right - frame.left + 10, frame.width - 46)}px`
+    btn.style.top = `${box.top - frame.top + (box.height - 36) / 2}px`
+  }
   const label = btn.querySelector(".jump-label")
   if (label) label.textContent = state.running ? "Agent working" : "Jump to latest"
 }
 
 $("messages").addEventListener("scroll", updateJumpButton, { passive: true })
+window.addEventListener("resize", updateJumpButton)
+if (typeof ResizeObserver === "function") new ResizeObserver(updateJumpButton).observe($("composer"))
 if ($("jump-live")) {
   $("jump-live").onclick = () => {
     scrollChat(true)
@@ -1504,7 +1514,8 @@ function addMsg(role, text, cls = "", images = []) {
     }
     if (box.children.length) bubble.appendChild(box)
   }
-  $("messages").appendChild(el)
+  if (role === "assistant" && cls === "commentary") appendTimeline(el, "commentary")
+  else $("messages").appendChild(el)
   scrollChat()
   return bubble
 }
@@ -1829,8 +1840,7 @@ function syncSubagentCard(el, info) {
   body.hidden = false
   const group = el.closest(".used-group")
   if (group) {
-    const labels = [...group.querySelectorAll(".used-list .act-title")].map((node) => node.textContent).filter(Boolean)
-    if (labels.length) group.querySelector(".used-names").textContent = labels.join(", ")
+    if (group.classList.contains("timeline-group")) updateTimelineGroup(group)
   }
   el.querySelector(".act-head").onclick = (event) => {
     event.stopPropagation()
@@ -1864,6 +1874,7 @@ function renderToolDetails(el, name, input = {}, state = {}, toolCallId = "") {
     wrap.className = "file-rows"
     for (const f of files) wrap.appendChild(fileRowEl(f, input, name))
     el.appendChild(wrap)
+    for (const card of wrap.querySelectorAll(".file-row")) card.classList.toggle("open", !timelinePreferences.edits.collapse)
     return
   }
 
@@ -1918,7 +1929,7 @@ function renderToolDetails(el, name, input = {}, state = {}, toolCallId = "") {
     el.classList.add("open")
   }
 
-  if (name in TOOL_CARD_META) {
+  if (name in TOOL_CARD_META && name !== "read" && timelineCategory(name) !== "shell") {
     el.classList.add("file-tool")
     const wrap = document.createElement("div")
     wrap.className = "file-rows"
@@ -1934,10 +1945,104 @@ function renderToolDetails(el, name, input = {}, state = {}, toolCallId = "") {
   }
 }
 
+const TIMELINE_KEY = "vibecoder.timelinePreferences"
+const TIMELINE_CATEGORIES = { shell: "Shell", edits: "Edits", thinking: "Thinking", subagents: "Subagents", notices: "Notices", tools: "Other tools", commentary: "Commentary" }
+function loadTimelinePreferences() {
+  let saved = {}
+  try { saved = JSON.parse(localStorage.getItem(TIMELINE_KEY) || "{}") || {} } catch {}
+  return Object.fromEntries(Object.keys(TIMELINE_CATEGORIES).map((key) => [key, { group: saved[key]?.group !== false, collapse: saved[key]?.collapse !== false }]))
+}
+let timelinePreferences = loadTimelinePreferences()
+function timelineCategory(name) {
+  if (["bash", "shell", "terminal", "exec", "command", "shellOutput", "shellInput", "shellList"].includes(name)) return "shell"
+  if (["edit", "write", "patch", "multiedit", "apply_patch", "write_file"].includes(name)) return "edits"
+  if (["subagent", "task", "subagentResult", "subagentStatus", "subagentStop"].includes(name)) return "subagents"
+  return "tools"
+}
+function timelineGroup() {
+  const wrap = document.createElement("div")
+  wrap.className = "used-group timeline-group collapsed"
+  const head = document.createElement("button")
+  head.type = "button"
+  head.className = "used-head"
+  head.innerHTML = '<span class="used-n"></span><span class="used-names"></span><span class="used-chev">▾</span>'
+  const list = document.createElement("div")
+  list.className = "used-list"
+  head.onclick = () => {
+    wrap.classList.toggle("collapsed")
+    wrap.dataset.manualExpansion = "1"
+    head.setAttribute("aria-expanded", String(!wrap.classList.contains("collapsed")))
+  }
+  wrap.append(head, list)
+  return wrap
+}
+function updateTimelineGroup(group) {
+  const rows = [...group.querySelector(".used-list").children]
+  const tools = rows.filter((row) => row.dataset.timelineTool)
+  const labels = [...new Set((tools.length ? tools : rows).map((row) => row.dataset.timelineTool || TIMELINE_CATEGORIES[row.dataset.timelineItem]))]
+  group.querySelector(".used-n").textContent = `Used ${tools.length || rows.length}`
+  group.querySelector(".used-names").textContent = labels.join(", ")
+  if (!group.dataset.manualExpansion) group.classList.toggle("collapsed", rows.every((row) => timelinePreferences[row.dataset.timelineItem].collapse))
+  group.querySelector(".used-head").setAttribute("aria-expanded", String(!group.classList.contains("collapsed")))
+}
+function appendTimeline(el, category) {
+  el.dataset.timelineItem = category
+  const host = $("messages")
+  el.remove()
+  if (!timelinePreferences[category].group) { host.appendChild(el); return }
+  let group = host.lastElementChild
+  if (!group?.classList.contains("timeline-group")) {
+    group = timelineGroup()
+    host.appendChild(group)
+  }
+  group.querySelector(".used-list").appendChild(el)
+  updateTimelineGroup(group)
+}
+function refreshTimelinePreferences() {
+  const host = $("messages")
+  const rows = [...host.children].flatMap((el) => el.classList.contains("timeline-group") ? [...el.querySelector(".used-list").children] : [el])
+  host.replaceChildren()
+  for (const row of rows) {
+    if (row.dataset.timelineItem) {
+      const category = row.dataset.timelineItem
+      if (row.classList.contains("thought") || row.classList.contains("act")) row.classList.toggle("open", !timelinePreferences[category].collapse)
+      for (const card of row.querySelectorAll(".file-row")) card.classList.toggle("open", !timelinePreferences[category].collapse)
+      appendTimeline(row, category)
+    } else host.appendChild(row)
+  }
+  scrollChat()
+}
+function initTimelineSettings() {
+  const host = $("timeline-preferences")
+  if (!host) return
+  for (const [category, label] of Object.entries(TIMELINE_CATEGORIES)) {
+    const row = document.createElement("div")
+    row.className = "timeline-setting-row"
+    const title = document.createElement("span")
+    title.textContent = label
+    row.appendChild(title)
+    for (const option of ["group", "collapse"]) {
+      const input = document.createElement("input")
+      input.type = "checkbox"
+      input.checked = timelinePreferences[category][option]
+      input.dataset.timelineSetting = `${category}.${option}`
+      input.setAttribute("aria-label", `${label}: ${option}`)
+      input.onchange = () => {
+        timelinePreferences[category][option] = input.checked
+        try { localStorage.setItem(TIMELINE_KEY, JSON.stringify(timelinePreferences)) } catch {}
+        refreshTimelinePreferences()
+      }
+      row.appendChild(input)
+    }
+    host.appendChild(row)
+  }
+}
+initTimelineSettings()
+
 /* ---------- thought rows (opencode style "Thought 4s") ---------- */
 function addThought(text = "", dur = 0, open = false) {
   const el = document.createElement("div")
-  el.className = "thought" + (open ? " open" : "")
+  el.className = "thought" + ((open || !timelinePreferences.thinking.collapse) ? " open" : "")
   el.innerHTML = `
     <div class="thought-head">
       <span class="th-label">Thinking</span>
@@ -1948,7 +2053,7 @@ function addThought(text = "", dur = 0, open = false) {
   if (dur) el.querySelector(".th-dur").textContent = `${dur}s`
   el.querySelector(".th-body").textContent = text
   el.querySelector(".thought-head").onclick = () => el.classList.toggle("open")
-  $("messages").appendChild(el)
+  appendTimeline(el, "thinking")
   scrollChat()
   return el
 }
@@ -1991,13 +2096,7 @@ function toolGroupEl(tools) {
 function renderAssistantMessage(m) {
   const parts = m.content ?? []
   const created = m.time?.created ?? 0
-  let pending = []
   const seenTexts = new Set()
-  const flush = () => {
-    if (!pending.length) return
-    $("messages").appendChild(toolGroupEl(pending))
-    pending = []
-  }
   for (const part of parts) {
     if (part.type === "text" && part.text) {
       // Some providers replay the last text part after a retry. The replay is NOT
@@ -2010,10 +2109,9 @@ function renderAssistantMessage(m) {
         if (seenTexts.has(t)) continue
         seenTexts.add(t)
       }
-      flush()
-      addMsg("assistant", part.text)
+      const commentary = parts.slice(parts.indexOf(part) + 1).some((next) => next.type === "tool")
+      addMsg("assistant", part.text, commentary ? "commentary" : "")
     } else if (part.type === "reasoning" && part.text) {
-      flush()
       const span = part.time?.completed && part.time?.created
         ? part.time.completed - part.time.created
         : (m.time?.completed && m.time?.created ? m.time.completed - m.time.created : 0)
@@ -2021,15 +2119,12 @@ function renderAssistantMessage(m) {
       addThought(part.text, dur)
     } else if (part.type === "tool" && part.name === "question") {
       // Answered questions get a compact recap instead of a raw tool row.
-      flush()
       const q = questionHistoryEl(part)
       if (q) $("messages").appendChild(q)
     } else if (part.type === "tool") {
-      const el = toolRow(part)
-      pending.push({ part, el })
+      toolRow(part)
     }
   }
-  flush()
 }
 
 function compactionHistoryEl(m) {
@@ -2079,6 +2174,9 @@ function renderHistoryMessages(msgs, { editable = true, usageRing = true, retryR
       const el = addAct(key, "⌘", "Shell", "tool", m.command || "")
       el.querySelector(".act-body").textContent = m.cwd || ""
       actDone(key, m.status === "exited")
+      el.classList.toggle("open", !timelinePreferences.shell.collapse)
+      el.dataset.timelineTool = "Shell"
+      appendTimeline(el, "shell")
     }
   }
   if (assistantName !== "VibeCoder") {
@@ -2314,7 +2412,21 @@ function openSession(id) {
 }
 
 /* ---------- queued prompts (typed while the agent is running) ---------- */
-const queuedPrompts = [] // { id, sid, text }
+const queuedPrompts = [] // { id, sid, text, attachments, files }
+
+function attachmentFiles(items) {
+  return items.map((item) => item.kind === "image" && item.dataUrl
+    ? { uri: item.dataUrl, mime: item.mime || "image/png", name: item.name }
+    : { path: item.path, mime: item.mime || "text/plain", name: item.name })
+}
+
+function clearSubmittedAttachments(submitted) {
+  for (const item of submitted) {
+    const index = attachments.indexOf(item)
+    if (index !== -1) attachments.splice(index, 1)
+  }
+  renderAttachments()
+}
 const COMPOSER_DRAFT_KEY = "vibecoder.composerDraft"
 
 function saveComposerDraft() {
@@ -2339,7 +2451,10 @@ function renderQueueStrip() {
   if (!host) return
   host.querySelectorAll(".pending-prompt").forEach((el) => el.remove())
   for (const item of queuedPrompts.filter((q) => q.sid === state.activeSessionID)) {
-    const bubble = addMsg("user", item.text)
+    const images = item.attachments.filter((attachment) => attachment.kind === "image" && attachment.dataUrl).map((attachment) => attachment.dataUrl)
+    const names = item.attachments.filter((attachment) => attachment.kind !== "image" || !attachment.dataUrl).map((attachment) => attachment.name || attachment.path || "File")
+    const preview = [item.text, ...names.map((name) => `📎 ${name}`)].filter(Boolean).join("\n")
+    const bubble = addMsg("user", preview, "", images)
     const row = bubble.closest(".msg")
     row.classList.add("pending-prompt")
     row.dataset.pendingId = item.id
@@ -2350,16 +2465,23 @@ function renderQueueStrip() {
 async function queuePrompt() {
   const ta = $("input")
   const text = ta.value.trim()
-  if (!text || !state.activeSessionID) return
-  const item = { id: crypto.randomUUID(), sid: state.activeSessionID, text }
+  if ((!text && !attachments.length) || !state.activeSessionID) return
+  const submitted = [...attachments]
+  const item = { id: crypto.randomUUID(), sid: state.activeSessionID, text, attachments: submitted.map((attachment) => ({ ...attachment })), files: attachmentFiles(submitted), submitting: true }
   queuedPrompts.push(item)
   ta.value = ""
   saveComposerDraft()
+  clearSubmittedAttachments(submitted)
   $("btn-send").disabled = false
   renderQueueStrip()
-  if (typeof vibe.queuePrompt === "function") {
-    try { await vibe.queuePrompt({ sessionID: item.sid, id: item.id, text }) } catch {}
-  }
+  try {
+    if (typeof vibe.queuePrompt === "function") {
+      const result = await vibe.queuePrompt({ sessionID: item.sid, id: item.id, text, files: item.files })
+      if (result?.ok === false && state.running) showRunFailureInline(result.error || "Could not queue attachments; the pending message was retained.")
+    }
+  } catch (error) {
+    if (state.running) showRunFailureInline(String(error?.message || error))
+  } finally { item.submitting = false }
   if (!state.running) drainQueuedPrompt()
 }
 
@@ -2367,9 +2489,13 @@ async function drainQueuedPrompt() {
   if (state.running || sendInFlight || state.stopping || state.retryTimer) return
   const item = queuedPrompts.find((q) => q.sid === state.activeSessionID)
   if (!item) { renderQueueStrip(); return }
+  if (item.submitting) return
   sendInFlight = true
   try {
-    if (await performSend(item.text)) queuedPrompts.splice(queuedPrompts.indexOf(item), 1)
+    if (await performSend(item)) {
+      const index = queuedPrompts.indexOf(item)
+      if (index !== -1) queuedPrompts.splice(index, 1)
+    }
   } catch (e) {
     showRunFailureInline(String(e?.message || e))
   } finally {
@@ -2399,10 +2525,15 @@ async function send() {
   }
 }
 
-async function performSend(queuedText = null) {
+async function performSend(queued = null) {
   const ta = $("input")
-  const text = queuedText === null ? ta.value.trim() : queuedText
-  if (!text && attachments.length === 0) return
+  let targetSessionID = queued?.sid ?? state.activeSessionID
+  const sameSession = () => state.activeSessionID === targetSessionID
+  if (!sameSession()) return false
+  const text = queued === null ? ta.value.trim() : queued.text
+  const sentAttachments = queued === null ? [...attachments] : queued.attachments
+  const files = queued === null ? attachmentFiles(sentAttachments) : queued.files
+  if (!text && !sentAttachments.length) return
   // A new message cancels a pending automatic retry (no double prompt).
   if (state.retryTimer) {
     clearTimeout(state.retryTimer)
@@ -2413,6 +2544,7 @@ async function performSend(queuedText = null) {
   maybeShowBranchForText(text)
   // The owner code is checked and REDACTED here: the model must never see it.
   const owner = await checkOwnerCode(text)
+  if (!sameSession()) return false
   const sendText = owner.found ? owner.text : text
 
   // Re-read the authoritative provider catalog before every run. This closes the
@@ -2420,12 +2552,14 @@ async function performSend(queuedText = null) {
   // session still points at the previous provider ID.
   if (typeof vibe.providerCatalog === "function") {
     const latest = await vibe.providerCatalog()
+    if (!sameSession()) return false
     if (!latest || latest.ok === false) {
       throw new Error(`Could not refresh the current provider catalog before sending: ${latest?.error || "unknown error"}`)
     }
     applyProviderCatalog(latest.data || {})
   } else {
     await loadModels()
+    if (!sameSession()) return false
   }
   const isCurrentModel = (key) => !!key && (state.models || []).some((item) => `${item.providerID}/${item.id}` === key)
   if (!isCurrentModel(state.selectedModel)) {
@@ -2439,23 +2573,29 @@ async function performSend(queuedText = null) {
   // A fresh user request starts a fresh background cycle.
   autoCont.count = 0
   autoCont.todos = []
-  if (!state.activeSessionID) {
+  if (!targetSessionID) {
     const res = await vibe.createSession({ directory: projectDir })
+    if (!sameSession()) return false
     if (!res.ok) return alert(res.error)
     const s = res.data?.data ?? res.data
-    state.activeSessionID = s.id ?? s.sessionID
+    targetSessionID = s.id ?? s.sessionID
+    state.activeSessionID = targetSessionID
     await refreshSessions()
+    if (!sameSession()) return false
   }
   // Bind the session to a "VibeCoder AI" agent (project-level agent file)
   let workDir = projectDir
   if (!workDir) {
     const c = await vibe.cwd()
+    if (!sameSession()) return false
     workDir = c.ok ? c.data : null
   }
   if (workDir) {
     const ag = await vibe.ensureAgent({ directory: workDir })
+    if (!sameSession()) return false
     if (ag.ok && !(ag.data && ag.data.ok === false)) {
-      const sw = await vibe.switchAgent({ sessionID: state.activeSessionID, agent: "vibecoderai" })
+      const sw = await vibe.switchAgent({ sessionID: targetSessionID, agent: "vibecoderai" })
+      if (!sameSession()) return false
       if (!sw.ok) console.warn("[VibeCoder] could not select the agent:", sw.error || "unknown error")
       hideError("agent")
     } else {
@@ -2463,13 +2603,15 @@ async function performSend(queuedText = null) {
       hideError("agent")
     }
   }
-  await applyPermissionMode()
+  await applyPermissionMode(targetSessionID)
+  if (!sameSession()) return false
   if (state.selectedModel) {
     const [providerID, ...rest] = state.selectedModel.split("/")
     const resM = await vibe.setModel({
-      sessionID: state.activeSessionID,
+      sessionID: targetSessionID,
       model: { providerID, id: rest.join("/") },
     })
+    if (!sameSession()) return false
     if (!resM || resM.ok === false) {
       const message = resM?.error || "Could not apply the selected model. No message was sent."
       showError("Could not switch model", message, { key: "model-switch" })
@@ -2478,29 +2620,18 @@ async function performSend(queuedText = null) {
     hideError("model-switch")
   }
   setMainEmpty(false)
-  const files = []
-  for (const a of queuedText === null ? attachments : []) {
-    if (a.kind === "image" && a.dataUrl) {
-      files.push({ uri: a.dataUrl, mime: a.mime || "image/png", name: a.name })
-    } else if (a.path) {
-      const uri = "file:///" + String(a.path).replace(/\\/g, "/").split("/").map(encodeURIComponent).join("/")
-      files.push({ uri, mime: a.mime || "text/plain", name: a.name })
-    }
-  }
   const fullText = sendText
-  if (queuedText === null && ta.value.trim() === text) {
+  if (queued === null && ta.value.trim() === text) {
     ta.value = ""
     saveComposerDraft()
   }
-  const sentAttachments = queuedText === null ? [...attachments] : []
   const imageUrls = sentAttachments
     .filter((a) => a.kind === "image" && a.dataUrl)
     .map((a) => a.dataUrl)
   const fileCount = sentAttachments.length - imageUrls.length
   let shown = sendText
   if (fileCount > 0) shown = (shown ? shown + " " : "") + `📎${fileCount}`
-  if (queuedText === null) attachments.length = 0
-  renderAttachments()
+  if (queued === null) clearSubmittedAttachments(sentAttachments)
   const userMsgEl = addMsg("user", shown, "", imageUrls)
   attachUserActions(userMsgEl, sendText, "")
   scrollChat(true)
@@ -2524,12 +2655,13 @@ async function performSend(queuedText = null) {
   const thinkingEffort = pillState.thinking === "None" ? "none" : pillState.thinking.toLowerCase()
   // Remember what is being sent BEFORE the call: if the request itself fails or
   // times out, the Retry button needs the text.
-  state.lastSend = { text: fullText, files, thinking: thinkingEffort, msgEl: userMsgEl, sid: state.activeSessionID }
+  state.lastSend = { text: fullText, files, thinking: thinkingEffort, msgEl: userMsgEl, sid: targetSessionID }
   state.retryCount = 0
   let res
   try {
-    res = await vibe.prompt({ sessionID: state.activeSessionID, text: fullText, files, thinking: thinkingEffort })
+    res = await vibe.prompt({ sessionID: targetSessionID, text: fullText, files, thinking: thinkingEffort, pendingID: queued?.id })
   } catch (e) {
+    if (!sameSession()) return false
     setRunning(false)
     if (state.thinkTimer) clearTimeout(state.thinkTimer)
     // prompt() threw before the engine touched the session: nothing to revert
@@ -2537,6 +2669,7 @@ async function performSend(queuedText = null) {
     showRunFailureInline(String(e), thinking)
     return
   }
+  if (!sameSession()) return !!res?.ok
   if (!res.ok) {
     setRunning(false)
     if (state.thinkTimer) clearTimeout(state.thinkTimer)
@@ -2551,7 +2684,7 @@ async function performSend(queuedText = null) {
   setTimeout(refreshSessions, 700)
   // Remember what was sent so a timeout / rate limit can be retried without the
   // user retyping anything.
-  state.lastSend = { text: fullText, files, thinking: thinkingEffort, msgEl: userMsgEl, sid: state.activeSessionID }
+  state.lastSend = { text: fullText, files, thinking: thinkingEffort, msgEl: userMsgEl, sid: targetSessionID }
   state.retryCount = 0
   // Bind the live bubble to the server message id, so a later "edit & resend"
   // or an automatic retry reverts THIS message and not a same-text one.
@@ -3780,6 +3913,8 @@ vibe.onEvent(async (event) => {
   }
   if (type === "session.tool.input.started") {
     typingFlush()
+    const preceding = $("messages").lastElementChild
+    if (preceding?.matches(".msg.assistant") && !preceding.querySelector(".thinking, .error")) appendTimeline(preceding, "commentary")
     const key = `tool:${data.id}`
     if (data.name) toolNames.set(key, data.name)
     // track it as a running job (shown in the "Running" list)
@@ -3902,7 +4037,7 @@ vibe.onEvent(async (event) => {
       ? Math.max(1, Math.round((Date.now() - state.reasonStart) / 1000))
       : 0
     if (secs) reasoningEl.querySelector(".th-dur").textContent = `${secs}s`
-    reasoningEl.classList.remove("open") // collapse to a neat "Thinking Ns"
+    reasoningEl.classList.toggle("open", !timelinePreferences.thinking.collapse)
     reasoningEl = null
     state.reasonStart = null
   }
@@ -6113,10 +6248,10 @@ function permissionsFor(mode) {
   return list
 }
 
-async function applyPermissionMode() {
-  if (!state.activeSessionID) return
+async function applyPermissionMode(sessionID = state.activeSessionID) {
+  if (!sessionID) return
   const res = await vibe.setPermissions({
-    sessionID: state.activeSessionID,
+    sessionID,
     permissions: permissionsFor(pillState.access),
   })
   if (!res.ok) showError("Could not apply the permission mode", res.error || "Unknown error", { key: "permissions" })
@@ -6126,7 +6261,7 @@ async function applyPermissionMode() {
   // that were added from previous "Full Access" sessions. This ensures
   // permission prompts actually appear in Ask mode.
   if (pillState.access !== "full" && vibe.clearSessionRules) {
-    await vibe.clearSessionRules({ sessionID: state.activeSessionID })
+    await vibe.clearSessionRules({ sessionID })
   }
 }
 
@@ -8032,7 +8167,7 @@ function relPath(p) {
 function toolSubtitle(name, input = {}) {
   switch (name) {
     case "read":
-      return relPath(input.filePath ?? input.path ?? "")
+      return [relPath(input.filePath ?? input.path ?? ""), input.offset != null ? `offset=${input.offset}` : "", input.limit != null ? `limit=${input.limit}` : ""].filter(Boolean).join(" ")
     case "list":
     case "glob":
       return relPath(input.path ?? "") || input.pattern || ""
@@ -8085,6 +8220,12 @@ function addAct(key, icon, title, kind = "", subtitle = "") {
 function toolAct(key, name, input = {}) {
   const meta = TOOL_META[name] ?? { icon: "🔧", label: name }
   const el = addAct(key, meta.icon, toolRowLabel(name), "tool", toolSubtitle(name, input))
+  const category = timelineCategory(name)
+  el.dataset.timelineTool = toolRowLabel(name)
+  if (!el.dataset.timelineItem) {
+    el.classList.toggle("open", !timelinePreferences[category].collapse)
+    appendTimeline(el, category)
+  }
   return el
 }
 
@@ -8124,7 +8265,7 @@ function addHarnessNote(title, detail = "", tone = "") {
   strong.textContent = String(title || "VibeCore")
   el.appendChild(strong)
   if (detail) el.appendChild(document.createTextNode(` · ${String(detail)}`))
-  box.appendChild(el)
+    appendTimeline(el, "notices")
   scrollChat()
 }
 

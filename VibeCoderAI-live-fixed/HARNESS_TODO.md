@@ -389,3 +389,13 @@ Thin vertical slice first:
 - নতুন dependency নয়।
 - foreign code/prompt/text/asset কপি নয়।
 - test না চালিয়ে "done" বলা নয়।
+
+## 11. Approved timeline and pending attachment release — 2026-11-12
+
+- Unified activity summary with chronological mixed tool/thinking rows; saved per-category grouping/collapse preferences. No category-by-category summary headers.
+- Pending composer messages carry image/file snapshots through the trusted backend and safe model boundary; attachment-only messages are supported.
+- Jump-to-latest control lives in the gutter to the right of the composer.
+- The no-compiler diagnostics fixture is isolated from ancestor TypeScript installs; production compiler resolution is unchanged.
+- Owner reviewed the running app and explicitly approved desktop/website push and release. Next patch is 0.3.9; public desktop update feed and private website source remain separate.
+- Full desktop tests and isolated Electron timeline checks passed before approval. Release verification is repeated after the version bump; release success still requires verifying the workflow and published installer/update assets.
+- See the latest separate verified changes backup for final verification results. The original recovery snapshot is not overwritten.

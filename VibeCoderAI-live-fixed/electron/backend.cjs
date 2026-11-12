@@ -597,6 +597,29 @@ function readAttachmentData(file) {
   return { path: full, name: path.basename(full), kind: isImage ? "image" : "file", mime, size: stat.size, base64, dataUrl: isImage ? `data:${mime};base64,${base64}` : undefined, text: mime.startsWith("text/") || mime === "application/json" ? data.toString("utf8") : undefined }
 }
 
+function promptAttachments(input = []) {
+  const files = []
+  const text = []
+  for (const file of Array.isArray(input) ? input : []) {
+    if (!file) continue
+    const match = /^data:([^;,]+);base64,(.*)$/s.exec(String(file.uri || file.dataUrl || ""))
+    if (match && match[1].startsWith("image/")) files.push({ mime: match[1], data: match[2] })
+    else if ((file.data || file.base64) && String(file.mime || "").startsWith("image/")) files.push({ mime: file.mime, data: file.data || file.base64 })
+    else {
+      let filePath = file.path
+      if (!filePath && String(file.uri || "").startsWith("file:")) filePath = require("node:url").fileURLToPath(file.uri)
+      if (!filePath || !pickedAttachmentPaths.has(path.resolve(filePath))) throw new Error("This file was not selected in the attachment picker")
+      const attachment = readAttachmentData(filePath)
+      if (attachment.kind === "image") files.push({ mime: attachment.mime, data: attachment.base64 })
+      else {
+        if (attachment.size > 1024 * 1024) throw new Error("Text attachments must be 1 MB or smaller")
+        text.push(`\n\n[Attached file: ${attachment.name}]\n${attachment.text ?? Buffer.from(attachment.base64, "base64").toString("utf8")}`)
+      }
+    }
+  }
+  return { files, text: text.join("") }
+}
+
 const handlers = {
   info: async () => {
     const id = selectedProfileId(); const p = engine.listProfiles().find((x) => x.id === id)
@@ -635,24 +658,18 @@ const handlers = {
   prompt: async (a = {}) => {
     const id = idOf(a); requireSession(id)
     if (engine.isBusy(id)) throw new Error("Session is already running.")
-    const files = []
-    const attachmentText = []
-    for (const f of (Array.isArray(a.files) ? a.files : [])) {
-      if (!f) continue
-      const uri = String(f.uri || f.dataUrl || "")
-      const dataUrl = /^data:([^;,]+);base64,(.*)$/s.exec(uri)
-      if (dataUrl && dataUrl[1].startsWith("image/")) files.push({ mime: dataUrl[1], data: dataUrl[2] })
-      else if (f.data && String(f.mime || "").startsWith("image/")) files.push({ mime: f.mime, data: f.data })
-      else if (f.base64 && String(f.mime || "").startsWith("image/")) files.push({ mime: f.mime, data: f.base64 })
-      else if (f.path && pickedAttachmentPaths.has(path.resolve(f.path)) && fs.existsSync(f.path)) {
-        const st = fs.statSync(f.path); if (st.size <= 1024 * 1024 && !String(f.mime || "").startsWith("image/")) attachmentText.push(`\n\n[Attached file: ${path.basename(f.path)}]\n${fs.readFileSync(f.path, "utf8")}`)
-      }
+    const session = requireSession(id)
+    if (a.pendingID && session.messages.some((message) => message.pendingID === a.pendingID)) {
+      emitUI("session.prompts.attached", id, { ids: [a.pendingID] })
+      return { attached: true, sessionID: id }
     }
+    const pending = a.pendingID ? (session.pendingPrompts || []).find((item) => item.id === a.pendingID) : null
+    const { files, text: attachmentText } = pending ? { files: pending.files, text: "" } : promptAttachments(a.files)
     activeSessionId = id
     runState.set(id, { assistantMessageID: `asst_${Date.now().toString(36)}`, ordinal: 0, text: "", reasoningStarted: false, failed: null })
     emitUI("session.execution.started", id, {})
     setImmediate(() => {
-      ;(async () => { for await (const _ev of vibe.session.prompt(id, String(a.text || "") + attachmentText.join(""), { files, thinking: a.thinking, summaryModel: "session" })) {} })().catch((e) => {
+      ;(async () => { for await (const _ev of vibe.session.prompt(id, String(a.text || "") + attachmentText, { files, thinking: a.thinking, summaryModel: "session", pendingID: a.pendingID })) {} })().catch((e) => {
         const st = runState.get(id); if (st) st.failed = String(e?.message || e)
         flushText(id); flushReasoning(id)
         emitUI("session.execution.failed", id, { error: { message: String(e?.message || e) }, persisted: false })
@@ -668,7 +685,11 @@ const handlers = {
     setImmediate(() => { (async () => { for await (const _ev of vibe.session.resume(id, { summaryModel: "session" })) {} })().catch((e) => { const st = runState.get(id); if (st) st.failed = String(e?.message || e); flushText(id); flushReasoning(id); emitUI("session.execution.failed", id, { error: { message: String(e?.message || e) }, persisted: true }); runState.delete(id) }) })
     return { started: true, sessionID: id }
   },
-  queuePrompt: async (a = {}) => { const id = idOf(a); requireSession(id); return engine.queuePrompt(id, { id: a.id, text: a.text }) },
+  queuePrompt: async (a = {}) => {
+    const id = idOf(a); requireSession(id)
+    const attachments = promptAttachments(a.files)
+    return engine.queuePrompt(id, { id: a.id, text: String(a.text || "") + attachments.text, files: attachments.files })
+  },
   interrupt: async (a = {}) => { await engine.stop(idOf(a)); return { interrupted: true } },
   compactSession: async (a = {}) => vibe.session.compact(idOf(a), { reason: a.reason === "auto" ? "auto" : "manual", summaryModel: "session" }),
   getCompactionSettings: async () => engine.getCompactionConfig(),

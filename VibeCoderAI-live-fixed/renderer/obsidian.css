@@ -947,6 +947,14 @@ html[data-theme="obsidian"] .ctxd-card{
 html[data-theme="obsidian"] .browser-panel{ border-color: #26272e; background: #141519; }
 html[data-theme="obsidian"] .browser-tab.active{ background: #1a1c21; color: #f2f3f6; }
 
+html[data-theme="obsidian"] .timeline-group > .used-head { background: transparent; border-radius: 0; }
+html[data-theme="obsidian"] .timeline-group .act,
+html[data-theme="obsidian"] .timeline-group .act.tool { background: transparent; border: 0; border-radius: 0; box-shadow: none; }
+html[data-theme="obsidian"] .timeline-group .act:not(.file-tool) > .act-head { padding: 4px 0; min-height: 0; gap: 8px; }
+html[data-theme="obsidian"] .timeline-group .act-title { font-weight: 500; }
+html[data-theme="obsidian"] .timeline-group .thought-head { background: transparent; padding: 3px 0; }
+html[data-theme="obsidian"] .timeline-group > .used-list { gap: 12px; }
+
 @media (max-width: 900px) {
   html[data-theme="obsidian"] .settings-nav{ width: 204px; }
   html[data-theme="obsidian"] .settings-content{ padding: 28px 22px 56px; }

@@ -19,6 +19,8 @@ npm-debug.log*
 # local env / secrets
 .env
 .env.local
+*client_secret_*
+**/*client_secret_*
 
 # stale artifact (do not ship)
 VibeCoderAI-live-fixed/core/llm/http.zip

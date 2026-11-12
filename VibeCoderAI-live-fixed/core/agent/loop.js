@@ -314,13 +314,28 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
       emit({ type: "shell.results.attached", count: pendingResults.length })
     }
     const prompts = typeof takePendingPrompts === "function" ? takePendingPrompts() : []
-    for (const prompt of prompts) {
-      session.turnSeq = (session.turnSeq || 0) + 1
-      session.messages.push({ role: "user", parts: [{ type: "text", text: prompt.text }], turn: session.turnSeq, pendingID: prompt.id })
-    }
     if (prompts.length) {
-      store.save(session)
-      emit({ type: "prompts.attached", ids: prompts.map((prompt) => prompt.id) })
+      const previousLength = session.messages.length
+      const previousTurn = session.turnSeq
+      const previousPending = session.pendingPrompts
+      const ids = new Set(prompts.map((prompt) => prompt.id))
+      for (const prompt of prompts) {
+        if (session.messages.some((message) => message.pendingID === prompt.id)) continue
+        session.turnSeq = (session.turnSeq || 0) + 1
+        const parts = [{ type: "text", text: prompt.text || "" }]
+        for (const file of prompt.files || []) {
+          if (file?.data && String(file.mime || "").startsWith("image/")) parts.push({ type: "image", mime: file.mime, data: file.data })
+        }
+        session.messages.push({ role: "user", parts, turn: session.turnSeq, pendingID: prompt.id })
+      }
+      session.pendingPrompts = (session.pendingPrompts || []).filter((prompt) => !ids.has(prompt.id))
+      try { store.save(session) } catch (error) {
+        session.messages.length = previousLength
+        session.turnSeq = previousTurn
+        session.pendingPrompts = previousPending
+        throw error
+      }
+      emit({ type: "prompts.attached", ids: [...ids] })
     }
     const system = sys()
     activeTools = allTools()

@@ -6141,6 +6141,75 @@ const providerState = {
   fetched: [],
 }
 
+const providerFormDrafts = new Map()
+let providerDraftWrite = Promise.resolve()
+let providerDraftTimer = null
+
+function providerDraftKey(d = providerState.draft) {
+  return d?.id || "__new__"
+}
+
+function captureProviderForm() {
+  const d = providerState.draft
+  if (!d) return null
+  Object.assign(d, {
+    name: $("pf-name").value,
+    baseURL: $("pf-baseurl").value,
+    apiFormat: $("pf-format").value,
+    apiKey: $("pf-apikey").value,
+    keyVisible: $("pf-apikey").type === "text",
+    headersText: $("pf-headers").value,
+    bodyText: $("pf-body").value,
+    scope: $("pf-scope").value,
+  })
+  providerFormDrafts.set(providerDraftKey(d), d)
+  return { ...d, models: (d.models || []).map((model) => ({ ...model })) }
+}
+
+function persistProviderDraft() {
+  clearTimeout(providerDraftTimer)
+  const draft = captureProviderForm()
+  if (!draft || typeof vibe.providerDraftSave !== "function") return providerDraftWrite
+  const key = providerDraftKey(draft)
+  const status = $("pf-autosave-status")
+  if (status) status.textContent = "Saving draft…"
+  providerDraftWrite = providerDraftWrite.catch(() => {}).then(async () => {
+    const res = await vibe.providerDraftSave({ key, draft })
+    if (!res || res.ok === false) throw new Error(res?.error || "Could not auto-save the provider draft")
+    if (providerDraftKey() === key && status) status.textContent = "Draft auto-saved · use Save provider to apply"
+  }).catch(() => {
+    if (providerDraftKey() === key && status) status.textContent = "Auto-save failed · use Save provider to retry"
+  })
+  return providerDraftWrite
+}
+
+async function restoreProviderDraft(d) {
+  if (typeof vibe.providerDraftLoad !== "function") return
+  const key = providerDraftKey(d)
+  const res = await vibe.providerDraftLoad({ key }).catch(() => null)
+  if (providerState.draft !== d || providerFormDrafts.has(key)) return
+  if (res?.ok && res.data?.draft) {
+    Object.assign(d, res.data.draft, { id: d.id, isNew: d.isNew, keyVisible: false })
+    providerFormDrafts.set(key, d)
+    renderProviderDetail()
+    $("pf-autosave-status").textContent = "Auto-saved draft restored"
+  }
+}
+
+for (const id of ["pf-name", "pf-baseurl", "pf-format", "pf-apikey", "pf-headers", "pf-body", "pf-scope"]) {
+  $(id)?.addEventListener("input", (event) => {
+    captureProviderForm()
+    clearTimeout(providerDraftTimer)
+    if (event.inputType === "insertFromPaste") void persistProviderDraft()
+    else providerDraftTimer = setTimeout(persistProviderDraft, 300)
+  })
+  $(id)?.addEventListener("change", () => void persistProviderDraft())
+  $(id)?.addEventListener("blur", () => void persistProviderDraft())
+}
+window.addEventListener("blur", () => {
+  if (providerState.draft && providerDraftDirty()) void persistProviderDraft()
+})
+
 /* What the app calls for each API format - the hint under the base URL. */
 const FORMAT_HINT = {
   anthropic: "The API root, e.g. https://api.anthropic.com — the app calls /v1/messages (x-api-key). Console/dashboard URLs are fixed automatically.",
@@ -6206,6 +6275,7 @@ function newProviderDraft() {
 }
 
 async function loadProviders(opts = {}) {
+  if (!opts.silent) captureProviderForm()
   if (!vibe.providerList && !vibe.providerCatalog) return
   const generation = ++providerLoadGeneration
   const res = typeof vibe.providerCatalog === "function"
@@ -6226,6 +6296,7 @@ async function loadProviders(opts = {}) {
     providerState.formats = data.formats ?? []
   }
   if (opts.silent) return
+  captureProviderForm()
   renderProviderList()
   if (providerState.selectedId) {
     const found = providerState.list.find((p) => p.id === providerState.selectedId)
@@ -6236,6 +6307,10 @@ async function loadProviders(opts = {}) {
       renderProviderDetail()
       return
     }
+  }
+  if (providerState.draft?.isNew) {
+    renderProviderDetail()
+    return
   }
   providerState.selectedId = null
   providerState.draft = null
@@ -6254,23 +6329,29 @@ function providerDraftDirty() {
     String($("pf-headers")?.value || "").trim() !== providerHeadersText(saved.headers).trim() ||
     String($("pf-body")?.value || "").trim() !== providerBodyText(saved.body).trim() ||
     String($("pf-scope")?.value || "global") !== String(saved.scope || "global") ||
+    !!$("pf-apikey")?.value ||
     currentModels !== JSON.stringify(saved.models || []) ||
     !!d.disabled !== !!saved.disabled
 }
 
 async function refreshProviderStateLive() {
+  captureProviderForm()
   const generation = ++providerRefreshGeneration
   const selectedId = providerState.selectedId
-  const draftBefore = providerState.draft
+  let draftBefore = providerState.draft
     ? { ...providerState.draft, models: [...(providerState.draft.models || [])] }
     : null
-  const dirtyBefore = providerDraftDirty()
+  let dirtyBefore = providerDraftDirty()
 
   await loadModels()
   if (generation !== providerRefreshGeneration) return
   if (typeof vibe.providerCatalog !== "function") {
     await loadProviders({ silent: true })
   }
+
+  if (providerState.selectedId !== selectedId) return
+  draftBefore = captureProviderForm()
+  dirtyBefore = providerDraftDirty()
 
   // A newly-created draft is local work and can survive a refresh. An existing
   // draft whose provider disappeared from disk must not bring the deleted row
@@ -6327,12 +6408,14 @@ function renderProviderList() {
 }
 
 function selectProvider(id) {
+  if (providerState.draft) void persistProviderDraft()
   const p = providerState.list.find((x) => x.id === id)
   if (!p) return
   providerState.selectedId = id
-  providerState.draft = { ...p, isNew: false }
+  providerState.draft = providerFormDrafts.get(id) || { ...p, isNew: false }
   renderProviderList()
   renderProviderDetail()
+  void restoreProviderDraft(providerState.draft)
   // the OpenCode built-in block is not shown while a custom provider is open
   $("md-opencode").hidden = true
   $("md-custom").hidden = false
@@ -6340,10 +6423,12 @@ function selectProvider(id) {
 }
 
 function startNewProvider() {
+  if (providerState.draft) void persistProviderDraft()
   providerState.selectedId = null
-  providerState.draft = newProviderDraft()
+  providerState.draft = providerFormDrafts.get("__new__") || newProviderDraft()
   renderProviderList()
   renderProviderDetail()
+  void restoreProviderDraft(providerState.draft)
   $("md-opencode").hidden = true
   $("md-custom").hidden = false
   $("model-detail").querySelector(".md-empty")?.setAttribute("hidden", "")
@@ -6369,13 +6454,13 @@ function renderProviderDetail() {
   $("pf-name").value = d.name || ""
   $("pf-baseurl").value = d.baseURL || ""
   $("pf-format").value = d.apiFormat || "chat"
-  $("pf-headers").value = providerHeadersText(d.headers)
-  $("pf-body").value = providerBodyText(d.body)
+  $("pf-headers").value = d.headersText ?? providerHeadersText(d.headers)
+  $("pf-body").value = d.bodyText ?? providerBodyText(d.body)
   updateFormatHint()
-  $("pf-apikey").value = ""
-  $("pf-apikey").type = "password"
+  $("pf-apikey").value = d.apiKey || ""
+  $("pf-apikey").type = d.keyVisible ? "text" : "password"
   $("pf-apikey").placeholder = d.hasKey ? `${d.maskedKey} (saved - click the eye to reveal)` : "sk-..."
-  $("pf-key-toggle").classList.remove("revealed")
+  $("pf-key-toggle").classList.toggle("revealed", !!d.keyVisible)
   providerKeyLoaded = null
   $("pf-scope").value = d.scope || "global"
   const toggle = $("toggle-provider")
@@ -6450,6 +6535,12 @@ async function saveProvider() {
       disabled: d.disabled,
     })
     if (!res || res.ok === false) throw new Error(res?.error || "Could not save the provider")
+    clearTimeout(providerDraftTimer)
+    await providerDraftWrite
+    const draftKey = providerDraftKey(d)
+    if (typeof vibe.providerDraftRemove === "function") await vibe.providerDraftRemove({ key: draftKey })
+    providerFormDrafts.delete(draftKey)
+    $("pf-apikey").value = ""
     hideError("providers")
     hideError("providers-key")
     if (res.data?.warning) showError("Saved, but this format may not work", String(res.data.warning), { key: "providers", tone: "warning" })
@@ -6463,6 +6554,8 @@ async function saveProvider() {
       headers,
       body,
       scope: $("pf-scope").value,
+      apiKey: "",
+      keyVisible: false,
       isNew: false,
     }
     await loadProviders()
@@ -6485,6 +6578,10 @@ async function deleteProvider() {
   try {
     const res = await vibe.providerRemove({ id: d.id, scope: d.scope, directory: projectDir })
     if (!res || res.ok === false) throw new Error(res?.error || "Could not delete the provider")
+    clearTimeout(providerDraftTimer)
+    await providerDraftWrite
+    if (typeof vibe.providerDraftRemove === "function") await vibe.providerDraftRemove({ key: providerDraftKey(d) })
+    providerFormDrafts.delete(providerDraftKey(d))
     providerState.selectedId = null
     providerState.draft = null
     await loadProviders()

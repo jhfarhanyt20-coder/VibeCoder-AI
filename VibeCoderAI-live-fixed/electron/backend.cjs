@@ -17,6 +17,7 @@ const { convertMessages } = require("./messages.cjs")
 const updater = require("./updater.cjs")
 const { homeDir } = require("../core/util")
 const profileStore = require("../core/llm/profiles")
+const secrets = require("../core/store/secrets")
 const providerMeta = require("../core/llm/provider-meta")
 const mcp = require("../core/mcp")
 const plugins = require("../core/plugins")
@@ -32,6 +33,7 @@ const uiStateFile = path.join(home, "electron-ui-state.json")
 const memoriesFile = path.join(home, "memories.json")
 const customProfilesFile = path.join(home, "profiles.json")
 const authFile = path.join(home, "auth.json")
+const providerDraftsFile = path.join(home, "provider-drafts.json")
 
 let win = null
 let server = null
@@ -62,6 +64,52 @@ function writeJson(file, data) {
   const temp = `${file}.${process.pid}.tmp`
   fs.writeFileSync(temp, JSON.stringify(data, null, 2), { mode: 0o600 })
   fs.renameSync(temp, file)
+}
+function providerDraftKey(value) {
+  if (typeof value !== "string" || !value.trim() || value.length > 160 || /[\x00-\x1F\x7F]/.test(value) || ["__proto__", "prototype", "constructor"].includes(value)) throw new Error("Invalid provider draft key.")
+  return value
+}
+function readProviderDrafts() {
+  const entries = readJson(providerDraftsFile, {})
+  return entries && typeof entries === "object" && !Array.isArray(entries) ? entries : {}
+}
+function loadProviderDraft(key) {
+  const entries = readProviderDrafts()
+  if (!Object.prototype.hasOwnProperty.call(entries, key)) return null
+  try {
+    const draft = JSON.parse(secrets.decrypt(entries[key]))
+    if (!draft || typeof draft !== "object" || Array.isArray(draft)) throw new Error()
+    return draft
+  } catch { throw new Error("The saved provider draft could not be decrypted. Remove the draft and re-enter its details.") }
+}
+function saveProviderDraft(a) {
+  const key = providerDraftKey(a.key)
+  if (!secrets.available()) throw new Error("Secure provider draft storage is unavailable on this platform. The draft was not saved.")
+  if (!a.draft || typeof a.draft !== "object" || Array.isArray(a.draft)) throw new Error("Provider draft must be an object.")
+  let serialized
+  try { serialized = JSON.stringify(a.draft) } catch { throw new Error("Provider draft must contain JSON-compatible fields.") }
+  if (serialized.length > 100000) throw new Error("Provider draft must be 100 KB or smaller.")
+  const draft = JSON.parse(serialized)
+  if (draft.apiKey != null && typeof draft.apiKey !== "string") throw new Error("The API key must be a string.")
+  const apiKey = String(draft.apiKey || "").trim()
+  if (apiKey.length > 4096) throw new Error("The API key is too long.")
+  if (apiKey && !/^[\x20-\x7E]+$/.test(apiKey)) throw new Error("The API key contains non-ASCII characters. Re-enter the exact key from the provider dashboard.")
+  draft.apiKey = a.clearApiKey === true ? "" : apiKey || loadProviderDraft(key)?.apiKey || ""
+  const entries = readProviderDrafts()
+  if (!Object.prototype.hasOwnProperty.call(entries, key) && Object.keys(entries).length >= 100) throw new Error("Remove an old provider draft before adding another.")
+  // Encrypt the entire raw form so incomplete header/body text cannot leak credentials either.
+  const stored = secrets.encrypt(JSON.stringify(draft))
+  writeJson(providerDraftsFile, { ...entries, [key]: stored })
+  return { key, saved: true }
+}
+function removeProviderDraft(key) {
+  const entries = readProviderDrafts()
+  const removed = Object.prototype.hasOwnProperty.call(entries, key)
+  if (removed) {
+    delete entries[key]
+    writeJson(providerDraftsFile, entries)
+  }
+  return { key, removed }
 }
 function safeResolveDirectory(value) {
   const target = path.resolve(String(value || process.cwd()))
@@ -778,6 +826,9 @@ const handlers = {
     return { id, name, warning: result?.hints?.filter(Boolean).join("\n") || "", scope: saved.scope || profile.scope }
   },
   providerRemove: async (a = {}) => { const result = deleteCustomProfile(String(a.id || "")); scheduleProviderRefresh("provider-removed"); return result },
+  providerDraftSave: async (a = {}) => saveProviderDraft(a),
+  providerDraftLoad: async (a = {}) => ({ draft: loadProviderDraft(providerDraftKey(a.key)) }),
+  providerDraftRemove: async (a = {}) => removeProviderDraft(providerDraftKey(a.key)),
   providerDisabled: async (a = {}) => { const p = profileDetails(String(a.id || "")); if (profileStore.BUILTIN.some((b) => b.id === p.id)) throw new Error("Built-in providers cannot be disabled from this screen"); const { hasKey, ...clean } = p; engine.upsertProfile({ ...clean, disabled: !!a.disabled }); if (selectedModel?.startsWith(p.id + "/") && a.disabled) selectedModel = null; persistUIState(); scheduleProviderRefresh("provider-toggled"); return { id: p.id, disabled: !!a.disabled } },
   providerKey: async (a = {}) => { const p = profileDetails(String(a.id || "")); return { key: p.noAuth ? "" : profileStore.getKey(p, home) } },
   providerModels: async (a = {}) => {
@@ -932,7 +983,7 @@ const preloadNames = [
   "info","setMode","getAllUsage","clearSessionRules","browserCreateTab","browserCloseTab","browserListTabs","browserCurrent","browserNavigate","browserScreenshot","browserEvaluate","browserSnapshot","browserClick","browserFill","browserPress","browserScroll",
   "listSessions","createSession","getMessages","renameSession","deleteSession","revertSession","undoSession","listSnapshots","listStepSnapshots","previewSnapshot","undoStepSession","redoSession","listRedo","getTrail","prompt","queuePrompt","resumeRun","interrupt","compactSession","getCompactionSettings","setCompactionSettings",
   "listShells","shellOutput","shellInput","backgroundSession","backgroundShell","cancelShell","setPermissions","listPermissionRequests","replyPermission","listForms","replyForm","cancelForm",
-  "listModels","listAllModels","listModelLimits","setModel","providerCatalog","providerList","providerSave","providerRemove","providerDisabled","providerKey","providerModels","providerModel","providerMeta",
+  "listModels","listAllModels","listModelLimits","setModel","providerCatalog","providerList","providerSave","providerRemove","providerDraftSave","providerDraftLoad","providerDraftRemove","providerDisabled","providerKey","providerModels","providerModel","providerMeta",
   "cwd","setDirectory","getDirectory","gitBranch","pickProject","pickAttachments","readAttachment","ensureAgent","switchAgent","listAgents","setAgentDisabled","mcpList","mcpAdd","mcpRemove","subagentCreate","subagentList","subagentStatus","subagentResult","subagentDetails","subagentResume","subagentStop","subagentToggle",
   "pluginList","pluginAdd","pluginRemove","builtins","installBuiltinPlugin","removeBuiltinPlugin","marketplace","installSkill","removeSkill","installCustomSkill","removeCustomSkill","importGitHubSkills","registryAdd","registryRemove","memoryPath","memoryList","memoryAdd","memoryRemove","openMemoryFile","todoList","todoSave","cliInfo","cliInstallTested","cliUpdateCheck","authStatus","authConnect","authDisconnect","upgradeInfo","startUpgrade","ownerScan","ownerVerify","notify","openExternal","restartEvents","logError","openErrorLog","appUpdateStatus","appUpdateSetPrefs"
 ]
@@ -942,10 +993,13 @@ function initBackend(targetWin, { port = Number(process.env.VIBE_SERVE_PORT || 4
   win = targetWin
   if (!registered) {
     registered = true
-    for (const name of preloadNames) ipcMain.handle(`vibe:${name}`, async (_event, arg) => {
+    for (const name of preloadNames) ipcMain.handle(`vibe:${name}`, async (event, arg) => {
       const fn = handlers[name]
       if (!fn) return { ok: false, error: `The operation "${name}" is not implemented in this build.` }
-      try { return { ok: true, data: await fn(arg || {}) } }
+      try {
+        if (name.startsWith("providerDraft") && (!win || event?.sender !== win.webContents || (event.senderFrame && event.senderFrame !== event.sender.mainFrame))) throw new Error("Untrusted provider draft request")
+        return { ok: true, data: await fn(arg || {}) }
+      }
       catch (e) { return { ok: false, error: String(e?.message || e) } }
     })
   }

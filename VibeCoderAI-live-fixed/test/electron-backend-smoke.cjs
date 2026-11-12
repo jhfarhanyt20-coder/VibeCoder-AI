@@ -128,7 +128,7 @@ async function main() {
   async function invoke(name, arg = {}) {
     const fn = handlers.get(`vibe:${name}`)
     assert.equal(typeof fn, "function", `missing IPC handler ${name}`)
-    const result = await fn({}, arg)
+    const result = await fn({ sender: win.webContents }, arg)
     assert.equal(result?.ok, true, `${name} failed: ${result?.error || JSON.stringify(result)}`)
     return result.data
   }
@@ -143,6 +143,66 @@ async function main() {
   assert.equal(initialCatalog.source.profilesFile, path.join(tempHome, "profiles.json"))
   assert.equal(initialCatalog.source.authFile, path.join(tempHome, "auth.json"))
   assert.ok(initialCatalog.models.every((row) => !row.isBuiltin || row.hasKey), "unconfigured built-in providers must not crowd the model picker")
+  async function verifyProviderDrafts() {
+    if (process.platform !== "win32") {
+      const result = await handlers.get("vibe:providerDraftSave")({ sender: win.webContents }, { key: "__new__", draft: { apiKey: "must-not-reach-disk" } })
+      assert.equal(result.ok, false)
+      assert.match(result.error, /Secure provider draft storage is unavailable/)
+      assert.equal(fs.existsSync(path.join(tempHome, "provider-drafts.json")), false, "drafts must fail closed rather than storing plaintext without OS encryption")
+      return
+    }
+    const profilesBeforeDraft = (await invoke("providerList")).custom
+    const modelsBeforeDraft = await invoke("listAllModels")
+    const draftFile = path.join(tempHome, "provider-drafts.json")
+    const keyOnlyDraft = { name: "", baseURL: "", apiKey: "draft-only-secret-key", apiFormat: "chat", headers: "X-Unfinished", body: '{"metadata":', models: [], scope: "global" }
+    assert.deepEqual(await invoke("providerDraftLoad", { key: "__new__" }), { draft: null })
+    const draftSaveResult = await invoke("providerDraftSave", { key: "__new__", draft: keyOnlyDraft })
+    assert.deepEqual(draftSaveResult, { key: "__new__", saved: true }, "draft saves must not echo credentials")
+    assert.deepEqual((await invoke("providerDraftLoad", { key: "__new__" })).draft, keyOnlyDraft, "key-only drafts and incomplete raw header/body text must round-trip")
+    const keyOnlyDisk = fs.readFileSync(draftFile, "utf8")
+    assert.ok(JSON.parse(keyOnlyDisk).__new__.startsWith(require("../core/store/secrets").PREFIX), "Windows drafts must use DPAPI encryption")
+    assert.equal(keyOnlyDisk.includes(keyOnlyDraft.apiKey), false, "draft credentials must never be written in plaintext on Windows")
+    assert.equal(keyOnlyDisk.includes(keyOnlyDraft.body), false, "raw draft bodies must also be encrypted on Windows")
+    const urlOnlyDraft = { name: "", baseURL: "https://unfinished.example.test/v1", apiKey: "", apiFormat: "responses", headers: "X-Partial:", body: "{", models: [], scope: "project", disabled: false }
+    await invoke("providerDraftSave", { key: "url-only", draft: urlOnlyDraft })
+    assert.deepEqual((await invoke("providerDraftLoad", { key: "url-only" })).draft, urlOnlyDraft, "URL-only drafts need no name, key, or model")
+    const updatedDraft = { ...urlOnlyDraft, models: [{ id: "incomplete-model", context: "", output: "", image: false }] }
+    await invoke("providerDraftSave", { key: "__new__", draft: updatedDraft })
+    assert.deepEqual((await invoke("providerDraftLoad", { key: "__new__" })).draft, { ...updatedDraft, apiKey: keyOnlyDraft.apiKey }, "an empty API key must preserve the previously saved draft key")
+    for (const key of ["", "x".repeat(161), "bad\nkey", "__proto__"]) {
+      const invalid = await handlers.get("vibe:providerDraftSave")({ sender: win.webContents }, { key, draft: keyOnlyDraft })
+      assert.equal(invalid.ok, false, "invalid draft keys must be rejected")
+    }
+    const invalidKey = await handlers.get("vibe:providerDraftSave")({ sender: win.webContents }, { key: "__new__", draft: { apiKey: "invalid\nkey" } })
+    assert.equal(invalidKey.ok, false)
+    assert.match(invalidKey.error, /non-ASCII/)
+    for (const name of ["providerDraftSave", "providerDraftLoad", "providerDraftRemove"]) {
+      const untrusted = await handlers.get(`vibe:${name}`)({ sender: {} }, { key: "__new__", draft: keyOnlyDraft })
+      assert.equal(untrusted.ok, false, "only the trusted app renderer may access drafts")
+      assert.match(untrusted.error, /Untrusted provider draft request/)
+      const subframe = await handlers.get(`vibe:${name}`)({ sender: win.webContents, senderFrame: {} }, { key: "__new__", draft: keyOnlyDraft })
+      assert.equal(subframe.ok, false, "embedded frames must not access app drafts")
+    }
+    await invoke("providerDraftSave", { key: "__new__", draft: updatedDraft, clearApiKey: true })
+    assert.equal((await invoke("providerDraftLoad", { key: "__new__" })).draft.apiKey, "", "explicit clearing must remove a saved draft API key")
+    assert.deepEqual((await invoke("providerList")).custom, profilesBeforeDraft, "partial drafts must never create active providers")
+    assert.deepEqual(await invoke("listAllModels"), modelsBeforeDraft, "partial drafts must never create selectable models")
+    assert.equal(fs.existsSync(path.join(tempHome, "profiles.json")), false, "drafts must not write real profiles")
+    assert.equal(fs.existsSync(path.join(tempHome, "auth.json")), false, "drafts must not populate the active key store")
+    assert.equal(JSON.stringify(sent).includes(keyOnlyDraft.apiKey), false, "draft secrets must never appear in renderer events")
+    assert.deepEqual(await invoke("providerDraftRemove", { key: "__new__" }), { key: "__new__", removed: true })
+    assert.deepEqual(await invoke("providerDraftLoad", { key: "__new__" }), { draft: null })
+    assert.deepEqual((await invoke("providerDraftLoad", { key: "url-only" })).draft, urlOnlyDraft, "removing one draft must preserve other provider drafts")
+    assert.deepEqual(await invoke("providerDraftRemove", { key: "url-only" }), { key: "url-only", removed: true })
+    assert.deepEqual(await invoke("providerDraftRemove", { key: "url-only" }), { key: "url-only", removed: false })
+    assert.deepEqual(JSON.parse(fs.readFileSync(draftFile, "utf8")), {})
+    await invoke("providerDraftSave", { key: "smoke-provider", draft: keyOnlyDraft })
+    const failedManualSave = await handlers.get("vibe:providerSave")({ sender: win.webContents }, { id: "smoke-provider", name: "Incomplete provider" })
+    assert.equal(failedManualSave.ok, false)
+    assert.deepEqual((await invoke("providerDraftLoad", { key: "smoke-provider" })).draft, keyOnlyDraft, "a rejected real provider save must not remove its draft")
+    console.log("PASS secure provider drafts: partial forms, Windows encryption, key preservation, trusted IPC and profile isolation")
+  }
+  await verifyProviderDrafts()
   // A fresh VIBE_HOME has no configured provider. Add one explicitly so this
   // test never depends on a no-auth built-in provider shipping with the app.
   await invoke("providerSave", {
@@ -153,6 +213,11 @@ async function main() {
     apiKey: "test-only-key",
     models: [{ id: "smoke-model", context: 8192, output: 1024 }],
   })
+  if (process.platform === "win32") {
+    assert.ok((await invoke("providerDraftLoad", { key: "smoke-provider" })).draft, "real profile saves must leave draft removal to the successful manual-save caller")
+    await invoke("providerDraftRemove", { key: "smoke-provider" })
+    assert.deepEqual(await invoke("providerDraftLoad", { key: "smoke-provider" }), { draft: null }, "the renderer can remove a draft after a successful manual profile save")
+  }
   const session = await invoke("createSession", { directory: process.cwd(), title: "Backend smoke test" })
   assert.ok(session.id)
   assert.equal((await invoke("getMessages", { sessionID: session.id })).length, 0)

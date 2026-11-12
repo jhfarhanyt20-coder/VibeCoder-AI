@@ -17,6 +17,18 @@ const messages = read("electron/messages.cjs")
 const main = read("electron/main.cjs")
 const themeBoot = read("renderer/theme.js")
 
+for (const method of ["providerDraftSave", "providerDraftLoad", "providerDraftRemove"]) {
+  assert.match(preload, new RegExp(`${method}: call\\("${method}"\\)`))
+  assert.ok(app.includes(`vibe.${method}`), `${method} must be wired to the provider form`)
+}
+assert.match(app, /event\.inputType === "insertFromPaste"\) void persistProviderDraft\(\)/)
+assert.match(app, /function refreshProviderStateLive\(\) \{\s*captureProviderForm\(\)/)
+assert.match(app, /\$\("pf-apikey"\)\.value = d\.apiKey \|\| ""/)
+assert.match(html, /id="pf-autosave-status" role="status"/)
+assert.match(app, /\$\("pf-save"\)\?\.addEventListener\("click", saveProvider\)/)
+assert.match(app, /\$\("pf-key-toggle"\)\?\.addEventListener\("click", async/)
+
+
 // CSP is style-src 'self': inline style attributes are blocked by the renderer.
 assert.doesNotMatch(html, /\sstyle=/, "renderer HTML must not use inline style attributes")
 assert.match(html, /<link rel="stylesheet" href="skin\.css" \/>/)

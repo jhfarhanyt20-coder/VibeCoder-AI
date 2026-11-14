@@ -401,3 +401,4 @@ Thin vertical slice first:
 - See the latest separate verified changes backup for final verification results. The original recovery snapshot is not overwritten.
 - Release completed: desktop `5d5a5c0`, tag `v0.3.9`, Actions run `43275999969` succeeded; installer, blockmap and latest.yml verified, including the downloaded installer's SHA-512.
 - Private website `58e62f6` deployed successfully on Render (`dep-dbr0130ae00c739op0hg`); 17 tests and live browser smoke passed. Website uses the current 0.3.9 fallback when upstream metadata is unavailable. Real Google sign-in still requires an owner check; no credentials were used by automation.
+- Owner asked for the next patch in the main desktop project only, including the existing local prompt-style change. Version is 0.3.10. Local ZIP files stay uncommitted and are excluded from the installer. No files are written to `D:\All Product`.

@@ -1,10 +1,8 @@
 # VibeCoder AI — Project Rules (read this first)
 
-Last updated: 2026-11-12
-Current release: **0.3.9** (tag `v0.3.9`, published 2026-11-12)
-Release assets verified: `VibeCoderAI-v2-0.3.9.exe`,
-`VibeCoderAI-v2-0.3.9.exe.blockmap`, `latest.yml` (`version: 0.3.9`)
-Published installer SHA-512 matched `latest.yml`; release workflow run `43275999969` succeeded.
+Last updated: 2026-11-14
+Current release candidate: **0.3.10** (tag `v0.3.10`)
+Previous verified release: **0.3.9**. Confirm `v0.3.10` installer, blockmap and `latest.yml` after the tag workflow succeeds.
 Repository: https://github.com/jhfarhanyt20-coder/VibeCoder-AI — **PUBLIC**
 Application directory: `VibeCoderAI-live-fixed/`
 License: proprietary, all rights reserved. See `LICENSE`.

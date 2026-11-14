@@ -1659,7 +1659,7 @@ test("system prompt enforces a background summary and verify-before-done", () =>
   const s = buildSystem({ cwd: process.cwd() })
   assert.match(s, /# Background work \(mandatory\)/)
   assert.match(s, /# Finishing and verification \(mandatory\)/)
-  assert.match(s, /interim summary/i)
+  assert.match(s, /one line saying what you are starting and how you will verify it/i)
   assert.match(s, /background: true/)
   assert.match(s, /successful build is not proof/i)
   assert.match(s, /verification - command \+ result/)

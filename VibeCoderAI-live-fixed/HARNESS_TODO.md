@@ -448,3 +448,11 @@ Thin vertical slice first:
   new-feature copy, and a GitHub issue/ complaint path for users. Website source
   stays in the separate private `VibeCoder-AI-Website` repo; the local
   `website/` folder is not committed here.
+- Release verified: commit `199dd2f`, tag `v0.3.11`, Actions run
+  `43834310078` succeeded. Published assets: installer `115721226` bytes,
+  blockmap, `latest.yml` and `VibeCoder-CLI-0.3.11.tgz` (`209472` bytes);
+  both download URLs return HTTP 200.
+- Website verified live at `https://vibecoderai.onrender.com`: `/cli` serves
+  the CLI page, `/download-cli` redirects to the tagged `.tgz`, and the
+  footer/FAQ/CLI support section links users to GitHub Issues for problems and
+  complaints. Website commit `703f2bb` pushed to `main`.

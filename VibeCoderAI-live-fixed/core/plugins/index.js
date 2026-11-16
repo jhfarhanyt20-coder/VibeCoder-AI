@@ -14,7 +14,7 @@ const path = require("path")
 const { spawnSync } = require("child_process")
 const { homeDir } = require("../util")
 
-const globalDir = () => path.join(homeDir(), "plugins")
+const globalDir = (home) => path.join(home || homeDir(), "plugins")
 const projectDir = (dir) => path.join(dir || "", ".vibe", "plugins")
 
 const slug = (s) =>
@@ -26,7 +26,7 @@ const slug = (s) =>
     .slice(0, 80) || "plugin"
 
 /** [{file,name,scope,ok,error}] */
-function listPlugins(directory) {
+function listPlugins(directory, home) {
   const out = []
   const scan = (dir, scope) => {
     let files = []
@@ -52,7 +52,7 @@ function listPlugins(directory) {
       out.push({ file, name: f.replace(/\.js$/, ""), scope, ok, error })
     }
   }
-  scan(globalDir(), "global")
+  scan(globalDir(home), "global")
   if (directory) scan(projectDir(directory), "project")
   return out
 }
@@ -89,8 +89,8 @@ function toolObjects(directory, ctx = {}) {
 }
 
 /** Install from a local file path, a raw JS string, or an npm/git spec. */
-function installPlugin({ file, content, spec, global, directory }) {
-  const dir = global || !directory ? globalDir() : projectDir(directory)
+function installPlugin({ file, content, spec, global, directory, home }) {
+  const dir = global || !directory ? globalDir(home) : projectDir(directory)
   fs.mkdirSync(dir, { recursive: true })
   let target
   if (file) {
@@ -105,23 +105,26 @@ function installPlugin({ file, content, spec, global, directory }) {
   } else if (spec) {
     // fetch the npm package into a temp folder with the user's own npm, copy its main js
     const tmp = fs.mkdtempSync(path.join(require("os").tmpdir(), "vibe-plugin-"))
-    const r = spawnSync("npm", ["install", "--prefix", tmp, "--no-audit", "--no-fund", "--ignore-scripts", String(spec)], {
-      windowsHide: true,
-      timeout: 120000,
-      stdio: "ignore",
-      shell: process.platform === "win32",
-    })
-    if (r.status !== 0) throw new Error("npm could not fetch: " + spec)
-    const nm = path.join(tmp, "node_modules")
-    const pkg = fs.readdirSync(nm).flatMap((p) => (p.startsWith("@") ? fs.readdirSync(path.join(nm, p)).map((q) => p + "/" + q) : [p]))[0]
-    if (!pkg) throw new Error("package installed but empty")
-    const pkgDir = path.join(nm, pkg)
-    const pj = JSON.parse(fs.readFileSync(path.join(pkgDir, "package.json"), "utf8"))
-    const main = path.join(pkgDir, pj.main || "index.js")
-    if (!fs.existsSync(main)) throw new Error("no main entry in " + spec)
-    target = path.join(dir, slug(pj.name || spec) + ".js")
-    fs.copyFileSync(main, target)
-    fs.rmSync(tmp, { recursive: true, force: true })
+    try {
+      const r = spawnSync("npm", ["install", "--prefix", tmp, "--no-audit", "--no-fund", "--ignore-scripts", String(spec)], {
+        windowsHide: true,
+        timeout: 120000,
+        stdio: "ignore",
+        shell: process.platform === "win32",
+      })
+      if (r.status !== 0) throw new Error("npm could not fetch: " + spec)
+      const nm = path.join(tmp, "node_modules")
+      const pkg = fs.readdirSync(nm).flatMap((p) => (p.startsWith("@") ? fs.readdirSync(path.join(nm, p)).map((q) => p + "/" + q) : [p]))[0]
+      if (!pkg) throw new Error("package installed but empty")
+      const pkgDir = path.join(nm, pkg)
+      const pj = JSON.parse(fs.readFileSync(path.join(pkgDir, "package.json"), "utf8"))
+      const main = path.join(pkgDir, pj.main || "index.js")
+      if (!fs.existsSync(main)) throw new Error("no main entry in " + spec)
+      target = path.join(dir, slug(pj.name || spec) + ".js")
+      fs.copyFileSync(main, target)
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
   } else {
     throw new Error("Plugin install needs a file, content or npm spec")
   }
@@ -139,7 +142,7 @@ function installPlugin({ file, content, spec, global, directory }) {
     } catch {}
     throw new Error("Plugin rejected: " + error)
   }
-  return { name: path.basename(target, ".js"), file: target, scope: target.startsWith(globalDir()) ? "global" : "project" }
+  return { name: path.basename(target, ".js"), file: target, scope: target.startsWith(globalDir(home)) ? "global" : "project" }
 }
 
 function removePlugin({ name, global, directory }) {

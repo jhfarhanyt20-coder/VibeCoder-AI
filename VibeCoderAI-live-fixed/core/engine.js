@@ -21,6 +21,11 @@ const { combineRules, decideWithSource } = require("./harness/guard")
 const recipes = require("./harness/recipes")
 const { Trail, shouldTrail } = require("./harness/trail")
 const { newId, homeDir } = require("./util")
+// Preserve callers that bind individual Engine methods to a lightweight host;
+// real engines additionally resolve exact provider/model session keys.
+const targetProfile = (engine, id) => typeof engine._profileTarget === "function"
+  ? engine._profileTarget(id)
+  : profiles.getProfile(id, engine.home)
 
 class Engine {
   /**
@@ -43,6 +48,8 @@ class Engine {
     // auth.json and warms the key cache - the UI hot path never spawns.
     profiles.migrateAuthKeys(this.home)
     this.listeners = new Set()
+    this.eventInstance = newId("event")
+    this.eventSequence = 0
     this.trail = new Trail({ home: this.home })
     this.pending = new Map()
     // V-10: interactive questions the agent is waiting on (formID -> form).
@@ -163,7 +170,9 @@ class Engine {
     return () => this.listeners.delete(fn)
   }
   _emit(sessionId, ev) {
-    const full = { ...ev, sessionId, time: Date.now() }
+    // Stream and subscription clients may receive the same event through both
+    // transports. An additive ID lets them deduplicate without losing deltas.
+    const full = { ...ev, eventID: ev.eventID || `${this.eventInstance}-${++this.eventSequence}`, sessionId, time: Date.now() }
     for (const l of this.listeners) {
       try {
         l(full)
@@ -202,7 +211,7 @@ class Engine {
 
   // ---- sessions ----
   createSession({ dir, profile, title, agent } = {}) {
-    profiles.getProfile(profile, this.home)
+    targetProfile(this, profile)
     const session = this.store.create({ dir, profile, title })
     if (agent) {
       const found = this.getAgent(agent, session.dir)
@@ -244,7 +253,7 @@ class Engine {
     this.trail.remove(id)
   }
   switchModel(id, profile) {
-    profiles.getProfile(profile, this.home)
+    targetProfile(this, profile)
     const s = this.store.get(id)
     s.profile = profile
     s.usage.lastInput = 0
@@ -424,6 +433,10 @@ class Engine {
       p.session.rules.push({ tool: p.tool, pattern: exact ? p.subject : "*", exact, action: "allow" })
       this.store.save(p.session)
     }
+    this._emit(p.inherits?.id || p.session.parentId || p.session.id, {
+      type: "permission.replied", permissionId, decision, tool: p.tool,
+      ...(p.session.kind === "subagent" ? { subagentId: p.session.agentId, subagentSessionId: p.session.id, subagentName: p.session.subagentName } : {}),
+    })
     p.resolve(decision !== "deny")
     return true
   }
@@ -459,10 +472,13 @@ class Engine {
       send({ type: "question.ask", form })
     })
   }
-  /** Pending questions, newest last. Omit sessionID to list every session. */
+  /** Pending session/Crew questions, newest last. Omit ID to list every session. */
   listForms(sessionID) {
     return [...this.forms.values()]
-      .filter((entry) => !sessionID || entry.sessionID === sessionID)
+      .filter((entry) => {
+        if (!sessionID || entry.sessionID === sessionID) return true
+        try { return this.store.get(entry.sessionID).parentId === sessionID } catch { return false }
+      })
       .map((entry) => entry.form)
   }
   /** Answer a pending form. Returns false when it is no longer pending. */
@@ -889,7 +905,7 @@ class Engine {
       recipeAgent: recipe.agent || "",
       recipeModel: recipe.model || "",
     } : opts
-    const profile = profiles.getProfile(session.profile, this.home)
+    const profile = targetProfile(this, session.profile)
     const apiKey = profiles.getKey(profile, this.home)
     const ctl = this._begin(id, opts)
     let rollback = null
@@ -946,7 +962,7 @@ class Engine {
   async *resume(id, opts = {}) {
     if (this.runs.has(id)) throw new Error("Session is busy")
     const session = this.store.get(id)
-    const profile = profiles.getProfile(session.profile, this.home)
+    const profile = targetProfile(this, session.profile)
     const apiKey = profiles.getKey(profile, this.home)
     repairHistory(session.messages)
     const pendingParts = [...this._takeShellResultParts(session), ...this._takeSubagentResultParts(session)]
@@ -973,11 +989,11 @@ class Engine {
   _profileTarget(target) {
     const value = String(target || "").trim()
     try { return profiles.getProfile(value, this.home) } catch (exactError) {
-      const slash = value.indexOf("/")
-      if (slash <= 0 || slash === value.length - 1) throw exactError
-      const profileID = value.slice(0, slash)
-      const modelID = value.slice(slash + 1)
-      const base = profiles.getProfile(profileID, this.home)
+      const base = profiles.listProfiles(this.home).filter((p) => value.startsWith(p.id + "/"))
+        .sort((a, b) => b.id.length - a.id.length)[0]
+      if (!base) throw exactError
+      const profileID = base.id
+      const modelID = value.slice(profileID.length + 1)
       const rows = Array.isArray(base.models) ? base.models : []
       const row = rows.find((item) => item && String(item.id) === modelID)
       if (!row && String(base.model || "") !== modelID) throw new Error(`Model "${modelID}" is not configured for profile "${profileID}".`)
@@ -1100,6 +1116,19 @@ class Engine {
       } catch (e) {
         emit({ type: "notice", text: `Run model "${modelTarget}" is unavailable (${e.message}); using ${session.profile}.` })
       }
+    }
+    // Explicit CLI/SDK effort is per-run, never a mutation of the shared
+    // provider. Desktop's existing `thinking` option stays backward-compatible.
+    const effort = String(opts.reasoningEffort || "").toLowerCase()
+    if (["none", "low", "medium", "high"].includes(effort)) {
+      const quirks = { ...(runProfile.quirks || {}), reasoningEffort: effort, reasoningOverride: true }
+      if (runProfile.format === "anthropic") {
+        const budget = Math.min({ low: 1024, medium: 4096, high: 8192 }[effort] || 0, (Number(runProfile.maxOutput) || 8192) - 1024)
+        if (effort === "none" || budget >= 1024) {
+          quirks.extraBody = { ...(quirks.extraBody || {}), thinking: effort === "none" ? { type: "disabled" } : { type: "enabled", budget_tokens: budget } }
+          runProfile = { ...runProfile, quirks }
+        } else emit({ type: "notice", text: "Thinking needs at least 2048 max output tokens for this provider; the provider preset is unchanged." })
+      } else runProfile = { ...runProfile, quirks }
     }
     // Desktop ChatComposer explicitly requests the active run model for both
     // manual and automatic summaries. CLI/SDK callers can still opt into the
@@ -1339,7 +1368,7 @@ class Engine {
   async compact(id, opts = {}) {
     if (this.runs.has(id)) throw new Error("Session is busy")
     const session = this.store.get(id)
-    const profile = profiles.getProfile(session.profile, this.home)
+    const profile = targetProfile(this, session.profile)
     const apiKey = profiles.getKey(profile, this.home)
     const ctl = new AbortController()
     this.runs.set(id, ctl)

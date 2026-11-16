@@ -1,6 +1,6 @@
 {
   "name": "vibe-core",
-  "version": "0.3.10",
+  "version": "0.3.11",
   "description": "VibeCoder AI engine: own CLI, own SDK, 3 LLM formats, auto-compaction. Zero dependencies.",
   "license": "UNLICENSED",
   "author": {
@@ -14,7 +14,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node test/timeline-ui-regression.cjs && node test/shell-output-regression.cjs && node test/pending-prompts-regression.cjs && node test/usage-cost-regression.cjs && node test/core-test.mjs && node test/agents-test.mjs && node test/skills-test.mjs && node test/harness-test.mjs && node test/electron-backend-smoke.cjs && node test/compaction-ui-regression.mjs && node test/subagent-ui-regression.mjs && node test/harness-ui-regression.mjs && node test/app-update-ui-regression.mjs && node test/app-updater-test.cjs",
+    "test": "node test/timeline-ui-regression.cjs && node test/shell-output-regression.cjs && node test/pending-prompts-regression.cjs && node test/usage-cost-regression.cjs && node test/core-test.mjs && node test/agents-test.mjs && node test/skills-test.mjs && node test/harness-test.mjs && node test/control-test.mjs && node test/cli-test.mjs && node test/cli-runtime-test.mjs && node test/cli-screen-test.mjs && node test/cli-provider-test.mjs && node test/cli-package-test.cjs && node test/electron-backend-smoke.cjs && node test/provider-label-regression.cjs && node test/compaction-ui-regression.mjs && node test/subagent-ui-regression.mjs && node test/harness-ui-regression.mjs && node test/app-update-ui-regression.mjs && node test/app-updater-test.cjs",
+    "cli": "node cli/vibe.js",
+    "pack:cli": "node scripts/package-cli.cjs",
     "serve": "node cli/vibe.js serve",
     "app": "electron electron/main.cjs",
     "dev": "electron electron/main.cjs --dev",

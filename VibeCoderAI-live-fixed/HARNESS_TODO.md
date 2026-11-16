@@ -4,7 +4,7 @@
 > প্রথমে এই ফাইল পড়বে, তারপর প্রথম unchecked phase থেকে কাজ শুরু করবে।
 > প্রতিটা phase শেষে "Progress Log" আপডেট করবে।
 
-Last updated: 2026-11-07
+Last updated: 2026-11-15
 App root: `VibeCoderAI-live-fixed`
 Git root: `C:\Users\farhan\Downloads\VibeCoderAI-live-provider-browser-fixed`
 Git HEAD at start: `9d8a18a`
@@ -357,6 +357,8 @@ Thin vertical slice first:
 | 2026-11-06 | Release | `v0.3.5` skin + CSP fix | CI green; installer + `latest.yml` + blockmap uploaded |
 | 2026-11-07 | Hardening + UI | lossless UTF-8/large shell stream + real exit codes; English-only UI; Obsidian as an additive theme; sidebar collapse; semantic warnings; font slider persistence | 120 core; 11 agents; 8 skills; 23 harness; 125 IPC; full suite green |
 | 2026-11-07 | Release | `v0.3.6` reliable shell output + Obsidian/UI hardening | CI green; installer (115,673,926 bytes) + `latest.yml` + blockmap uploaded; latest updater metadata verified |
+| 2026-11-15 | UI + CLI | Obsidian UI font slider scales every size (`--fs-scale`); sidebar history scroll containment kept; terminal `vibe` gets full event renderer, question forms, subagent/shell rows, `@file`, `--json` and `skills/agents/mcp/plugins/tools/doctor/usage` commands | +12 CLI tests; 23 harness tests; full `npm test` green |
+| 2026-11-15 | Full terminal workbench | same-store controls, Crew/shell lifecycle, shared-client form replies, private history, themes/pickers/multiline, safe installs, Rewind, per-session model keys, standalone CLI archive; provider heading de-duplicated without changing the desktop composer | final 19 suites green: 120 core, 11 agents, 8 skills, 23 harness, 14 controls, 14 CLI commands + 23 runtime tests, 129 IPC; real Electron fonts/provider/sidebar checks passed; review archive built; owner acceptance pending |
 
 ---
 
@@ -403,3 +405,46 @@ Thin vertical slice first:
 - Private website `58e62f6` deployed successfully on Render (`dep-dbr0130ae00c739op0hg`); 17 tests and live browser smoke passed. Website uses the current 0.3.9 fallback when upstream metadata is unavailable. Real Google sign-in still requires an owner check; no credentials were used by automation.
 - Owner asked for the next patch in the main desktop project only, including the existing local prompt-style change. Version is 0.3.10. Local ZIP files stay uncommitted and are excluded from the installer. No files are written to `D:\All Product`.
 - Release completed in the main project: commit `bb044c9`, tag `v0.3.10`, Actions run `43600427906` succeeded. Installer, blockmap and `latest.yml` were verified, including the downloaded installer's SHA-512.
+
+## 12. Terminal CLI and small UI fixes — 2026-11-15
+
+- Main task: standalone full-feature terminal access to the same VibeCore engine.
+  Durable parity/architecture/runbook: `docs/CLI.md`. Resume that file for this
+  task rather than guessing from the older harness backlog.
+- Obsidian font slider now scales all skin text; earlier history/footer fix stays.
+- Owner explicitly said to keep the current composer/model list: remove only
+  duplicated provider name/ID headings, not model IDs or selection behaviour.
+- No new runtime dependency. Core/SDK changes are additive; original commands,
+  API routes, tool IDs, permission/Locks, updater and renderer bindings remain.
+- CLI themes/prefs live in `cli.json`, not desktop UI state. `vibe attach` uses
+  the real host/browser and encrypted private local connection records.
+- The public tag-only release workflow adds an independent Node CLI `.tgz`;
+  desktop installer, blockmap, latest.yml and manual in-app updates remain.
+- The first full regression caught a lightweight Engine host compatibility
+  issue; `targetProfile()` fallback fixed it and the full suite subsequently passed.
+  Real Electron QA used isolated mock data, not owner credentials.
+- Owner review is still required. **No commit/push/tag/version bump was performed.**
+  Version stays 0.3.10; next approved release is exactly 0.3.11.
+- Final `npm test`: all 19 suites green (14 CLI command + 23 runtime + 14 control
+  tests, archive/provider checks and every existing core/Electron/UI/updater suite).
+- Source app left open for review (`sh_1e02095d1001quffzx0t3iTHz0`); separate CLI
+  attached in Desktop (PowerShell 9848 / Node 6368). Real host doctor succeeded;
+  no paid prompt or credential disclosure. Review archive/evidence locations and
+  checksum are in `docs/CLI.md`.
+- Owner rejected the initial console look (blue PowerShell/log-like layout) and
+  approved a CLI-only full-screen visual pass. Active plan is `docs/CLI_TUI.md`.
+  Preserve all the verified feature/API paths and the desktop design. Keep the
+  old review terminal/messages; show the new UI in a separate window.
+- 2026-11-16 full-screen pass: dark cell canvas, fixed composer, contextual
+  panel, centered pickers/forms, mouse scroll, saved Full Access, and Windows
+  paste (Ctrl+V clipboard fallback, right-click, bracketed paste one draft).
+  `/provider` and `vibe provider` manage providers end-to-end without desktop.
+  Final `npm test`: 21 suites green (15 screen + 5 provider cases added).
+  Live review window: PowerShell 7268 / Node 5832.
+- 2026-11-16 owner approved push/release and the website update. Version is
+  exactly **0.3.11** (from 0.3.10); tag `v0.3.11`. `npm test` green after the
+  bump (21 suites). The website gained a CLI page (`/cli`), a public
+  `/download-cli` route backed by the tagged `VibeCoder-CLI-0.3.11.tgz` asset,
+  new-feature copy, and a GitHub issue/ complaint path for users. Website source
+  stays in the separate private `VibeCoder-AI-Website` repo; the local
+  `website/` folder is not committed here.

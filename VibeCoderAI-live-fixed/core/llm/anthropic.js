@@ -56,7 +56,11 @@ async function* stream({ profile, apiKey, system, messages, tools, signal }) {
   const headers = { "anthropic-version": "2023-06-01", ...CLIENT_HEADERS, ...(profile.headers || {}) }
   if (apiKey) headers["x-api-key"] = apiKey
   const base = (profile.baseURL || "https://api.anthropic.com").replace(/\/+$/, "")
-  const res = await postStreamAdaptive(endpoint(base), { headers, body, signal }, null)
+  const adapt = q.reasoningOverride ? (error, request) => {
+    if (request.thinking && /thinking|budget_tokens|temperature/i.test(error.body) && /unsupported|unknown|not support|unrecognized|invalid|must be/i.test(error.body)) return delete request.thinking
+    return false
+  } : null
+  const res = await postStreamAdaptive(endpoint(base), { headers, body, signal }, adapt)
 
   const blocks = new Map()
   let finish = "stop"

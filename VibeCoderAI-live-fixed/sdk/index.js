@@ -16,9 +16,11 @@ const { parseSSE } = require("../core/llm/sse")
 
 function createVibe(opts = {}) {
   const e = new Engine(opts)
+  const control = require("../core/control").createControl(e)
   return {
     mode: "inproc",
     engine: e,
+    control,
     session: {
       create: async (o) => e.createSession(o),
       list: async (q) => e.listSessions(q),
@@ -102,6 +104,34 @@ function connect({ url, token }) {
   }
   return {
     mode: "remote",
+    control: { call: (action, args = {}) => call("POST", `/control/${encodeURIComponent(action)}`, args) },
+    browser: {
+      current: (o = {}) => call("POST", "/control/browser.current", o),
+      listTabs: () => call("POST", "/control/browser.tabs", {}),
+      createTab: (o) => call("POST", "/control/browser.open", o),
+      closeTab: (o) => call("POST", "/control/browser.close", o),
+      navigate: (o) => call("POST", "/control/browser.navigate", o),
+      screenshot: (o) => call("POST", "/control/browser.screenshot", o),
+      evaluate: (o) => call("POST", "/control/browser.evaluate", o),
+      snapshot: (o) => call("POST", "/control/browser.snapshot", o),
+      click: (o) => call("POST", "/control/browser.click", o),
+      fill: (o) => call("POST", "/control/browser.fill", o),
+      press: (o) => call("POST", "/control/browser.press", o),
+      scroll: (o) => call("POST", "/control/browser.scroll", o),
+    },
+    subagents: {
+      create: (o) => call("POST", "/control/crew.start", o),
+      list: (sessionId) => call("POST", "/control/crew.list", { sessionId }),
+      status: (id) => call("POST", "/control/crew.show", { id }),
+      result: (id) => call("POST", "/control/crew.show", { id }),
+      details: (id) => call("POST", "/control/crew.show", { id }),
+      resume: (id, text, o = {}) => call("POST", "/control/crew.resume", { id, text, ...o }),
+      stop: (id) => call("POST", "/control/crew.stop", { id }),
+    },
+    todos: {
+      list: (sessionId) => call("POST", "/control/todos.list", { sessionId }),
+      save: (sessionId, o = {}) => call("POST", "/control/todos.save", { sessionId, ...o }),
+    },
     connectors: {
       resources: (o = {}) => call("GET", `/connectors/resources?connector=${encodeURIComponent(o.connector || "")}&directory=${encodeURIComponent(o.directory || "")}`),
       templates: (o = {}) => call("GET", `/connectors/templates?connector=${encodeURIComponent(o.connector || "")}&directory=${encodeURIComponent(o.directory || "")}`),
@@ -130,7 +160,7 @@ function connect({ url, token }) {
         const ctl = new AbortController()
         if (o.signal) o.signal.addEventListener("abort", () => ctl.abort(), { once: true })
         try {
-          yield* sseStream("POST", `/session/${id}/prompt`, { text, files: o.files }, ctl.signal)
+           yield* sseStream("POST", `/session/${id}/prompt`, { text, files: o.files, thinking: o.thinking, reasoningEffort: o.reasoningEffort, summaryModel: o.summaryModel, maxSteps: o.maxSteps }, ctl.signal)
         } finally {
           ctl.abort()
         }
@@ -139,7 +169,7 @@ function connect({ url, token }) {
         const ctl = new AbortController()
         if (o.signal) o.signal.addEventListener("abort", () => ctl.abort(), { once: true })
         try {
-          yield* sseStream("POST", `/session/${id}/resume`, {}, ctl.signal)
+           yield* sseStream("POST", `/session/${id}/resume`, { reasoningEffort: o.reasoningEffort, summaryModel: o.summaryModel, maxSteps: o.maxSteps }, ctl.signal)
         } finally {
           ctl.abort()
         }
@@ -153,16 +183,37 @@ function connect({ url, token }) {
       reply: (formID, answer) => call("POST", `/form/${encodeURIComponent(formID)}/reply`, { answer }),
       cancel: (formID, message) => call("POST", `/form/${encodeURIComponent(formID)}/cancel`, { message }),
     },
-    profiles: { list: () => call("GET", "/profiles") },
+    profiles: {
+      list: () => call("GET", "/profiles"),
+      upsert: (profile) => call("POST", "/control/profiles.save", { profile }),
+      setKey: (id, key) => call("POST", "/control/profiles.key", { id, key }),
+    },
     event: {
       subscribe(fn) {
         const ctl = new AbortController()
+        let readyResolve, readyReject
+        const ready = new Promise((resolve, reject) => { readyResolve = resolve; readyReject = reject })
+        // Existing fire-and-forget SDK consumers do not have to await readiness.
+        ready.catch(() => {})
         ;(async () => {
           try {
-            for await (const ev of sseStream("GET", "/events", undefined, ctl.signal)) fn(ev)
-          } catch {}
+            const response = await fetch(base + "/events", { headers, signal: ctl.signal })
+            if (!response.ok) throw new Error(`Event connection failed: HTTP ${response.status}`)
+            readyResolve()
+            for await (const ev of parseSSE(response.body)) {
+              if (!ev.data) continue
+              try {
+                // Keep reading while a consumer is displaying a question:
+                // another client may resolve it and unblock that consumer.
+                const pending = fn(JSON.parse(ev.data))
+                pending?.catch?.(() => {})
+              } catch {}
+            }
+          } catch (error) { readyReject(error) }
         })()
-        return () => ctl.abort()
+        const off = () => ctl.abort()
+        off.ready = ready
+        return off
       },
     },
   }

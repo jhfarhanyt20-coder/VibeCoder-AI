@@ -65,22 +65,22 @@ function listServers(directory, home) {
   return rows
 }
 
-function addServer({ name, type, url, command, env, headers, global, directory }) {
+function addServer({ name, type, url, command, env, headers, oauth, global, directory, home }) {
   const id = String(name || "").trim().replace(/[^\w.-]/g, "-").slice(0, 60)
   if (!id) throw new Error("Server name is required")
-  const entry = sanitize({ type, url, command, env, headers })
+  const entry = sanitize({ type, url, command, env, headers, oauth })
   if (entry.type === "local" && !entry.command) throw new Error("A local MCP server needs a command")
   if (entry.type === "remote" && !/^https?:\/\//i.test(entry.url || "")) throw new Error("A remote MCP server needs an http(s) URL")
-  const file = global || !directory ? globalFile() : projectFile(directory)
+  const file = global || !directory ? globalFile(home) : projectFile(directory)
   const cfg = readJson(file, {})
-  if (cfg[id] && !global && readJson(globalFile(), {})[id]) entry.scopeNote = "overrides global"
+  if (cfg[id] && !global && readJson(globalFile(home), {})[id]) entry.scopeNote = "overrides global"
   cfg[id] = entry
   writeJson(file, cfg)
-  return { name: id, scope: file === globalFile() ? "global" : "project", file }
+  return { name: id, scope: file === globalFile(home) ? "global" : "project", file }
 }
 
-function removeServer({ name, global, directory }) {
-  const file = global || !directory ? globalFile() : projectFile(directory)
+function removeServer({ name, global, directory, home }) {
+  const file = global || !directory ? globalFile(home) : projectFile(directory)
   const cfg = readJson(file, {})
   if (!(name in cfg)) return { removed: false }
   delete cfg[name]
@@ -123,8 +123,8 @@ class McpManager {
         try {
           const token = this.oauthTokens.get(r.name)
           const c = new McpClient(r.name, token ? { ...r, oauth: { ...(r.oauth || {}), accessToken: token.accessToken } } : r)
+          st.client = c // shutdown/Stop can also close a still-connecting client
           await c.connect()
-          st.client = c
           st.ok = true
           st.error = ""
           st.tools = c.tools

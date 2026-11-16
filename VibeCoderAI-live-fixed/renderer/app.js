@@ -5804,9 +5804,9 @@ function renderModelList(filter = "") {
   for (const [providerID, models] of groups) {
     const g = document.createElement("div")
     g.className = "mr-group"
-    // show the display name of a custom provider (e.g. "openrouter2")
+    // One provider heading; IDs stay on the model keys, not beside the name.
     const known = custom.get(providerID)
-    g.textContent = known?.name ? `${known.name} · ${providerID}` : providerID
+    g.textContent = known?.name || providerID
     box.appendChild(g)
     for (const m of models) {
       const b = document.createElement("button")

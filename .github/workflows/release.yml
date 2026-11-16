@@ -44,6 +44,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --win nsis --x64 --publish always
 
+      - name: Package the standalone Node CLI (no runtime dependencies)
+        working-directory: ${{ env.APP_DIR }}
+        run: node scripts/package-cli.cjs
+
+      - name: Add the standalone CLI to the same tagged release
+        working-directory: ${{ env.APP_DIR }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $asset = (Get-ChildItem "release/VibeCoder-CLI-*.tgz").FullName
+          gh release upload $env:GITHUB_REF_NAME $asset --repo $env:GITHUB_REPOSITORY
+
       # Security: GITHUB_TOKEN is short-lived and scoped to this repository; it
       # is never printed. For signed production releases, set a code-signing
       # certificate secret and wire it here (see PLAN.md / README note) - the

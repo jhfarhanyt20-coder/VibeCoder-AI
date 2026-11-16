@@ -2,8 +2,11 @@
 /** `vibe serve`: local HTTP + SSE API (loopback only, bearer token). The SDK's remote mode talks to this. */
 const http = require("http")
 const crypto = require("crypto")
+const { createControl, publicData } = require("../core/control")
+const { publishHost } = require("./connection")
 
-function createServer(engine, { token = crypto.randomBytes(24).toString("hex") } = {}) {
+function createServer(engine, { token = crypto.randomBytes(24).toString("hex"), discoverable = true } = {}) {
+  const control = createControl(engine)
   const sendJson = (res, code, obj) => {
     res.writeHead(code, { "content-type": "application/json" })
     res.end(JSON.stringify(obj))
@@ -14,7 +17,7 @@ function createServer(engine, { token = crypto.randomBytes(24).toString("hex") }
       const chunks = []
       req.on("data", (c) => {
         size += c.length
-        if (size > 5 * 1024 * 1024) {
+        if (size > 16 * 1024 * 1024) {
           reject(new Error("Body too large"))
           req.destroy()
         } else chunks.push(c)
@@ -51,9 +54,13 @@ function createServer(engine, { token = crypto.randomBytes(24).toString("hex") }
       const m = req.method
 
       if (m === "GET" && p[0] === "health") return sendJson(res, 200, { ok: true })
-      if (m === "GET" && p[0] === "profiles") return sendJson(res, 200, engine.listProfiles().map(({ headers, ...rest }) => rest))
+      if (m === "GET" && p[0] === "profiles") return sendJson(res, 200, engine.listProfiles().map(({ headers, ...rest }) => publicData(rest)))
+      if (m === "POST" && p[0] === "control" && p.length === 2) {
+        return sendJson(res, 200, await control.call(decodeURIComponent(p[1]), await readBody(req)))
+      }
       if (m === "GET" && p[0] === "events") {
         const write = sse(res)
+        res.write(": connected\n\n")
         const off = engine.on(write)
         req.on("close", off)
         return
@@ -123,7 +130,7 @@ function createServer(engine, { token = crypto.randomBytes(24).toString("hex") }
             res.on("close", () => ctl.abort())
             const write = sse(res)
             try {
-              for await (const ev of engine.prompt(id, b.text, { signal: ctl.signal, files: b.files })) write(ev)
+              for await (const ev of engine.prompt(id, b.text, { signal: ctl.signal, files: b.files, thinking: b.thinking, reasoningEffort: b.reasoningEffort, summaryModel: b.summaryModel, maxSteps: b.maxSteps })) write(ev)
             } catch (e) {
               write({ type: "error", message: e.message })
               write({ type: "done", reason: "error" })
@@ -131,11 +138,12 @@ function createServer(engine, { token = crypto.randomBytes(24).toString("hex") }
             return res.end()
           }
           if (p[2] === "resume" && m === "POST") {
+            const b = await readBody(req)
             const ctl = new AbortController()
             res.on("close", () => ctl.abort())
             const write = sse(res)
             try {
-              for await (const ev of engine.resume(id, { signal: ctl.signal })) write(ev)
+              for await (const ev of engine.resume(id, { signal: ctl.signal, reasoningEffort: b.reasoningEffort, summaryModel: b.summaryModel, maxSteps: b.maxSteps })) write(ev)
             } catch (e) {
               write({ type: "error", message: e.message })
               write({ type: "done", reason: "error" })
@@ -153,6 +161,7 @@ function createServer(engine, { token = crypto.randomBytes(24).toString("hex") }
       else res.end()
     }
   })
+  if (discoverable) publishHost(server, engine, token)
   return { server, token }
 }
 

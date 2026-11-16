@@ -302,15 +302,15 @@ function skillTarget({ global, directory, id }) {
   return { root, name, directory: path.join(root, name), file: path.join(root, name, "SKILL.md"), scope: global || !directory ? "global" : "project" }
 }
 
-function playbookTarget({ global, directory, id }) {
-  const root = global || !directory ? globalPlaybookDir() : projectPlaybookDir(directory)
+function playbookTarget({ global, directory, id, home }) {
+  const root = global || !directory ? globalPlaybookDir(home) : projectPlaybookDir(directory)
   const name = slug(id)
   return { root, name, directory: path.join(root, name), file: path.join(root, name, "PLAYBOOK.md"), scope: global || !directory ? "global" : "project" }
 }
 
-function installPlaybookFile({ id, title, name, description, content, global, directory }) {
+function installPlaybookFile({ id, title, name, description, content, global, directory, home }) {
   const pickedId = slug(id || name || title)
-  const target = playbookTarget({ global: !!global, directory, id: pickedId })
+  const target = playbookTarget({ global: !!global, directory, id: pickedId, home })
   if (fs.existsSync(target.file)) throw new Error(`Playbook "${pickedId}" is already installed at ${target.file}.`)
   const text = ensureSkillFrontmatter(String(content || ""), pickedId, description || title || pickedId)
   safeWrite(target.file, text)
@@ -421,7 +421,7 @@ function supportedTextFile(file) {
  * scripts beside each SKILL.md are preserved, but never executed.
  * fetchImpl is injectable for deterministic, offline tests.
  */
-async function importGitHubSkills({ source, global = false, directory, fetchImpl = globalThis.fetch } = {}) {
+async function importGitHubSkills({ source, global = false, directory, home, fetchImpl = globalThis.fetch } = {}) {
   if (typeof fetchImpl !== "function") throw new Error("This Node.js runtime does not provide fetch().")
   const parsed = parseGitHubSource(source)
   let ref = parsed.ref
@@ -453,7 +453,7 @@ async function importGitHubSkills({ source, global = false, directory, fetchImpl
     throw new Error("No SKILL.md files found in that GitHub repository or selected folder. Use a directory-based Agent Skill containing SKILL.md.")
   }
 
-  const targetRoot = global || !directory ? globalOpenCodeDir() : projectOpenCodeDir(directory)
+  const targetRoot = global || !directory ? (home ? path.join(home, "skills") : globalOpenCodeDir()) : projectOpenCodeDir(directory)
   const candidateRoots = skillPaths.map((node) => path.posix.dirname(node.path))
   const seenIds = new Set()
   const installed = []
@@ -551,22 +551,22 @@ function isPathWithin(parent, target) {
   return rel === "" || (!rel.startsWith(`..${path.sep}`) && rel !== ".." && !path.isAbsolute(rel))
 }
 
-function removeSkillFile({ id, global, directory }) {
+function removeSkillFile({ id, global, directory, home, strictScope = false }) {
   const wanted = slug(id)
-  const matches = listSkills(directory).filter((skill) => skill.id === wanted)
-  const match = matches.find((skill) => global ? skill.scope === "global" : skill.scope === "project") || matches[0]
+  const matches = listSkills(directory, home).filter((skill) => skill.id === wanted)
+  const match = matches.find((skill) => global ? skill.scope === "global" : skill.scope === "project") || (!strictScope ? matches[0] : null)
   if (!match) return { removed: false }
 
   const file = match.file
   if (match.format === "SKILL.md") {
-    const rootAllowed = globalSources().some((entry) => entry.scope === match.scope && isPathWithin(entry.dir, file)) || projectSources(directory).some((entry) => entry.scope === match.scope && isPathWithin(entry.dir, file))
+    const rootAllowed = globalSources(home).some((entry) => entry.scope === match.scope && isPathWithin(entry.dir, file)) || projectSources(directory).some((entry) => entry.scope === match.scope && isPathWithin(entry.dir, file))
     if (!rootAllowed) throw new Error("Refusing to remove a skill outside a supported skills directory.")
     const dir = path.dirname(file)
     fs.rmSync(dir, { recursive: true, force: true })
     return { removed: true, file: dir, scope: match.scope }
   }
 
-  const rootAllowed = globalSources().some((entry) => entry.scope === match.scope && isPathWithin(entry.dir, file)) || projectSources(directory).some((entry) => entry.scope === match.scope && isPathWithin(entry.dir, file))
+  const rootAllowed = globalSources(home).some((entry) => entry.scope === match.scope && isPathWithin(entry.dir, file)) || projectSources(directory).some((entry) => entry.scope === match.scope && isPathWithin(entry.dir, file))
   if (!rootAllowed) throw new Error("Refusing to remove a skill outside a supported skills directory.")
   fs.unlinkSync(file)
   return { removed: true, file, scope: match.scope }

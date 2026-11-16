@@ -36,6 +36,9 @@ assert.match(skin, /consistent application surfaces and settings finish/)
 assert.match(html, /<link rel="stylesheet" href="obsidian\.css" \/>/)
 assert.ok(html.indexOf('href="obsidian.css"') > html.indexOf('href="skin.css"'), "Obsidian must load after the base skin")
 assert.match(obsidian, /Obsidian production skin/)
+// The Obsidian skin must follow Settings > UI font size like every other
+// theme; hard-coded px sizes made the slider appear dead in that theme.
+assert.doesNotMatch(obsidian, /font-size:\s*\d+(?:\.\d+)?px/, "Obsidian font sizes must scale with --fs-scale")
 for (const selector of ["#btn-new-task", ".settings-nav", ".ctx-menu", ".dlg-box", ".modal", ".file-row"]) {
   assert.ok(obsidian.includes(`html[data-theme="obsidian"] ${selector}`), `Obsidian is missing scoped ${selector}`)
 }
@@ -93,6 +96,12 @@ assert.match(css, /\.shell\.sidebar-hidden \.sidebar/)
 assert.match(css, /\.sidebar-restore\[hidden\]/)
 assert.match(css, /\.shell\.sidebar-hidden \.sidebar-restore\s*\{ z-index: 60/, "sidebar restore must stay above the running badge")
 assert.match(css, /\.shell\.sidebar-hidden \.main > \.bg-job\s*\{ left: 52px/, "running badge must leave room for sidebar restore")
+// Session history must scroll inside the sidebar instead of pushing the footer
+// (Connect / browser / Settings) out of the clipped sidebar.
+assert.match(skin, /\.side-top\s*\{[^}]*min-height: 0/, "sidebar top must be able to shrink")
+assert.match(skin, /\.session-list\s*\{[^}]*flex: 1 1 auto[^}]*overflow-y: auto/, "session history must own a scrollbar")
+assert.match(skin, /\.session-list\s*\{[^}]*max-height: none/, "session history must not be capped by a viewport guess")
+assert.match(skin, /\.side-bottom\s*\{[^}]*flex: 0 0 auto/, "sidebar footer must never be pushed out of view")
 assert.match(app, /event\.key\.toLowerCase\(\) === "b"/, "sidebar must have a keyboard recovery shortcut")
 assert.match(html, /id=["']jump-live["']/)
 assert.match(app, /\$\(["']messages["']\)\.addEventListener\(["']scroll["'], updateJumpButton/)

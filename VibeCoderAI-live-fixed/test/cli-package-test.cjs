@@ -1,0 +1,51 @@
+"use strict"
+const assert = require("node:assert/strict")
+const fs = require("node:fs")
+const path = require("node:path")
+const os = require("node:os")
+const zlib = require("node:zlib")
+const { spawnSync } = require("node:child_process")
+const { buildArchive } = require("../scripts/package-cli.cjs")
+const root = path.resolve(__dirname, "..")
+const tempBase = path.join(os.tmpdir(), "opencode")
+fs.mkdirSync(tempBase, { recursive: true })
+const temp = fs.mkdtempSync(path.join(tempBase, "vibe-package-test-"))
+const archiveFile = path.join(temp, "cli.tgz")
+try {
+  const built = buildArchive({ root, output: archiveFile })
+  const raw = zlib.gunzipSync(fs.readFileSync(archiveFile))
+  const files = new Map()
+  let cursor = 0
+  while (cursor + 512 <= raw.length) {
+    const header = raw.subarray(cursor, cursor + 512)
+    if (header.every((n) => n === 0)) break
+    const text = (start, size) => header.subarray(start, start + size).toString("utf8").replace(/\0.*$/s, "").trim()
+    const name = text(0, 100), size = parseInt(text(124, 12), 8), mode = parseInt(text(100, 8), 8)
+    assert.ok(name.startsWith("package/") && !name.includes(".."))
+    assert.ok(!/node_modules|\.zip$|\.env|(?:^|\/)(?:auth|profiles|memories)\.json/.test(name), "user data and runtime dependencies must never be packaged")
+    const content = raw.subarray(cursor + 512, cursor + 512 + size)
+    files.set(name, { content, mode })
+    const output = path.join(temp, name)
+    fs.mkdirSync(path.dirname(output), { recursive: true })
+    fs.writeFileSync(output, content)
+    cursor += 512 + Math.ceil(size / 512) * 512
+  }
+  const pkg = JSON.parse(files.get("package/package.json").content)
+  assert.equal(pkg.version, require("../package.json").version)
+  assert.equal(pkg.main, "sdk/index.js")
+  assert.equal(pkg.bin.vibe, "cli/vibe.js")
+  assert.equal(pkg.dependencies, undefined)
+  assert.equal(pkg.devDependencies, undefined)
+  assert.equal(files.get("package/cli/vibe.js").mode, 0o755)
+  assert.ok(files.has("package/core/control.js") && files.has("package/sdk/index.js") && files.has("package/cli/theme.js"))
+  assert.equal(built.files, files.size)
+  const env = { ...process.env, VIBE_HOME: path.join(temp, "home"), NO_COLOR: "1" }
+  const version = spawnSync(process.execPath, [path.join(temp, "package", "cli", "vibe.js"), "--version"], { env, encoding: "utf8" })
+  assert.equal(version.status, 0, version.stderr)
+  assert.equal(version.stdout.trim(), pkg.version)
+  const tools = spawnSync(process.execPath, [path.join(temp, "package", "cli", "vibe.js"), "tools", "--json"], { env, encoding: "utf8" })
+  assert.equal(tools.status, 0, tools.stderr)
+  assert.ok(JSON.parse(tools.stdout).builtin.some((t) => t.name === "question"))
+  assert.throws(() => buildArchive({ root, output: archiveFile }), /EEXIST/, "an existing package is never silently overwritten")
+  console.log("PASS standalone CLI archive: matching version, executable bin, no Electron/dependencies/secrets/ZIPs, extracted CLI runs")
+} finally { fs.rmSync(temp, { recursive: true, force: true }) }

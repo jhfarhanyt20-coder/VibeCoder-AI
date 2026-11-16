@@ -698,3 +698,48 @@ html:not([data-theme="obsidian"]) .composer .icon-btn { width: 28px; height: 28p
 html:not([data-theme="obsidian"]) .composer .send { width: 32px; height: 32px; flex: 0 0 32px; margin-left: auto; border-radius: 9px; }
 html:not([data-theme="obsidian"]) .composer .run-badge { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 html:not([data-theme="obsidian"]) .composer .drop-menu { max-width: min(360px, calc(100vw - 40px)); min-width: min(260px, calc(100vw - 40px)); }
+
+
+/* ---------- sidebar scroll containment ----------
+   The session history had no real bound: after enough sessions the sidebar's
+   upper block grew past its height and pushed the footer (Connect, browser,
+   Settings) below the clipped sidebar edge, so the controls "went missing"
+   until history was deleted. The footer is now a fixed flex row and the
+   history list scrolls inside the height that is left, like the workspace
+   list already did. Nothing moves out of reach, however much history exists. */
+.sidebar { min-height: 0; }
+.side-top {
+  flex: 1 1 auto;
+  min-height: 0;
+  /* Last-resort scroll for very short windows; normally hidden. */
+  overflow-y: auto;
+}
+.workspace-list {
+  flex: 0 0 auto;
+  min-height: 0;
+  max-height: min(180px, 26vh);
+}
+.side-project {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.project-name { flex: 0 0 auto; }
+.session-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding-right: 2px;
+}
+.show-more { flex: 0 0 auto; }
+.side-bottom {
+  position: relative;
+  z-index: 3;
+  flex: 0 0 auto;
+  /* Floats above the scrolling history with the sidebar's own surface. */
+  background: inherit;
+}

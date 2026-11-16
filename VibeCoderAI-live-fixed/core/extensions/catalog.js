@@ -9,7 +9,7 @@ const fs = require("fs")
 const path = require("path")
 const { homeDir } = require("../util")
 
-const registriesFile = () => path.join(homeDir(), "registries.json")
+const registriesFile = (home) => path.join(home || homeDir(), "registries.json")
 const readJson = (f, fb) => {
   try {
     return JSON.parse(fs.readFileSync(f, "utf8"))
@@ -33,35 +33,35 @@ const BUILTIN = {
   ],
 }
 
-function listRegistries() {
-  const list = readJson(registriesFile(), [])
+function listRegistries(home) {
+  const list = readJson(registriesFile(home), [])
   return Array.isArray(list) ? list.filter((r) => r && r.url) : []
 }
-function saveRegistries(list) {
-  fs.mkdirSync(path.dirname(registriesFile()), { recursive: true })
-  fs.writeFileSync(registriesFile(), JSON.stringify(list, null, 2))
+function saveRegistries(list, home) {
+  fs.mkdirSync(path.dirname(registriesFile(home)), { recursive: true })
+  fs.writeFileSync(registriesFile(home), JSON.stringify(list, null, 2))
 }
-function addRegistry({ name, url }) {
+function addRegistry({ name, url, home }) {
   const u = String(url || "").trim()
   if (!/^https?:\/\//i.test(u)) throw new Error("Registry URL must be http(s)")
-  const list = listRegistries()
+  const list = listRegistries(home)
   if (list.some((r) => r.url === u)) throw new Error("That registry is already added")
   const reg = { id: "reg_" + Buffer.from(u).toString("hex").slice(0, 16), name: String(name || "").trim() || new URL(u).hostname, url: u }
   list.push(reg)
-  saveRegistries(list)
+  saveRegistries(list, home)
   return reg
 }
-function removeRegistry({ id }) {
-  const list = listRegistries()
+function removeRegistry({ id, home }) {
+  const list = listRegistries(home)
   const next = list.filter((r) => r.id !== id)
   if (next.length === list.length) throw new Error("Registry not found")
-  saveRegistries(next)
+  saveRegistries(next, home)
   return { ok: true }
 }
 
 /** Fetch + cache one registry. Returns { doc, cached, error }. */
-async function fetchRegistry(reg, { force = false } = {}) {
-  const cacheFile = path.join(homeDir(), "registry-cache", reg.id + ".json")
+async function fetchRegistry(reg, { force = false, home } = {}) {
+  const cacheFile = path.join(home || homeDir(), "registry-cache", reg.id + ".json")
   if (!force) {
     try {
       if (Date.now() - fs.statSync(cacheFile).mtimeMs < 3600000) return { doc: readJson(cacheFile, null), cached: true }

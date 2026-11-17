@@ -1,5 +1,7 @@
 "use strict"
 const llm = require("../llm")
+const profiles = require("../llm/profiles")
+const groups = require("../llm/groups")
 const { canonicalUsage, inputTotal, outputTotal, estimateCost } = require("../llm/usage")
 const tools = require("../tools")
 const compaction = require("./compaction")
@@ -9,6 +11,95 @@ const playbooks = require("../harness/playbooks")
 const recipes = require("../harness/recipes")
 const actions = require("../harness/actions")
 const { sleep } = require("../util")
+
+/** Fail over only for the failures another model can actually solve. */
+function isFailoverError(error) {
+  if (!error || error.overflow) return false
+  // A provider-side content filter refused this message. Another provider in
+  // the fallback chain may accept it (AgentRouter's free gateway, for example,
+  // rejects Bengali text). Direct model selection still shows the explanation.
+  if (error.code === "PROVIDER_CONTENT_BLOCKED") return true
+  const status = Number(error.status) || 0
+  if (status === 429 || (status >= 500 && status <= 599)) return true
+  // fetch() uses TypeError("fetch failed") for a provider that is offline,
+  // DNS failure, a reset socket, or a refused connection. Those are transient
+  // server-unavailable failures just like a timeout, not auth/config errors.
+  // Include the nested cause code because Node keeps ECONNREFUSED there.
+  const detail = [error.message, error.code, error.cause?.message, error.cause?.code].filter(Boolean).join(" ")
+  return /timeout|timed out|did not respond within|connection stalled|fetch failed|network error|socket hang up|ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN/i.test(detail)
+}
+
+function failoverReason(error) {
+  const status = Number(error?.status) || 0
+  if (error?.code === "PROVIDER_CONTENT_BLOCKED") return "content filter"
+  if (status === 429) return "rate limit"
+  if (status >= 500) return `server error (${status})`
+  return /timeout|timed out|stalled/i.test(String(error?.message || "")) ? "timeout" : "server unavailable"
+}
+
+const groupModelLabel = (profile) => `${profile.name || profile.label || profile.id} · ${profile.model}`
+
+/**
+ * Stream one assistant request through a fallback group. The cursor is sticky
+ * and only moves forward; a failure on the last model wraps around to #1.
+ * Switching happens only before the first content event, so a half written
+ * answer is never duplicated or mixed across providers.
+ */
+async function* streamWithFallback(profile, req, opts = {}) {
+  const group = profile.group
+  const targets = Array.isArray(group.targets) ? group.targets : []
+  const home = opts.home
+  const signal = req.signal || opts.signal
+  const count = targets.length
+  const start = Number.isInteger(group.cursor) ? group.cursor : 0
+  let lastError = null
+  let attempts = 0
+  for (let k = 0; k < count; k++) {
+    const index = (start + k) % count
+    const target = targets.find((item) => item.index === index)
+    if (!target || !target.profile) continue
+    attempts++
+    const active = target.profile
+    // The run's per-request options (reasoning effort) live on the synthetic
+    // group profile; apply them to the model at the cursor as well.
+    const candidate = index === start
+      ? { ...active, ...(profile.quirks ? { quirks: profile.quirks } : {}), ...(profile.maxOutput ? { maxOutput: profile.maxOutput } : {}) }
+      : active
+    let apiKey = ""
+    try {
+      apiKey = profiles.getKey(candidate, home)
+    } catch (e) {
+      lastError = e
+      continue
+    }
+    if (attempts > 1) {
+      yield { type: "notice", text: `Fallback model: ${groupModelLabel(active)} (#${index + 1}) is next after ${lastError ? failoverReason(lastError) : "a failure"}.` }
+    }
+    let sawContent = false
+    try {
+      for await (const ev of llm.stream(candidate, { ...req, apiKey })) {
+        if (ev.type === "text" || ev.type === "reasoning" || ev.type === "tool_call") sawContent = true
+        if (ev.type === "usage") yield { ...ev, model: { providerID: active.id, id: active.model } }
+        else yield ev
+      }
+      // Success: remember where we are. The cursor only moves down (wrapping).
+      // Keep the synthetic group profile in sync so the ring/compaction and the
+      // next step use this model's real context window and pricing.
+      group.cursor = index
+      profile.model = active.model
+      if (active.contextLimit) profile.contextLimit = active.contextLimit
+      if (active.maxOutput) profile.maxOutput = active.maxOutput
+      if (active.quirks) profile.quirks = active.quirks
+      try { groups.setCursor(group.id, index, home) } catch {}
+      return
+    } catch (e) {
+      lastError = e
+      if (signal && signal.aborted) throw e
+      if (sawContent || !isFailoverError(e)) throw e
+    }
+  }
+  throw lastError || new Error("Fallback model has no usable models.")
+}
 
 /** If a run was interrupted, an assistant tool_call may have no result. Add error results so the history is valid. */
 function repairHistory(messages) {
@@ -239,10 +330,13 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
     const system = sys()
     let result
     try {
+      const summaryKey = profile?.group && typeof engine?._profileKey === "function"
+        ? (engine._profileKey(profile) || apiKey)
+        : apiKey
       result = await compaction.compact({
         session,
         profile,
-        apiKey,
+        apiKey: summaryKey,
         signal,
         reason,
         system,
@@ -360,7 +454,11 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
     let sawReasoning = false
     let stepUsage = null // last usage event of THIS request -> stored on the message
     try {
-      for await (const ev of llm.stream(profile, { apiKey, system: reqSystem, messages: session.messages, tools: reqTools, signal })) {
+      const request = { apiKey, system: reqSystem, messages: session.messages, tools: reqTools, signal }
+      const stream = profile.group
+        ? streamWithFallback(profile, request, { home: engine?.home, signal })
+        : llm.stream(profile, request)
+      for await (const ev of stream) {
         if (ev.type === "text") {
           text += ev.delta
           emit({ type: "text.delta", delta: ev.delta })
@@ -369,16 +467,19 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
           emit({ type: "reasoning.delta", delta: ev.delta })
         }
         else if (ev.type === "tool_call") calls.push(ev)
+        else if (ev.type === "notice") emit({ type: "notice", text: ev.text })
         else if (ev.type === "usage") {
           const previous = stepUsage || canonicalUsage({})
-          stepUsage = estimateCost(canonicalUsage(ev), require("../llm/provider-meta").modelPricing(profile, engine?.home))
+          const usageModel = ev.model || { providerID: String(profile.id).split("/")[0], id: profile.model }
+          const usageProfile = { ...profile, id: usageModel.providerID, model: usageModel.id }
+          stepUsage = estimateCost(canonicalUsage(ev), require("../llm/provider-meta").modelPricing(usageProfile, engine?.home))
           const fullInput = inputTotal(stepUsage)
           const fullOutput = outputTotal(stepUsage)
           if (fullInput) session.usage.lastInput = fullInput
           session.usage.totalInput += fullInput - inputTotal(previous)
           session.usage.totalOutput += fullOutput - outputTotal(previous)
           if (stepUsage.cost !== undefined) session.usage.totalCost = (session.usage.totalCost || 0) + stepUsage.cost - (previous.cost || 0)
-          emit({ type: "usage", ...stepUsage, step: step + 1, model: { providerID: String(profile.id).split("/")[0], id: profile.model } })
+          emit({ type: "usage", ...stepUsage, step: step + 1, model: usageModel })
         } else if (ev.type === "finish") finish = ev.reason
       }
     } catch (e) {
@@ -570,4 +671,4 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
   emit({ type: "done", reason: "max_steps", ...(finalized ? { summarized: true } : {}) })
 }
 
-module.exports = { runLoop, repairHistory, abortable, splitCommand }
+module.exports = { runLoop, repairHistory, abortable, splitCommand, isFailoverError }

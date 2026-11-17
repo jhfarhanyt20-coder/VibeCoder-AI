@@ -15,6 +15,7 @@
 const fs = require("fs")
 const path = require("path")
 const { homeDir } = require("../util")
+const { PRODUCT_HEADERS, COMPAT_CLIENT_HEADERS } = require("./http")
 
 /* UI ("chat"|"responses"|"anthropic") <-> engine ("openai-chat"|...) format names */
 const TO_UI = { chat: "chat", responses: "responses", anthropic: "anthropic", "openai-chat": "chat", "openai-responses": "responses" }
@@ -136,15 +137,13 @@ function repairProfile(profile) {
 }
 
 /* ---------- provider's own model list ---------- */
+const COMPAT_ANTHROPIC_HEADERS = { "user-agent": "claude-cli/2.0.60 (external, cli)", "x-app": "cli" }
+
 function listHeaders(format, apiKey) {
-  const h = {}
+  const h = { ...PRODUCT_HEADERS }
   if (format === "anthropic") {
     h["x-api-key"] = apiKey || ""
     h["anthropic-version"] = "2023-06-01"
-    // Anthropic-format gateways often whitelist known Claude clients (401 otherwise);
-    // api.anthropic.com ignores these headers. Keep in sync with anthropic.js.
-    h["user-agent"] = "claude-cli/2.0.60 (external, cli)"
-    h["x-app"] = "cli"
   } else if (apiKey) h.authorization = `Bearer ${apiKey}`
   return h
 }
@@ -165,11 +164,14 @@ async function listRemoteModels({ baseURL, apiKey, format = "chat", headers: cus
     url = base + "/models"
     headers = { ...listHeaders(format, apiKey), ...customHeaders }
   }
-  let res
-  try {
-    res = await fetch(url, { headers, signal: AbortSignal.timeout(15000) })
-  } catch (e) {
+  const get = (h) => fetch(url, { headers: h, signal: AbortSignal.timeout(15000) }).catch((e) => {
     throw new Error(`Could not reach ${url} (${e.name === "TimeoutError" ? "timeout" : e.message})`)
+  })
+  let res = await get(headers)
+  if (res.status === 401 || res.status === 403) {
+    // Same compatibility fallback as the chat adapters: identity first, the
+    // whitelisted client string only when the gateway refuses our name.
+    res = await get({ ...headers, ...(format === "anthropic" ? COMPAT_ANTHROPIC_HEADERS : COMPAT_CLIENT_HEADERS) })
   }
   if (res.status === 401 || res.status === 403) throw new Error(`The provider rejected this API key (${res.status})`)
   if (res.status === 404) throw new Error(`${url} answered 404 - is this the API root? Groq: https://api.groq.com/openai/v1, xAI: https://api.x.ai/v1, OpenAI: https://api.openai.com/v1`)

@@ -101,6 +101,9 @@ const api = {
   providerModels: call("providerModels"),
   providerModel: call("providerModel"),
   providerMeta: call("providerMeta"),
+  fallbackGet: call("fallbackGet"),
+  fallbackSave: call("fallbackSave"),
+  fallbackReset: call("fallbackReset"),
 
   // project / workspace
   cwd: call("cwd"),

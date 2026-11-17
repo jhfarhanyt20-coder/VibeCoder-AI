@@ -98,6 +98,19 @@ function shouldTryChat(error) {
   return [401, 403].includes(error?.status) && /unauthori[sz]ed[_\s-]*client|client[^\n]{0,40}(?:not allowed|not authori[sz]ed|detected)/i.test(String(error?.body || ""))
 }
 
+/** A chat endpoint may refuse a model that exists only on the Responses API. */
+function shouldTryResponses(error) {
+  const status = Number(error?.status) || 0
+  if (![400, 404, 405, 501].includes(status)) return false
+  const body = String(error?.body || error?.message || "")
+  return /\/v1\/responses\b|\bresponses api\b/i.test(body)
+}
+
+// Models that already proved they only exist on /responses skip the chat
+// attempt next time (AgentRouter's gpt-5.6-sol and similar routers).
+const responsesOnlyModels = new Set()
+const modelKey = (profile) => `${profile.id || ""}/${profile.baseURL || ""}/${profile.model || ""}`
+
 function stream(profile, req) {
   if (!profile || typeof profile !== "object" || !profile.format) {
     throw new Error(`Invalid model profile: missing format (expected openai-chat | openai-responses | anthropic)`)
@@ -127,6 +140,24 @@ function stream(profile, req) {
       }
       return
     }
+    if (candidate.format === "openai-chat") {
+      // The reverse case: a router that exposes one model only on /responses
+      // answers /chat/completions with a 400 telling us so (AgentRouter's
+      // gpt-5.6-sol). Retry through the Responses adapter once, then remember it.
+      const key = modelKey(candidate)
+      if (responsesOnlyModels.has(key)) {
+        yield* adapters["openai-responses"].stream({ ...wireReq, profile: candidate })
+        return
+      }
+      try {
+        yield* adapter.stream({ ...wireReq, profile: candidate })
+      } catch (e) {
+        if (!shouldTryResponses(e)) throw e
+        yield* adapters["openai-responses"].stream({ ...wireReq, profile: candidate })
+        responsesOnlyModels.add(key)
+      }
+      return
+    }
     yield* adapter.stream({ ...wireReq, profile: candidate })
   }
 
@@ -151,4 +182,4 @@ function stream(profile, req) {
   }
   return remapEvents(robust())
 }
-module.exports = { stream, adapters, normalizeToolNames, runtimeProfiles, shouldTryChat, ...require("./http"), ...require("./sse") }
+module.exports = { stream, adapters, normalizeToolNames, runtimeProfiles, shouldTryChat, shouldTryResponses, ...require("./http"), ...require("./sse") }

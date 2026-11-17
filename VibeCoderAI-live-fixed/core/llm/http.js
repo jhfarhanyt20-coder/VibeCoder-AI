@@ -7,17 +7,42 @@ const VIBE_VERSION = (() => {
   try { return require("../../package.json").version || "0.0.0" } catch { return "0.0.0" }
 })()
 
+// Product identity carried by every provider request (chat, responses, anthropic
+// and the model list), so providers and gateways can recognise VibeCoder AI.
+// A profile's own headers may still override these values.
+const PRODUCT_HEADERS = {
+  "user-agent": `VibeCoderAI/${VIBE_VERSION}`,
+  "x-vibecoder-client": `VibeCoderAI/${VIBE_VERSION}`,
+}
+
+// Some gateways (AgentRouter, new-api routers) reject an unknown client before
+// looking at the request. Only after a 401/403 "unauthorized client" do the
+// OpenAI-format adapters retry once with a client string those gateways
+// whitelist. The product header stays, so the provider still sees which app
+// made the request. Anthropic keeps its own claude-cli fallback.
+const COMPAT_CLIENT_HEADERS = { "user-agent": "codex_cli_rs/0.50.0" }
+
+// Remember which providers already refused the app identity, so later requests
+// skip the doomed first attempt. The product header is always kept.
+const compatClients = new Set()
+const prefersCompatClient = (id) => !!id && compatClients.has(id)
+const rememberCompatClient = (id) => { if (id) compatClients.add(id) }
+
 class ApiError extends Error {
   constructor(status, body) {
     const text = String(body)
     const restricted = [401, 403].includes(status) && /unauthori[sz]ed[_\s-]*client|client[^\n]{0,40}(?:not allowed|not authori[sz]ed|detected)/i.test(text)
-    super(restricted
-      ? `This provider rejected VibeCoder AI as an unauthorized client (HTTP ${status}). The credential is restricted to another approved application; ask the provider to authorize VibeCoder AI or use an unrestricted API credential. Provider said: ${text.slice(0, 300)}`
-      : `HTTP ${status}: ${text.slice(0, 500)}`)
+    const blocked = status === 400 && /content[_\s-]*blocked|content[_\s-]*policy|blocked by (?:the )?provider/i.test(text)
+    super(blocked
+      ? `The provider's content filter blocked this message (HTTP 400). Try another provider, add one to the Fallback model chain, or rephrase the message. Provider said: ${text.slice(0, 300)}`
+      : restricted
+        ? `This provider rejected VibeCoder AI as an unauthorized client (HTTP ${status}). The credential is restricted to another approved application; ask the provider to authorize VibeCoder AI or use an unrestricted API credential. Provider said: ${text.slice(0, 300)}`
+        : `HTTP ${status}: ${text.slice(0, 500)}`)
     this.name = "ApiError"
     this.status = status
     this.body = text
     if (restricted) this.code = "PROVIDER_CLIENT_RESTRICTED"
+    if (blocked) this.code = "PROVIDER_CONTENT_BLOCKED"
   }
   /** True when the provider says the prompt is larger than the context window. */
   get overflow() {
@@ -79,7 +104,7 @@ async function postStream(url, { headers = {}, body, signal, retries = 2, connec
     try {
       const res = await fetch(url, {
         method: "POST",
-        headers: { "content-type": "application/json", accept: "text/event-stream", "user-agent": `VibeCoderAI/${VIBE_VERSION}`, ...headers },
+        headers: { "content-type": "application/json", accept: "text/event-stream", ...PRODUCT_HEADERS, ...headers },
         body: JSON.stringify(body),
         signal: ctl.signal,
       })
@@ -160,4 +185,4 @@ function parseRawBody(text) {
   return j
 }
 
-module.exports = { ApiError, NonApiResponseError, postStream, postStreamAdaptive, parseRawBody, streamError }
+module.exports = { ApiError, NonApiResponseError, postStream, postStreamAdaptive, parseRawBody, streamError, PRODUCT_HEADERS, COMPAT_CLIENT_HEADERS, prefersCompatClient, rememberCompatClient, VIBE_VERSION }

@@ -5,7 +5,7 @@
  * Canonical -> wire, and wire SSE -> canonical events.
  */
 const { parseSSE } = require("./sse")
-const { postStreamAdaptive, parseRawBody, streamError } = require("./http")
+const { postStreamAdaptive, parseRawBody, streamError, COMPAT_CLIENT_HEADERS, prefersCompatClient, rememberCompatClient } = require("./http")
 const { newId } = require("../util")
 const { openAIUsage } = require("./usage")
 
@@ -91,7 +91,17 @@ async function* stream({ profile, apiKey, system, messages, tools, signal }) {
     if (b.reasoning_effort && /reasoning_effort|reasoning/i.test(t) && /unsupported|unknown|not support|unrecognized|invalid/i.test(t)) return delete b.reasoning_effort
     return false
   }
-  const res = await postStreamAdaptive(profile.baseURL.replace(/\/+$/, "") + "/chat/completions", { headers, body, signal }, adapt)
+  const url = profile.baseURL.replace(/\/+$/, "") + "/chat/completions"
+  const compat = prefersCompatClient(profile.id)
+  let res
+  try {
+    res = await postStreamAdaptive(url, { headers: compat ? { ...headers, ...COMPAT_CLIENT_HEADERS } : headers, body, signal }, adapt)
+  } catch (e) {
+    if (!e || e.code !== "PROVIDER_CLIENT_RESTRICTED") throw e
+    // Identity first; retry once only when a gateway refuses our client name.
+    res = await postStreamAdaptive(url, { headers: { ...headers, ...COMPAT_CLIENT_HEADERS }, body, signal }, adapt)
+    rememberCompatClient(profile.id)
+  }
 
   const calls = new Map()
   let finish = "stop"

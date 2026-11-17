@@ -17,6 +17,7 @@ const { convertMessages } = require("./messages.cjs")
 const updater = require("./updater.cjs")
 const { homeDir } = require("../core/util")
 const profileStore = require("../core/llm/profiles")
+const groupStore = require("../core/llm/groups")
 const secrets = require("../core/store/secrets")
 const providerMeta = require("../core/llm/provider-meta")
 const mcp = require("../core/mcp")
@@ -193,6 +194,9 @@ function selectedProfileId() {
   const available = new Set(rows.map((row) => row.providerID))
   if (selectedModel) {
     const pid = selectedModel.split("/")[0]
+    // A fallback group is selected as one entry; the session stores its full
+    // "group/<id>" identity so every run follows the same chain.
+    if (pid === "group" && available.has("group")) return selectedModel
     if (available.has(pid)) return pid
   }
   const preferred = ["openai", "groq-gpt-oss-120b"].find((id) => available.has(id))
@@ -268,7 +272,40 @@ function modelRows(profileList = engine.listProfiles()) {
 
   // Custom providers first, with configured built-ins afterwards. A new or
   // renamed provider is visible without scrolling through unrelated defaults.
-  return [...custom, ...configuredBuiltins]
+  // The fallback group is one selectable entry above every provider.
+  const providerRows = [...custom, ...configuredBuiltins]
+  const groupRows = groupStore.listGroups(home)
+    .filter((g) => Array.isArray(g.models) && g.models.length)
+    .map((g) => {
+      const cursor = Math.min(Math.max(0, Number(g.cursor) || 0), g.models.length - 1)
+      // Mirror the engine: the active model is the sticky cursor when it still
+      // resolves, otherwise the next usable model in the chain. Its context
+      // window is what the ring and compaction must use.
+      let active = null
+      let activeKey = ""
+      for (let k = 0; k < g.models.length; k++) {
+        const key = g.models[(cursor + k) % g.models.length]
+        const row = providerRows.find((item) => `${item.providerID}/${item.id}` === key)
+        if (row) { active = row; activeKey = key; break }
+      }
+      return {
+        providerID: "group",
+        id: g.id,
+        name: g.name || "Fallback model",
+        providerName: g.name || "Fallback model",
+        // Composer context/image behavior follows the model at the sticky cursor.
+        context: Number(active?.context) || 0,
+        output: Number(active?.output) || 0,
+        image: !!active?.image,
+        hasKey: true,
+        isBuiltin: true,
+        isGroup: true,
+        groupModels: g.models.slice(),
+        groupCursor: cursor,
+        activeModel: activeKey,
+      }
+    })
+  return [...groupRows, ...providerRows]
 }
 function providerCatalogData() {
   const profileList = engine.listProfiles()
@@ -282,6 +319,7 @@ function providerCatalogData() {
     ],
     models: modelRows(profileList),
     selectedModel,
+    fallback: groupStore.getGroup("fallback", home),
     source: {
       profilesFile: customProfilesFile,
       authFile,
@@ -336,8 +374,11 @@ function startProviderWatcher() {
     // replace JSON files atomically via rename, which invalidates file watchers.
     providerWatcher = fs.watch(home, { persistent: false }, (_event, filename) => {
       const name = filename == null ? "" : String(filename)
-      if (!name || ["profiles.json", "auth.json", "provider-meta.json", "models.dev.json"].includes(name)) {
-        scheduleProviderRefresh(name || "directory-change")
+      // Only the provider metadata files need a catalog reload. A missing
+      // filename (common on Windows) used to refresh the whole provider UI for
+      // every session/draft/cursor write, which made provider clicks feel slow.
+      if (["profiles.json", "auth.json", "provider-meta.json", "models.dev.json"].includes(name)) {
+        scheduleProviderRefresh(name)
       }
     })
     providerWatcher.on("error", (error) => {
@@ -623,6 +664,7 @@ function promptAttachments(input = []) {
 const handlers = {
   info: async () => {
     const id = selectedProfileId(); const p = engine.listProfiles().find((x) => x.id === id)
+    if (id && id.startsWith("group/")) return { mode: "sdk", model: id, home }
     return { mode: "sdk", model: `${id || ""}/${selectedModel?.split("/").slice(1).join("/") || p?.model || ""}`, home }
   },
   setMode: async ({ mode } = {}) => { if (mode && mode !== "sdk") throw new Error("This build runs the embedded Vibe SDK engine only."); return { mode: "sdk" } },
@@ -754,6 +796,19 @@ const handlers = {
     const requestedModelID = String(a.model?.id || a.modelID || a.modelId || "").trim()
     if (!requestedProviderID) throw new Error("Choose a provider before switching models.")
 
+    // The fallback group is one row in the picker: its "provider" is the group
+    // namespace and its id is the group id. The session stores group/<id>.
+    if (requestedProviderID === "group") {
+      const group = groupStore.getGroup(requestedModelID || "fallback", home)
+      if (!group.models.length) throw new Error("Fallback model has no models yet. Open Settings → Model settings → Fallback model and add at least one model.")
+      const key = `group/${group.id}`
+      if (sid) await vibe.session.switchModel(sid, key)
+      selectedModel = key
+      persistUIState()
+      scheduleProviderRefresh("group-selected")
+      return { providerID: "group", id: group.id, selectedModel: key, recoveredStaleProvider: false }
+    }
+
     // Always resolve against a fresh disk-backed catalog. A stale renderer can
     // still submit the old provider ID for one event-loop turn after a rename /
     // delete; do not let that stale identifier poison the session profile.
@@ -870,6 +925,35 @@ const handlers = {
     return { ...model, model: model.found ? { id: a.modelId, context: model.context, output: model.output, image: model.image, source: model.source } : undefined }
   },
   providerMeta: async (a = {}) => providerMeta.lookupModel({ modelId: a.modelId }),
+
+  // ---- fallback model group ----
+  fallbackGet: async () => {
+    const group = groupStore.getGroup("fallback", home)
+    const catalogRows = modelRows().filter((row) => !row.isGroup).map((row) => ({
+      key: `${row.providerID}/${row.id}`,
+      providerID: row.providerID,
+      providerName: row.providerName,
+      modelID: row.id,
+      name: row.name,
+      context: row.context,
+      output: row.output,
+      image: !!row.image,
+    }))
+    return { group, catalog: catalogRows }
+  },
+  fallbackSave: async (a = {}) => {
+    const models = (Array.isArray(a.models) ? a.models : [])
+      .map((key) => String(key || "").trim())
+      .filter(Boolean)
+    const saved = groupStore.saveGroup({ id: "fallback", name: "Fallback model", models, cursor: Number(a.cursor) || 0 }, home)
+    scheduleProviderRefresh("fallback-saved")
+    return saved
+  },
+  fallbackReset: async () => {
+    const saved = groupStore.setCursor("fallback", 0, home)
+    scheduleProviderRefresh("fallback-reset")
+    return saved
+  },
 
   cwd: async () => currentDirectory,
   getDirectory: async () => ({ directory: currentDirectory, name: path.basename(currentDirectory) }),
@@ -1004,7 +1088,7 @@ const preloadNames = [
   "info","setMode","getAllUsage","clearSessionRules","browserCreateTab","browserCloseTab","browserListTabs","browserCurrent","browserNavigate","browserScreenshot","browserEvaluate","browserSnapshot","browserClick","browserFill","browserPress","browserScroll",
   "listSessions","createSession","getMessages","renameSession","deleteSession","revertSession","undoSession","listSnapshots","listStepSnapshots","previewSnapshot","undoStepSession","redoSession","listRedo","getTrail","prompt","queuePrompt","resumeRun","interrupt","compactSession","getCompactionSettings","setCompactionSettings",
   "listShells","shellOutput","shellInput","backgroundSession","backgroundShell","cancelShell","setPermissions","listPermissionRequests","replyPermission","listForms","replyForm","cancelForm",
-  "listModels","listAllModels","listModelLimits","setModel","providerCatalog","providerList","providerSave","providerRemove","providerDraftSave","providerDraftLoad","providerDraftRemove","providerDisabled","providerKey","providerModels","providerModel","providerMeta",
+  "listModels","listAllModels","listModelLimits","setModel","providerCatalog","providerList","providerSave","providerRemove","providerDraftSave","providerDraftLoad","providerDraftRemove","providerDisabled","providerKey","providerModels","providerModel","providerMeta","fallbackGet","fallbackSave","fallbackReset",
   "cwd","setDirectory","getDirectory","gitBranch","pickProject","pickAttachments","readAttachment","ensureAgent","switchAgent","listAgents","setAgentDisabled","mcpList","mcpAdd","mcpRemove","subagentCreate","subagentList","subagentStatus","subagentResult","subagentDetails","subagentResume","subagentStop","subagentToggle",
   "pluginList","pluginAdd","pluginRemove","builtins","installBuiltinPlugin","removeBuiltinPlugin","marketplace","installSkill","removeSkill","installCustomSkill","removeCustomSkill","importGitHubSkills","registryAdd","registryRemove","memoryPath","memoryList","memoryAdd","memoryRemove","openMemoryFile","todoList","todoSave","cliInfo","cliInstallTested","cliUpdateCheck","authStatus","authConnect","authDisconnect","upgradeInfo","startUpgrade","ownerScan","ownerVerify","notify","openExternal","restartEvents","logError","openErrorLog","appUpdateStatus","appUpdateSetPrefs"
 ]

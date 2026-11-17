@@ -39,7 +39,7 @@ function mock(handler) {
     req.on("end", async () => {
       const body = JSON.parse(Buffer.concat(chunks).toString() || "{}")
       requests.push({ url: req.url, body, headers: req.headers })
-      const r = await handler({ url: req.url, body, n: n++ })
+      const r = await handler({ url: req.url, body, headers: req.headers, n: n++ })
       if (r.json || r.html) {
         res.writeHead(200, { "content-type": r.html ? "text/html" : "application/json" })
         return res.end(r.html || JSON.stringify(r.json))
@@ -871,11 +871,16 @@ test("an unauthorized-client Responses route may fall back to Chat, but restrict
   const events = await collect(llm.stream(profile, { system: "s", messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }], tools: [] }))
   m.close()
   assert.equal(events.filter((event) => event.type === "text").map((event) => event.delta).join(""), "chat route accepted")
-  assert.deepEqual(m.requests.map((request) => request.url), ["/v1/responses", "/v1/chat/completions"])
+  assert.deepEqual(m.requests.map((request) => request.url), ["/v1/responses", "/v1/responses", "/v1/chat/completions"])
+  assert.match(m.requests[0].headers["user-agent"], /^VibeCoderAI\//)
+  assert.match(m.requests[1].headers["user-agent"], /^codex_cli_rs\//, "the restricted route gets one compatibility retry")
   const { ApiError } = require("../core/llm/http")
   const restricted = new ApiError(401, '{"error":{"message":"unauthorized client detected"}}')
   assert.equal(restricted.code, "PROVIDER_CLIENT_RESTRICTED")
   assert.match(restricted.message, /ask the provider to authorize VibeCoder AI/i)
+  const blocked = new ApiError(400, '{"error":{"code":"content-blocked","message":"content-blocked"}}')
+  assert.equal(blocked.code, "PROVIDER_CONTENT_BLOCKED")
+  assert.match(blocked.message, /content filter/i)
 })
 
 test("custom providers forward safe headers, extra body fields, and a transparent VibeCoder user-agent", async () => {
@@ -2709,7 +2714,113 @@ test("V-08: rules.json written in the new shape is loaded by the engine", () => 
   assert.equal(ask({ tool: "read", subject: "C:/x" }), true)
 })
 
-// ---------- runner ----------
+test("chat endpoint that requires /responses auto-retries through the Responses adapter", async () => {
+  const m = await mock(({ url }) => {
+    if (url.endsWith("/chat/completions")) {
+      return { status: 400, text: JSON.stringify({ error: { message: "Model gpt-x does not support /v1/chat/completions, please use /v1/responses instead." } }) }
+    }
+    return {
+      chunks: [
+        sse({ type: "response.output_text.delta", delta: "via responses" }),
+        sse({ type: "response.completed", response: { usage: {} } }),
+        "data: [DONE]\n\n",
+      ],
+    }
+  })
+  const profile = { id: "router", format: "openai-chat", baseURL: `http://127.0.0.1:${m.port}/v1`, model: "gpt-x", noAuth: true }
+  const events = await collect(llm.stream(profile, { system: "s", messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }], tools: [] }))
+  m.close()
+  assert.equal(events.filter((e) => e.type === "text").map((e) => e.delta).join(""), "via responses")
+  assert.ok(m.requests.some((r) => r.url.endsWith("/v1/responses")), "the request must move to the Responses endpoint")
+})
+
+test("an OpenAI-format gateway that rejects the app client gets one compatibility retry with the product header intact", async () => {
+  const m = await mock(({ headers }) => {
+    if (String(headers["user-agent"] || "").startsWith("VibeCoderAI/")) {
+      return { status: 401, text: JSON.stringify({ error: { message: "unauthorized client detected" } }) }
+    }
+    return { chunks: [...chat.text("after compat retry"), ...chat.end()] }
+  })
+  const profile = { id: "router", format: "openai-chat", baseURL: `http://127.0.0.1:${m.port}/v1`, model: "gpt-x", noAuth: true }
+  const events = await collect(llm.stream(profile, { messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }], tools: [] }))
+  m.close()
+  assert.equal(events.filter((e) => e.type === "text").map((e) => e.delta).join(""), "after compat retry")
+  assert.equal(m.requests.length, 2, "identity first, then exactly one compatibility retry")
+  assert.match(m.requests[1].headers["user-agent"], /^codex_cli_rs\//)
+  assert.match(m.requests[1].headers["x-vibecoder-client"], /^VibeCoderAI\//)
+})
+
+test("fallback group: rate limit moves to the next model, the cursor sticks and wraps", async () => {
+  const groupStore = require("../core/llm/groups")
+  let oneOk = false
+  let twoOk = true
+  const m = await mock(({ body }) => {
+    if (body.model === "one") {
+      return oneOk
+        ? { chunks: [...chat.text("from-one"), ...chat.end()] }
+        : { status: 429, text: JSON.stringify({ error: { message: "rate limited" } }) }
+    }
+    return twoOk
+      ? { chunks: [...chat.text("from-two"), ...chat.end()] }
+      : { status: 429, text: JSON.stringify({ error: { message: "rate limited" } }) }
+  })
+  const home = tmp()
+  const dir = tmp()
+  const vibe = createVibe({ home, permission: "allow" })
+  await vibe.profiles.upsert({ id: "fb-one", format: "openai-chat", baseURL: `http://127.0.0.1:${m.port}/v1`, model: "one", noAuth: true, contextLimit: 128000 })
+  await vibe.profiles.upsert({ id: "fb-two", format: "openai-chat", baseURL: `http://127.0.0.1:${m.port}/v1`, model: "two", noAuth: true, contextLimit: 128000 })
+  groupStore.saveGroup({ id: "fallback", models: ["fb-one/one", "fb-two/two"], cursor: 0 }, home)
+
+  const session = await vibe.session.create({ dir, profile: "group/fallback" })
+  const first = await collect(vibe.session.prompt(session.id, "hi"))
+  assert.equal(first.filter((event) => event.type === "text.delta").map((event) => event.delta).join(""), "from-two")
+  assert.ok(first.some((event) => event.type === "notice" && /Fallback model/.test(event.text)), "the switch must be visible in the chat")
+  assert.equal(groupStore.getGroup("fallback", home).cursor, 1, "the cursor sticks to the model that answered")
+
+  // Second message starts at #2 (sticky, not back at #1), fails there and wraps to #1.
+  oneOk = true
+  twoOk = false
+  const requestsBefore = m.requests.length
+  const second = await collect(vibe.session.prompt(session.id, "again"))
+  assert.equal(second.filter((event) => event.type === "text.delta").map((event) => event.delta).join(""), "from-one")
+  assert.equal(m.requests[requestsBefore].body.model, "two", "the next turn must start at the sticky cursor")
+  assert.equal(groupStore.getGroup("fallback", home).cursor, 0, "the last model wraps around to #1")
+  m.close()
+})
+
+test("fallback group: a provider content filter hands the message to the next model", async () => {
+  const groupStore = require("../core/llm/groups")
+  const m = await mock(({ body }) => body.model === "blocked"
+    ? { status: 400, text: JSON.stringify({ error: { code: "content-blocked", message: "content-blocked" } }) }
+    : { chunks: [...chat.text("accepted by next model"), ...chat.end()] })
+  const home = tmp()
+  const dir = tmp()
+  const vibe = createVibe({ home, permission: "allow" })
+  await vibe.profiles.upsert({ id: "fb-block", format: "openai-chat", baseURL: `http://127.0.0.1:${m.port}/v1`, model: "blocked", noAuth: true, contextLimit: 128000 })
+  await vibe.profiles.upsert({ id: "fb-ok", format: "openai-chat", baseURL: `http://127.0.0.1:${m.port}/v1`, model: "ok", noAuth: true, contextLimit: 128000 })
+  groupStore.saveGroup({ id: "fallback", models: ["fb-block/blocked", "fb-ok/ok"], cursor: 0 }, home)
+  const session = await vibe.session.create({ dir, profile: "group/fallback" })
+  const events = await collect(vibe.session.prompt(session.id, "tomar model nam ki"))
+  m.close()
+  assert.equal(events.filter((event) => event.type === "text.delta").map((event) => event.delta).join(""), "accepted by next model")
+  assert.ok(events.some((event) => event.type === "notice" && /content filter/i.test(event.text)))
+  assert.equal(groupStore.getGroup("fallback", home).cursor, 1)
+})
+
+test("fallback group: unreachable providers fail over, but auth/not-found/overflow errors do not", () => {
+  const { isFailoverError } = require("../core/agent/loop")
+  assert.equal(isFailoverError(Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } })), true)
+  assert.equal(isFailoverError({ message: "socket hang up", code: "ECONNRESET" }), true)
+  assert.equal(isFailoverError({ status: 429, message: "rate limited" }), true)
+  assert.equal(isFailoverError({ status: 503, message: "unavailable" }), true)
+  assert.equal(isFailoverError({ status: 401, message: "bad key" }), false)
+  assert.equal(isFailoverError({ status: 403, message: "forbidden" }), false)
+  assert.equal(isFailoverError({ status: 404, message: "wrong model" }), false)
+  assert.equal(isFailoverError({ status: 400, overflow: true, message: "context too long" }), false)
+  assert.equal(isFailoverError({ status: 400, code: "PROVIDER_CONTENT_BLOCKED", message: "content-blocked" }), true)
+})
+
+
 let failed = 0
 for (const [name, fn] of tests) {
   try {

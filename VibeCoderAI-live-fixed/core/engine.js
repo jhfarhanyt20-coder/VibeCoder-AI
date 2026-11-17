@@ -3,6 +3,7 @@ const fs = require("fs")
 const path = require("path")
 const { SessionStore } = require("./store/sessions")
 const profiles = require("./llm/profiles")
+const groups = require("./llm/groups")
 const { DEFAULT_RULES, normalizeRules } = require("./perm/rules")
 const { runLoop, repairHistory } = require("./agent/loop")
 const compaction = require("./agent/compaction")
@@ -26,6 +27,9 @@ const { newId, homeDir } = require("./util")
 const targetProfile = (engine, id) => typeof engine._profileTarget === "function"
   ? engine._profileTarget(id)
   : profiles.getProfile(id, engine.home)
+const targetKey = (engine, profile) => typeof engine._profileKey === "function"
+  ? engine._profileKey(profile)
+  : profiles.getKey(profile, engine.home)
 
 class Engine {
   /**
@@ -906,7 +910,7 @@ class Engine {
       recipeModel: recipe.model || "",
     } : opts
     const profile = targetProfile(this, session.profile)
-    const apiKey = profiles.getKey(profile, this.home)
+    const apiKey = targetKey(this, profile)
     const ctl = this._begin(id, opts)
     let rollback = null
     let persisted = false
@@ -963,7 +967,7 @@ class Engine {
     if (this.runs.has(id)) throw new Error("Session is busy")
     const session = this.store.get(id)
     const profile = targetProfile(this, session.profile)
-    const apiKey = profiles.getKey(profile, this.home)
+    const apiKey = targetKey(this, profile)
     repairHistory(session.messages)
     const pendingParts = [...this._takeShellResultParts(session), ...this._takeSubagentResultParts(session)]
     if (pendingParts.length) {
@@ -985,8 +989,8 @@ class Engine {
     yield* this._drive(session, profile, apiKey, ctl, runOpts)
   }
 
-  /** Resolve either a profile id or an exact profile/model key for one run. */
-  _profileTarget(target) {
+  /** Resolve a provider profile id or an exact provider/model key. */
+  _profileModel(target) {
     const value = String(target || "").trim()
     try { return profiles.getProfile(value, this.home) } catch (exactError) {
       const base = profiles.listProfiles(this.home).filter((p) => value.startsWith(p.id + "/"))
@@ -1005,6 +1009,68 @@ class Engine {
         ...(row && Object.prototype.hasOwnProperty.call(row, "image") ? { image: !!row.image } : {}),
       }
     }
+  }
+
+  /**
+   * Resolve a fallback group identity ("group:fallback" or "group/fallback")
+   * into the profile of the model under the sticky cursor, plus the ordered
+   * target list the agent loop uses to fail over. Returns null for every other
+   * model target.
+   */
+  _groupTarget(target) {
+    const value = String(target || "").trim()
+    let id = ""
+    if (value.startsWith("group:")) id = value.slice(6)
+    else if (value.startsWith("group/")) id = value.slice(6)
+    if (!id) return null
+    const group = groups.getGroup(id, this.home)
+    const rows = Array.isArray(group.models) ? group.models : []
+    const targets = rows.map((key, index) => {
+      let profile = null
+      try { profile = this._profileModel(key) } catch {}
+      return { key, index, profile }
+    })
+    const usable = targets.filter((item) => item.profile)
+    if (!usable.length) {
+      throw new Error("Fallback model has no usable models. Open Settings → Model settings → Fallback model and add at least one model.")
+    }
+    const wanted = targets.find((item) => item.index === group.cursor && item.profile)
+    const activeTarget = wanted || usable[0]
+    const active = activeTarget.profile
+    return {
+      ...active,
+      id: `group:${group.id}`,
+      label: group.name || "Fallback model",
+      name: group.name || "Fallback model",
+      group: {
+        id: group.id,
+        name: group.name || "Fallback model",
+        cursor: activeTarget.index,
+        targets,
+      },
+    }
+  }
+
+  /** Resolve either a profile id, an exact provider/model key or a fallback group. */
+  _profileTarget(target) {
+    return this._groupTarget(target) || this._profileModel(target)
+  }
+
+  /** API key for the active model of a target (groups use the cursor's model). */
+  _profileKey(profile) {
+    if (profile && profile.group) {
+      try {
+        const active = profile.group.targets.find((item) => item.index === profile.group.cursor && item.profile)
+          || profile.group.targets.find((item) => item.profile)
+        return active ? profiles.getKey(active.profile, this.home) : ""
+      } catch {
+        // streamWithFallback resolves credentials per target and skips a group
+        // member whose key is missing. Startup therefore must not fail on only
+        // the model currently under the cursor.
+        return ""
+      }
+    }
+    return profiles.getKey(profile, this.home)
   }
 
   /**

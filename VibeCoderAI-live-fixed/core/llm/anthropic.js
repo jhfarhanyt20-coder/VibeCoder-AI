@@ -1,7 +1,7 @@
 "use strict"
 /** Adapter: Anthropic Messages format (POST /v1/messages). */
 const { parseSSE } = require("./sse")
-const { postStreamAdaptive, parseRawBody, streamError } = require("./http")
+const { postStreamAdaptive, parseRawBody, streamError, PRODUCT_HEADERS } = require("./http")
 const { anthropicUsage } = require("./usage")
 
 function toWire(messages) {
@@ -48,19 +48,29 @@ async function* stream({ profile, apiKey, system, messages, tools, signal }) {
   if (system) body.system = system
   if (tools && tools.length) body.tools = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters }))
 
-  // Some Anthropic-format gateways (new-api based routers etc.) whitelist known
-  // Claude clients and answer 401 "unauthorized client detected" to every other
-  // User-Agent. Identifying as the official CLI keeps those working; api.anthropic.com
-  // ignores these headers entirely. profile.headers can still override anything.
-  const CLIENT_HEADERS = { "user-agent": "claude-cli/2.0.60 (external, cli)", "x-app": "cli" }
-  const headers = { "anthropic-version": "2023-06-01", ...CLIENT_HEADERS, ...(profile.headers || {}) }
+  // Identity first: every request says it comes from VibeCoder AI. Some
+  // Anthropic-format gateways (new-api based routers etc.) whitelist known
+  // Claude clients and answer 401 "unauthorized client detected" to anything
+  // else. Only in that case do we retry once with the compatible client string,
+  // so a provider that would break because of our name never sees it.
+  // profile.headers can still override anything.
+  const COMPAT_HEADERS = { "user-agent": "claude-cli/2.0.60 (external, cli)", "x-app": "cli" }
+  const headers = { "anthropic-version": "2023-06-01", ...PRODUCT_HEADERS, ...(profile.headers || {}) }
   if (apiKey) headers["x-api-key"] = apiKey
   const base = (profile.baseURL || "https://api.anthropic.com").replace(/\/+$/, "")
   const adapt = q.reasoningOverride ? (error, request) => {
     if (request.thinking && /thinking|budget_tokens|temperature/i.test(error.body) && /unsupported|unknown|not support|unrecognized|invalid|must be/i.test(error.body)) return delete request.thinking
     return false
   } : null
-  const res = await postStreamAdaptive(endpoint(base), { headers, body, signal }, adapt)
+  let res
+  try {
+    res = await postStreamAdaptive(endpoint(base), { headers, body, signal }, adapt)
+  } catch (e) {
+    if (!e || e.code !== "PROVIDER_CLIENT_RESTRICTED") throw e
+    // Compatibility retry: only the client string changes; the product header
+    // stays so the gateway still sees which app made the request.
+    res = await postStreamAdaptive(endpoint(base), { headers: { ...headers, ...COMPAT_HEADERS }, body, signal }, adapt)
+  }
 
   const blocks = new Map()
   let finish = "stop"

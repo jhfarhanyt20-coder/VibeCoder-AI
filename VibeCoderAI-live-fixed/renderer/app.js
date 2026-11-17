@@ -868,12 +868,30 @@ async function loadCtxLimits() {
   } catch {}
 }
 
+function contextKeyForRing() {
+  const row = (state.models || []).find((model) => `${model.providerID}/${model.id}` === state.selectedModel)
+  const lastKey = usage.last && usage.last.modelKey
+  if (row?.isGroup) {
+    // A fallback group owns one picker entry, but the ring must show the
+    // context window of the provider/model that actually answers: the last
+    // reported model during a run, else the sticky cursor's target.
+    if (lastKey && ctxLimits.has(lastKey)) return lastKey
+    const models = Array.isArray(row.groupModels) ? row.groupModels : []
+    const cursor = Math.min(Math.max(0, Number(row.groupCursor) || 0), Math.max(0, models.length - 1))
+    const activeKey = row.activeModel || models[cursor]
+    if (activeKey && ctxLimits.has(activeKey)) return activeKey
+    // The group row itself carries the active model's limits from the backend.
+    return state.selectedModel || null
+  }
+  return state.selectedModel || lastKey || null
+}
+
 function updateUsageRing() {
   const btn = $("btn-ctx")
   if (!btn) return
   const fmt = (n) => Math.round(n || 0).toLocaleString("en-US")
   // Fill is measured against the model that will answer next (the picker), else the last used one.
-  const key = state.selectedModel || (usage.last && usage.last.modelKey) || null
+  const key = contextKeyForRing()
   const limit = key ? ctxLimits.get(key) || 0 : 0
   const used = U.contextUsed(usage)
   const ratio = limit ? used / limit : 0
@@ -1015,7 +1033,7 @@ function renderCompactionModels() {
 }
 
 function usageSnapshot() {
-  const key = state.selectedModel || (usage.last && usage.last.modelKey) || null
+  const key = contextKeyForRing()
   const limit = key ? ctxLimits.get(key) || 0 : 0
   return { key, limit, used: U.contextUsed(usage) }
 }
@@ -4190,6 +4208,12 @@ async function loadModelLabel() {
 
 /* ---------- auth status in settings nav ---------- */
 async function loadAuthInfo() {
+  if (VIBECODER_ACCOUNT_COMING_SOON) {
+    $("nav-avatar").textContent = "AI"
+    $("nav-user").textContent = "VibeCoderAI — coming soon"
+    $("nav-user").title = "Your own VibeCoderAI API host is coming soon"
+    return
+  }
   try {
     const res = await vibe.authStatus()
     if (res.ok && res.data?.connected && res.data?.email) {
@@ -4739,7 +4763,7 @@ settingsNav.querySelectorAll(".nav-item").forEach((item) => {
     if (page === "subagents") loadAgents()
     if (page === "browser-use") loadBrowserUse()
     if (page === "browser-use") loadBrowserUse()
-    if (page === "model-settings") loadProviders()
+    if (page === "model-settings") { loadProviders(); loadFallbackState() }
     if (page === "skills") loadSkills()
     if (page === "usage") loadUsage()
     if (page === "app-updates") refreshAppUpdateStatus()
@@ -5661,6 +5685,13 @@ let providerRefreshGeneration = 0
 function modelDisplayLabel(key) {
   const row = (state.models || []).find((model) => `${model.providerID}/${model.id}` === key)
   if (!row) return "Select model"
+  if (row.isGroup) {
+    const models = Array.isArray(row.groupModels) ? row.groupModels : []
+    const cursor = Math.min(Math.max(0, Number(row.groupCursor) || 0), Math.max(0, models.length - 1))
+    const activeKey = row.activeModel || models[cursor]
+    const active = activeKey ? activeKey.split("/").slice(1).join("/") : ""
+    return active ? `${row.name || "Fallback model"} · ${active}` : (row.name || "Fallback model")
+  }
   const provider = (providerState.list || []).find((item) => item.id === row.providerID)
   const modelName = row.name || row.id
   return provider?.name ? `${provider.name} · ${modelName}` : modelName
@@ -5806,7 +5837,7 @@ function renderModelList(filter = "") {
     g.className = "mr-group"
     // One provider heading; IDs stay on the model keys, not beside the name.
     const known = custom.get(providerID)
-    g.textContent = known?.name || providerID
+    g.textContent = providerID === "group" ? "Fallback model" : (known?.name || providerID)
     box.appendChild(g)
     for (const m of models) {
       const b = document.createElement("button")
@@ -5814,7 +5845,15 @@ function renderModelList(filter = "") {
       const key = `${m.providerID}/${m.id}`
       b.dataset.model = key
       if (state.selectedModel === key) b.classList.add("selected")
-      b.textContent = m.id
+      b.textContent = m.id === "fallback" && m.isGroup ? (m.name || "Fallback model") : m.id
+      if (m.isGroup) {
+        const badge = document.createElement("span")
+        badge.className = "mr-badge"
+        badge.textContent = `${(m.groupModels || []).length} MODEL${(m.groupModels || []).length === 1 ? "" : "S"}`
+        badge.title = "Automatic failover: 429, server error or timeout moves to the next model"
+        b.appendChild(badge)
+        b.title = (m.groupModels || []).map((model, index) => `${index + 1}. ${model}`).join("\n")
+      }
       if (key.toLowerCase().includes("free")) {
         const badge = document.createElement("span")
         badge.className = "mr-badge"
@@ -6277,8 +6316,10 @@ const providerState = {
 }
 
 const providerFormDrafts = new Map()
+const providerDraftChecked = new Set()
 let providerDraftWrite = Promise.resolve()
 let providerDraftTimer = null
+let providerDraftLastSaved = ""
 
 function providerDraftKey(d = providerState.draft) {
   return d?.id || "__new__"
@@ -6306,6 +6347,13 @@ function persistProviderDraft() {
   const draft = captureProviderForm()
   if (!draft || typeof vibe.providerDraftSave !== "function") return providerDraftWrite
   const key = providerDraftKey(draft)
+  // Clicking another provider fires blur/change handlers on the current form
+  // and then selectProvider itself. Serialize once so one click never queues
+  // several identical IPC writes (that was the "heavy" provider switch).
+  let fingerprint = ""
+  try { fingerprint = JSON.stringify({ key, draft }) } catch {}
+  if (fingerprint && fingerprint === providerDraftLastSaved) return providerDraftWrite
+  providerDraftLastSaved = fingerprint
   const status = $("pf-autosave-status")
   if (status) status.textContent = "Saving draft…"
   providerDraftWrite = providerDraftWrite.catch(() => {}).then(async () => {
@@ -6313,6 +6361,8 @@ function persistProviderDraft() {
     if (!res || res.ok === false) throw new Error(res?.error || "Could not auto-save the provider draft")
     if (providerDraftKey() === key && status) status.textContent = "Draft auto-saved · use Save provider to apply"
   }).catch(() => {
+    // Let the next edit retry the same payload.
+    providerDraftLastSaved = ""
     if (providerDraftKey() === key && status) status.textContent = "Auto-save failed · use Save provider to retry"
   })
   return providerDraftWrite
@@ -6321,6 +6371,10 @@ function persistProviderDraft() {
 async function restoreProviderDraft(d) {
   if (typeof vibe.providerDraftLoad !== "function") return
   const key = providerDraftKey(d)
+  // One disk read per provider per session. Re-clicking providers after the
+  // first visit stays instant and never repaints the form twice.
+  if (providerDraftChecked.has(key)) return
+  providerDraftChecked.add(key)
   const res = await vibe.providerDraftLoad({ key }).catch(() => null)
   if (providerState.draft !== d || providerFormDrafts.has(key)) return
   if (res?.ok && res.data?.draft) {
@@ -6519,8 +6573,11 @@ function renderProviderList() {
   const empty = $("custom-provider-empty")
   if (!box) return
   box.textContent = ""
-  if (empty) empty.hidden = providerState.list.length > 0
-  for (const p of providerState.list) {
+  // A provider created from a popular preset belongs to the Popular list, not
+  // to Custom providers. Only genuinely new/custom providers appear here.
+  const rows = providerState.list.filter((p) => !providerPresetOf(p))
+  if (empty) empty.hidden = rows.length > 0
+  for (const p of rows) {
     const item = document.createElement("div")
     item.className = "ml-item provider-item" + (p.id === providerState.selectedId ? " active" : "")
     item.dataset.provider = p.id
@@ -6540,16 +6597,133 @@ function renderProviderList() {
     item.onclick = () => selectProvider(p.id)
     box.appendChild(item)
   }
+  renderProviderPresets()
+}
+
+/** The popular preset a saved provider came from, or null for a custom one. */
+function providerPresetOf(p) {
+  if (!p) return null
+  const key = presetKey(p)
+  if (!key) return null
+  return PROVIDER_PRESETS.find((preset) => presetKey(preset) === key) || null
+}
+
+/** Cheap active-state repaint for a provider switch (no list rebuild). */
+function updateProviderSelection() {
+  const box = $("custom-provider-list")
+  if (!box) return
+  for (const item of box.querySelectorAll(".provider-item[data-provider]")) {
+    item.classList.toggle("active", item.dataset.provider === providerState.selectedId)
+  }
+}
+
+/* ---------- popular provider presets ----------
+   One click fills the provider form with the name, the API base URL and the
+   format. No models are added: the user pastes a key and adds models exactly
+   like a custom provider. The base URL stays editable, so a preset can be
+   pointed at a proxy or a different regional host. */
+const PROVIDER_PRESETS = [
+  { name: "OpenAI", baseURL: "https://api.openai.com/v1", apiFormat: "chat", icon: "◎" },
+  { name: "Anthropic (Claude)", baseURL: "https://api.anthropic.com", apiFormat: "anthropic", icon: "◈" },
+  { name: "DeepSeek", baseURL: "https://api.deepseek.com/v1", apiFormat: "chat", icon: "◈" },
+  { name: "OpenRouter", baseURL: "https://openrouter.ai/api/v1", apiFormat: "chat", icon: "◈" },
+  { name: "Vercel AI Gateway", baseURL: "https://ai-gateway.vercel.sh/v1", apiFormat: "chat", icon: "▲" },
+  { name: "Kilo Gateway", baseURL: "https://ai-gateway.kilo.ai/api/v1", apiFormat: "chat", icon: "◈" },
+  { name: "AgentRouter", baseURL: "https://agentrouter.org/v1", apiFormat: "chat", icon: "◈" },
+  { name: "Google Gemini", baseURL: "https://generativelanguage.googleapis.com/v1beta/openai", apiFormat: "chat", icon: "✦" },
+  { name: "Groq", baseURL: "https://api.groq.com/openai/v1", apiFormat: "chat", icon: "⚡" },
+  { name: "Agnes AI", baseURL: "https://api.agnes-ai.com/api/v1", apiFormat: "chat", icon: "◈" },
+]
+
+const presetKey = (p) => String(p && p.baseURL || "").trim().replace(/\/+$/, "").toLowerCase()
+
+function renderProviderPresets() {
+  const box = $("preset-provider-list")
+  if (!box) return
+  box.textContent = ""
+  for (const preset of PROVIDER_PRESETS) {
+    const saved = providerState.list.find((p) => presetKey(p) === presetKey(preset)) || null
+    const item = document.createElement("div")
+    item.className = "ml-item provider-item preset-item" + (saved ? " configured" : "")
+    item.dataset.preset = preset.baseURL
+    if (saved) item.dataset.provider = saved.id
+    item.title = saved
+      ? `${preset.name} — configured${saved.name && saved.name !== preset.name ? ` as ${saved.name}` : ""}`
+      : `${preset.name} — ${preset.baseURL}`
+    const ic = document.createElement("span")
+    ic.className = "prov-ic"
+    ic.textContent = preset.icon
+    const nm = document.createElement("span")
+    nm.className = "prov-nm"
+    nm.textContent = preset.name
+    item.append(ic, nm)
+    if (saved) {
+      // Configured popular provider: green/grey state, exactly like Custom rows.
+      const dot = document.createElement("span")
+      dot.className = "prov-dot " + (saved.disabled ? "off" : "on")
+      dot.title = saved.disabled ? "This provider is switched off" : "This provider is on"
+      item.appendChild(dot)
+      item.onclick = () => selectProvider(saved.id)
+    } else {
+      const add = document.createElement("span")
+      add.className = "prov-add"
+      add.textContent = "＋"
+      add.title = `Add ${preset.name}`
+      item.appendChild(add)
+      item.onclick = () => selectProviderPreset(preset)
+    }
+    box.appendChild(item)
+  }
+  updatePresetActive()
+}
+
+function updatePresetActive() {
+  const list = $("preset-provider-list")
+  if (!list) return
+  const current = providerState.draft ? presetKey(providerState.draft) : ""
+  for (const item of list.children) {
+    item.classList.toggle("active", !!current && presetKey({ baseURL: item.dataset.preset }) === current)
+  }
+}
+
+function selectProviderPreset(preset) {
+  // Already saved with this base URL -> open that provider instead of a duplicate.
+  const existing = providerState.list.find((p) => presetKey(p) === presetKey(preset))
+  if (existing) {
+    selectProvider(existing.id)
+    return
+  }
+  if (providerState.draft && providerDraftDirty()) void persistProviderDraft()
+  providerState.selectedId = null
+  const d = newProviderDraft()
+  Object.assign(d, {
+    name: preset.name,
+    baseURL: preset.baseURL,
+    apiFormat: preset.apiFormat,
+    models: [],
+    isNew: true,
+  })
+  providerState.draft = d
+  // Remember the filled form so an auto-saved "__new__" draft can't replace it.
+  providerFormDrafts.set("__new__", d)
+  updateProviderSelection()
+  updatePresetActive()
+  renderProviderDetail()
+  $("model-detail").scrollTop = 0
+  // The form's input/change handlers save once the user actually edits it.
+  // Writing a draft on every preset click just added IPC noise to the switch.
 }
 
 function selectProvider(id) {
-  if (providerState.draft) void persistProviderDraft()
   const p = providerState.list.find((x) => x.id === id)
   if (!p) return
+  if (providerState.draft && providerState.draft.id !== id && providerDraftDirty()) void persistProviderDraft()
   providerState.selectedId = id
   providerState.draft = providerFormDrafts.get(id) || { ...p, isNew: false }
-  renderProviderList()
+  updateProviderSelection()
+  updatePresetActive()
   renderProviderDetail()
+  $("model-detail").scrollTop = 0
   void restoreProviderDraft(providerState.draft)
   // the OpenCode built-in block is not shown while a custom provider is open
   $("md-opencode").hidden = true
@@ -6558,11 +6732,13 @@ function selectProvider(id) {
 }
 
 function startNewProvider() {
-  if (providerState.draft) void persistProviderDraft()
+  if (providerState.draft && providerDraftDirty()) void persistProviderDraft()
   providerState.selectedId = null
   providerState.draft = providerFormDrafts.get("__new__") || newProviderDraft()
-  renderProviderList()
+  updateProviderSelection()
+  updatePresetActive()
   renderProviderDetail()
+  $("model-detail").scrollTop = 0
   void restoreProviderDraft(providerState.draft)
   $("md-opencode").hidden = true
   $("md-custom").hidden = false
@@ -6602,6 +6778,8 @@ function renderProviderDetail() {
   toggle.classList.toggle("on", !d.disabled)
   toggle.setAttribute("aria-checked", d.disabled ? "false" : "true")
   $("pf-delete").hidden = d.isNew
+  const autosave = $("pf-autosave-status")
+  if (autosave) autosave.textContent = d.isNew ? "Not saved yet — use Save provider" : ""
   renderProviderModels()
 }
 
@@ -8679,7 +8857,238 @@ function questionHistoryEl(part) {
   return el
 }
 
-/* ---------- OpenCode provider (device login) ---------- */
+/* ---------- fallback model (ordered chain across providers) ---------- */
+const fallbackState = { group: null, catalog: [], open: false, saving: false }
+
+function updateFallbackDot() {
+  const dot = $("fb-entry-dot")
+  if (!dot) return
+  const count = fallbackState.group?.models?.length || 0
+  dot.className = "prov-dot " + (count ? "on" : "off")
+  dot.title = count
+    ? `${count} model${count === 1 ? "" : "s"} in the fallback chain`
+    : "No models added yet — click Fallback model to add some"
+}
+
+async function loadFallbackState() {
+  if (typeof vibe.fallbackGet !== "function") return
+  const res = await vibe.fallbackGet()
+  if (!res || res.ok === false) return
+  fallbackState.group = res.data?.group || { id: "fallback", name: "Fallback model", models: [], cursor: 0 }
+  fallbackState.catalog = Array.isArray(res.data?.catalog) ? res.data.catalog : []
+  updateFallbackDot()
+  if (fallbackState.open) renderFallback()
+}
+
+function fallbackRow(key) {
+  return fallbackState.catalog.find((row) => row.key === key) || null
+}
+
+function fallbackRowLabel(row, key) {
+  return row ? `${row.providerName || row.providerID} · ${row.name || row.modelID}` : key
+}
+
+async function openFallback() {
+  const overlay = $("fb-overlay")
+  if (!overlay) return
+  fallbackState.open = true
+  // Keep a custom provider draft safe but hide its panel behind the popup.
+  if (providerState.draft) void persistProviderDraft()
+  providerState.selectedId = null
+  updateProviderSelection()
+  updatePresetActive()
+  $("md-opencode").hidden = true
+  $("md-custom").hidden = true
+  overlay.hidden = false
+  const search = $("fb-search")
+  if (search) search.value = ""
+  await loadFallbackState()
+  renderFallback()
+}
+
+function closeFallback() {
+  fallbackState.open = false
+  const overlay = $("fb-overlay")
+  if (overlay) overlay.hidden = true
+  const detail = $("model-detail")
+  detail?.querySelector(".md-empty")?.removeAttribute("hidden")
+  $("md-opencode").hidden = false
+  $("md-custom").hidden = true
+}
+
+function fbOpButton(label, title, disabled, onClick, extra = "") {
+  const button = document.createElement("button")
+  button.type = "button"
+  button.className = "fb-op" + extra
+  button.textContent = label
+  button.title = title
+  button.disabled = !!disabled
+  button.onclick = (event) => { event.stopPropagation(); onClick() }
+  return button
+}
+
+function renderFallback() {
+  const group = fallbackState.group
+  if (!group) return
+  const models = Array.isArray(group.models) ? group.models : []
+  const cursor = models.length ? Math.min(Math.max(0, Number(group.cursor) || 0), models.length - 1) : 0
+  const list = $("fb-added-list")
+  if (!list) return
+  list.textContent = ""
+  $("fb-added-empty").hidden = models.length > 0
+
+  models.forEach((key, index) => {
+    const row = fallbackRow(key)
+    const item = document.createElement("div")
+    item.className = "fb-row" + (models.length && index === cursor ? " active" : "")
+
+    const num = document.createElement("span")
+    num.className = "fb-num"
+    num.textContent = String(index + 1)
+
+    const name = document.createElement("div")
+    name.className = "fb-model"
+    const title = document.createElement("div")
+    title.textContent = row ? (row.name || row.modelID) : key
+    const sub = document.createElement("small")
+    sub.textContent = row ? (row.providerName || row.providerID) : "model is not configured any more — it will be skipped"
+    name.append(title, sub)
+
+    const ops = document.createElement("div")
+    ops.className = "fb-ops"
+    ops.append(
+      fbOpButton("↑", "Move up", index === 0, () => moveFallbackModel(index, -1)),
+      fbOpButton("↓", "Move down", index === models.length - 1, () => moveFallbackModel(index, 1)),
+      fbOpButton("✕", "Remove from fallback", false, () => toggleFallbackModel(key), " remove"),
+    )
+    item.append(num, name, ops)
+    list.appendChild(item)
+  })
+
+  const current = $("fb-current")
+  if (current) {
+    current.textContent = models.length
+      ? `Next answer: #${cursor + 1} · ${fallbackRowLabel(fallbackRow(models[cursor]), models[cursor])}`
+      : ""
+  }
+  renderFallbackCatalog()
+  updateFallbackDot()
+}
+
+function renderFallbackCatalog() {
+  const box = $("fb-catalog-list")
+  if (!box) return
+  box.textContent = ""
+  const query = String($("fb-search")?.value || "").trim().toLowerCase()
+  const added = new Set(fallbackState.group?.models || [])
+  const hits = fallbackState.catalog.filter((row) => !query
+    || row.key.toLowerCase().includes(query)
+    || String(row.providerName || "").toLowerCase().includes(query)
+    || String(row.modelID || "").toLowerCase().includes(query))
+  $("fb-catalog-empty").hidden = hits.length > 0
+
+  const groups = new Map()
+  for (const row of hits) {
+    if (!groups.has(row.providerID)) groups.set(row.providerID, [])
+    groups.get(row.providerID).push(row)
+  }
+  for (const [providerID, rows] of groups) {
+    const head = document.createElement("div")
+    head.className = "fb-group-head"
+    head.textContent = rows[0].providerName || providerID
+    box.appendChild(head)
+    for (const row of rows) {
+      const button = document.createElement("button")
+      button.type = "button"
+      button.className = "fb-cat-item" + (added.has(row.key) ? " added" : "")
+      const check = document.createElement("span")
+      check.className = "fb-check"
+      check.textContent = "✓"
+      const text = document.createElement("span")
+      text.className = "fb-cat-text"
+      const name = document.createElement("span")
+      name.textContent = row.name || row.modelID
+      const sub = document.createElement("small")
+      sub.textContent = row.modelID + (row.context ? ` · ${row.context} ctx` : "")
+      text.append(name, sub)
+      button.append(check, text)
+      button.onclick = () => toggleFallbackModel(row.key)
+      box.appendChild(button)
+    }
+  }
+}
+
+async function persistFallback(models, activeKey) {
+  if (typeof vibe.fallbackSave !== "function") return
+  fallbackState.saving = true
+  const previous = fallbackState.group
+  const cursor = models.indexOf(activeKey)
+  const savedCursor = cursor >= 0 ? cursor : Math.min(Math.max(0, Number(previous?.cursor) || 0), Math.max(0, models.length - 1))
+  fallbackState.group = { ...(previous || { id: "fallback", name: "Fallback model" }), models, cursor: savedCursor }
+  renderFallback()
+  const res = await vibe.fallbackSave({ models, cursor: savedCursor })
+  fallbackState.saving = false
+  if (!res || res.ok === false) {
+    fallbackState.group = previous
+    renderFallback()
+    showError("Could not save the fallback model", res?.error || "Unknown error", { key: "fallback" })
+    return
+  }
+  hideError("fallback")
+  fallbackState.group = res.data || fallbackState.group
+  // The composer picker and its label read the fresh catalog (including the
+  // cursor), so refresh it before repainting the popup.
+  await loadModels()
+  renderFallback()
+}
+
+function toggleFallbackModel(key) {
+  if (fallbackState.saving) return
+  const models = [...(fallbackState.group?.models || [])]
+  let activeKey = models[Number(fallbackState.group?.cursor) || 0]
+  const index = models.indexOf(key)
+  if (index >= 0) {
+    models.splice(index, 1)
+    if (key === activeKey) activeKey = models[Math.min(index, models.length - 1)]
+  } else {
+    models.push(key)
+  }
+  void persistFallback(models, activeKey)
+}
+
+function moveFallbackModel(index, delta) {
+  if (fallbackState.saving) return
+  const models = [...(fallbackState.group?.models || [])]
+  const target = index + delta
+  if (target < 0 || target >= models.length) return
+  const activeKey = models[Number(fallbackState.group?.cursor) || 0]
+  const [moved] = models.splice(index, 1)
+  models.splice(target, 0, moved)
+  void persistFallback(models, activeKey)
+}
+
+async function resetFallbackCursor() {
+  if (typeof vibe.fallbackReset !== "function") return
+  const res = await vibe.fallbackReset()
+  if (!res || res.ok === false) {
+    showError("Could not reset the fallback model", res?.error || "Unknown error", { key: "fallback" })
+    return
+  }
+  fallbackState.group = res.data || fallbackState.group
+  await loadModels()
+  renderFallback()
+}
+
+$("fallback-group-item").onclick = () => { void openFallback() }
+$("fb-close").onclick = () => closeFallback()
+$("fb-reset").onclick = () => { void resetFallbackCursor() }
+$("fb-search").oninput = () => renderFallbackCatalog()
+$("fb-overlay").onclick = (event) => { if (event.target === $("fb-overlay")) closeFallback() }
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && fallbackState.open) closeFallback()
+})
+
+/* ---------- VibeCoderAI account (device login, coming soon) ---------- */
 const ocSub = document.getElementById("opencode-sub")
 const ocStDot = document.getElementById("opencode-st-dot")
 const ocStText = document.getElementById("opencode-st-text")
@@ -8690,6 +9099,30 @@ const ocDot = document.getElementById("opencode-dot")
 const connState = document.getElementById("conn-state")
 const connLabel = document.getElementById("connect-label")
 let authPoll = null
+
+/* The VibeCoderAI account is not live yet. The button stays so the planned
+   own API host has a home, but it never starts a device login. Flip this to
+   false (and re-enable the buttons in index.html) when the host is ready. */
+const VIBECODER_ACCOUNT_COMING_SOON = true
+
+function applyComingSoonAccount() {
+  if (ocSub) ocSub.textContent = "Your own VibeCoderAI API host — coming soon"
+  if (ocStDot) ocStDot.className = "st-dot soon"
+  if (ocStText) ocStText.textContent = "Coming soon"
+  if (ocConnect) {
+    ocConnect.hidden = false
+    ocConnect.disabled = true
+    ocConnect.textContent = "Coming soon"
+  }
+  if (ocDisconnect) ocDisconnect.hidden = true
+  if (ocDevice) ocDevice.hidden = true
+  if (ocDot) ocDot.classList.remove("on")
+  if (connState) connState.textContent = "Coming soon — your own VibeCoderAI API host"
+  if (connLabel) {
+    connLabel.textContent = "VibeCoderAI"
+    connLabel.title = "VibeCoderAI account — coming soon"
+  }
+}
 
 /* Sidebar "Connect" button -> popover with login / logout */
 $("btn-connect").onclick = async (e) => {
@@ -8704,6 +9137,7 @@ $("btn-connect").onclick = async (e) => {
 }
 
 $("conn-connect").onclick = async () => {
+  if (VIBECODER_ACCOUNT_COMING_SOON) return
   closeAllMenus()
   connState.textContent = "Sign in in your browser…"
   const res = await vibe.authConnect()
@@ -8726,7 +9160,7 @@ $("conn-logout").onclick = async () => {
   if (failed) {
     // Never claim a logout that did not happen: the saved account is still there.
     const why = (res && res.error) || out.error || "The saved account could not be removed"
-    showError("OpenCode logout failed", why, { key: "auth" })
+    showError("VibeCoderAI logout failed", why, { key: "auth" })
     await refreshAuthUI()
     connState.textContent = `Logout failed — ${why}`
     return
@@ -8752,6 +9186,10 @@ function resetOpenCodeModelCache() {
 }
 
 async function refreshAuthUI() {
+  if (VIBECODER_ACCOUNT_COMING_SOON) {
+    applyComingSoonAccount()
+    return
+  }
   const res = await vibe.authStatus()
   if (res && res.ok === false) {
     // Do not show "Not connected" when the state could not be read at all.
@@ -8763,7 +9201,7 @@ async function refreshAuthUI() {
   const connected = !!(res.ok && res.data?.connected)
   if (connected) {
     const who = res.data.email || res.data.org || "account"
-    ocSub.textContent = "OpenCode Console account connected"
+    ocSub.textContent = "VibeCoderAI account connected"
     ocStDot.className = "st-dot on"
     ocStText.textContent = `Connected — ${who}`
     ocConnect.hidden = true
@@ -8777,7 +9215,7 @@ async function refreshAuthUI() {
     connLabel.title = res.data.email || who
     if (state.models.length === 0) loadModels().then(() => renderModelList())
   } else {
-    ocSub.textContent = "Connect your OpenCode account to use free models"
+    ocSub.textContent = "Connect your VibeCoderAI account to use hosted models"
     ocStDot.className = "st-dot off"
     ocStText.textContent = "Not connected"
     ocConnect.hidden = false
@@ -8788,7 +9226,7 @@ async function refreshAuthUI() {
     resetOpenCodeModelCache()
     connState.textContent = "Not connected"
     connLabel.textContent = "Connect"
-    connLabel.title = "Connect your OpenCode account"
+    connLabel.title = "Connect your VibeCoderAI account"
   }
   const provItems = document.querySelectorAll(".provider-item")
   provItems.forEach((i) =>
@@ -8802,8 +9240,17 @@ state.selectedProvider = null
 
 document.querySelector(".provider-item[data-provider=opencode]").onclick = () => {
   state.selectedProvider = "opencode"
+  // Leaving a custom provider open: save its form, then show only the account panel.
+  if (providerState.draft && providerDraftDirty()) void persistProviderDraft()
+  providerState.selectedId = null
+  providerState.draft = null
+  updateProviderSelection()
+  updatePresetActive()
   document.querySelector(".md-empty").hidden = true
   document.getElementById("md-opencode").hidden = false
+  document.getElementById("md-custom").hidden = true
+  const detail = document.getElementById("model-detail")
+  if (detail) detail.scrollTop = 0
   refreshAuthUI()
 }
 
@@ -8832,7 +9279,7 @@ ocDisconnect.onclick = async () => {
   const failed = (res && res.ok === false) || (out && out.ok === false)
   if (failed) {
     const why = (res && res.error) || out.error || "The saved account could not be removed"
-    showError("OpenCode logout failed", why, { key: "auth" })
+    showError("VibeCoderAI logout failed", why, { key: "auth" })
     await refreshAuthUI()
     ocStText.textContent = `Logout failed — ${why}`
     return
@@ -9615,6 +10062,8 @@ refreshCliStatus()
 if (readBrowserPrefs().open) setTimeout(() => openBrowser(undefined, { focus: false }), 0)
 // The provider states (on / off) are needed by the model picker.
 if (vibe.providerList) loadProviders({ silent: true })
+// The popular-provider presets are static: fill their list once.
+renderProviderPresets()
 // The task list of the last run (the agent continues with it).
 loadTodos()
 // The agent's memory file: needed so it can save facts without asking.

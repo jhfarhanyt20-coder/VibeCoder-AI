@@ -60,10 +60,10 @@
             <span id="connect-label">Connect</span>
           </button>
           <div class="drop-menu connect-menu" id="connect-menu" hidden>
-            <div class="drop-title">OpenCode account</div>
-            <div class="conn-state" id="conn-state">Checking…</div>
-            <button class="drop-item" id="conn-connect">Connect / Login</button>
-            <button class="drop-item danger" id="conn-logout">Logout (delete saved key)</button>
+            <div class="drop-title">VibeCoderAI account</div>
+            <div class="conn-state" id="conn-state">Coming soon — your own VibeCoderAI API host</div>
+            <button class="drop-item" id="conn-connect" disabled>Login — coming soon</button>
+            <button class="drop-item danger" id="conn-logout" disabled>Logout</button>
           </div>
         </div>
         <button class="mini-icon" id="btn-devices" title="Devices" hidden>▢</button>
@@ -662,12 +662,22 @@
           <div class="model-layout">
             <!-- inner provider list -->
             <aside class="model-list">
+              <div class="ml-item provider-item fb-entry" id="fallback-group-item" title="Ordered fallback chain across your providers">
+                <span class="prov-ic">⇄</span>
+                <span class="prov-nm">Fallback model</span>
+                <span class="prov-dot" id="fb-entry-dot"></span>
+              </div>
+
               <div class="ml-group">Providers</div>
               <div class="ml-item provider-item" data-provider="opencode">
                 <span class="prov-ic">◈</span>
-                <span class="prov-nm">OpenCode</span>
+                <span class="prov-nm">VibeCoderAI</span>
+                <span class="prov-soon">coming soon</span>
                 <span class="prov-dot" id="opencode-dot"></span>
               </div>
+
+              <div class="ml-group">Popular providers</div>
+              <div id="preset-provider-list"></div>
 
               <div class="ml-group">Custom providers</div>
               <div class="ml-empty" id="custom-provider-empty">Custom providers appear here</div>
@@ -689,14 +699,14 @@
                 <div class="mdp-head">
                   <div class="mdp-logo">◈</div>
                   <div>
-                    <div class="mdp-name">OpenCode</div>
-                    <div class="mdp-sub" id="opencode-sub">Connect your OpenCode account to use free models</div>
+                    <div class="mdp-name">VibeCoderAI</div>
+                    <div class="mdp-sub" id="opencode-sub">Your own VibeCoderAI API host — coming soon</div>
                   </div>
                 </div>
 
                 <div class="mdp-status" id="opencode-status">
-                  <span class="st-dot" id="opencode-st-dot"></span>
-                  <span id="opencode-st-text">Checking…</span>
+                  <span class="st-dot soon" id="opencode-st-dot"></span>
+                  <span id="opencode-st-text">Coming soon</span>
                 </div>
 
                 <div class="mdp-device" id="opencode-device" hidden>
@@ -706,7 +716,7 @@
                 </div>
 
                 <div class="mdp-actions">
-                  <button class="save-btn" id="opencode-connect">Connect</button>
+                  <button class="save-btn" id="opencode-connect" disabled>Coming soon</button>
                   <button class="danger-btn" id="opencode-disconnect" hidden>Disconnect</button>
                 </div>
               </div>
@@ -740,16 +750,19 @@
                       <option value="responses">Responses (/responses)</option>
                     </select>
                   </label>
-                  <label class="pf-row">
-                    <span class="pf-label">Request headers <span class="muted">(optional)</span></span>
-                    <textarea class="s-input pf-advanced" id="pf-headers" rows="3" placeholder="X-Tenant-ID: team-a&#10;X-Client-Version: 1"></textarea>
-                    <span class="pf-hint">One <span class="mono">Name: value</span> per line. Credentials and another app's identity headers are blocked; use the API key field for secrets.</span>
-                  </label>
-                  <label class="pf-row">
-                    <span class="pf-label">Extra request body <span class="muted">(optional JSON)</span></span>
-                    <textarea class="s-input pf-advanced" id="pf-body" rows="4" placeholder='{"metadata":{"application":"VibeCoderAI"}}'></textarea>
-                    <span class="pf-hint">Merged into every model request. Credential-looking fields are blocked.</span>
-                  </label>
+                  <details class="pf-advanced-group">
+                    <summary class="pf-summary">Advanced (optional) — extra headers &amp; request body</summary>
+                    <label class="pf-row">
+                      <span class="pf-label">Request headers <span class="muted">(optional)</span></span>
+                      <textarea class="s-input pf-advanced" id="pf-headers" rows="3" placeholder="X-Tenant-ID: team-a&#10;X-Client-Version: 1"></textarea>
+                      <span class="pf-hint">One <span class="mono">Name: value</span> per line. Credentials and another app's identity headers are blocked; use the API key field for secrets.</span>
+                    </label>
+                    <label class="pf-row">
+                      <span class="pf-label">Extra request body <span class="muted">(optional JSON)</span></span>
+                      <textarea class="s-input pf-advanced" id="pf-body" rows="4" placeholder='{"metadata":{"application":"VibeCoderAI"}}'></textarea>
+                      <span class="pf-hint">Merged into every model request. Credential-looking fields are blocked.</span>
+                    </label>
+                  </details>
                   <label class="pf-row">
                     <span class="pf-label">API key</span>
                     <span class="pf-key">
@@ -1189,7 +1202,7 @@
             <div class="s-row">
               <div class="s-col">
                 <div class="s-name">Data sharing</div>
-                <div class="s-desc">Nothing is sent anywhere by VibeCoder AI. The agent talks to the model provider you picked (the built-in OpenCode account or your own provider), and the errors of this app only go to the local log file.</div>
+                <div class="s-desc">Nothing is sent anywhere by VibeCoder AI. The agent talks to the model provider you picked (the built-in VibeCoderAI account or your own provider), and the errors of this app only go to the local log file.</div>
               </div>
             </div>
           </div>
@@ -1254,6 +1267,37 @@
       <div class="modal-foot">
         <button class="save-btn ghost" id="mf-cancel" type="button">Cancel</button>
         <button class="save-btn" id="mf-save" type="button">Add model</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fallback model popup: pick models from every provider, order them, and
+       the app fails over down the list on rate limit / server error / timeout. -->
+  <div class="fb-overlay" id="fb-overlay" hidden>
+    <div class="fb-modal" role="dialog" aria-modal="true" aria-labelledby="fb-title">
+      <div class="fb-head">
+        <div class="fb-head-text">
+          <div class="fb-title" id="fb-title">Fallback model</div>
+          <div class="fb-sub">Add models from any provider. On a rate limit, server error or timeout the next model in this list answers automatically (last wraps to #1).</div>
+        </div>
+        <button class="icon-btn square sm" id="fb-close" type="button" title="Close">✕</button>
+      </div>
+      <div class="fb-body">
+        <section class="fb-col fb-added-col">
+          <div class="fb-label">Fallback order <span class="muted">(top = first)</span></div>
+          <div class="fb-added-list" id="fb-added-list"></div>
+          <div class="fb-empty" id="fb-added-empty">No models added yet. Pick models on the right.</div>
+          <div class="fb-foot">
+            <button class="save-btn ghost" id="fb-reset" type="button" title="Start again from the first model">Reset to #1</button>
+            <span class="fb-current" id="fb-current"></span>
+          </div>
+        </section>
+        <section class="fb-col fb-catalog-col">
+          <div class="fb-label">All models from your providers</div>
+          <input class="s-input" id="fb-search" placeholder="Search models…" autocomplete="off" />
+          <div class="fb-catalog-list" id="fb-catalog-list"></div>
+          <div class="fb-empty" id="fb-catalog-empty" hidden>No models found.</div>
+        </section>
       </div>
     </div>
   </div>

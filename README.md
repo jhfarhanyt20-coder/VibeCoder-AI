@@ -27,12 +27,6 @@
 
 ## Screenshots
 
-### An agent doing real work
-
-Read, edit, and shell steps are visible in the timeline, with the verification result and a short closing summary.
-
-![Agent run](docs/screenshots/agent-run.png)
-
 ### Fallback model chain
 
 Pick models from every provider, order them, and let VibeCoder continue when one provider stops.
@@ -111,6 +105,8 @@ The test suite covers the core engine, adapters, agents, skills, harness, contro
 - **Release discipline.** One patch increment at a time, full test gate, then a tagged GitHub Release with installer, blockmap, `latest.yml`, and the CLI package.
 - **Security reports.** See [SECURITY.md](SECURITY.md); please do not open a public issue for a vulnerability.
 - **Contributions.** Issues and reproduction reports are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) before sending code.
+- **Architecture contract.** [VIBE.md](VIBE.md) records the release, security, and UI rules.
+- **Progress tracker.** [HARNESS_TODO.md](VibeCoderAI-live-fixed/HARNESS_TODO.md) records completed phases and hardening work.
 
 ## License
 

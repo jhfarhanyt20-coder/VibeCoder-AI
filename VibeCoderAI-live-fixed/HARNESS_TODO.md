@@ -359,6 +359,9 @@ Thin vertical slice first:
 | 2026-11-07 | Release | `v0.3.6` reliable shell output + Obsidian/UI hardening | CI green; installer (115,673,926 bytes) + `latest.yml` + blockmap uploaded; latest updater metadata verified |
 | 2026-11-15 | UI + CLI | Obsidian UI font slider scales every size (`--fs-scale`); sidebar history scroll containment kept; terminal `vibe` gets full event renderer, question forms, subagent/shell rows, `@file`, `--json` and `skills/agents/mcp/plugins/tools/doctor/usage` commands | +12 CLI tests; 23 harness tests; full `npm test` green |
 | 2026-11-15 | Full terminal workbench | same-store controls, Crew/shell lifecycle, shared-client form replies, private history, themes/pickers/multiline, safe installs, Rewind, per-session model keys, standalone CLI archive; provider heading de-duplicated without changing the desktop composer | final 19 suites green: 120 core, 11 agents, 8 skills, 23 harness, 14 controls, 14 CLI commands + 23 runtime tests, 129 IPC; real Electron fonts/provider/sidebar checks passed; review archive built; owner acceptance pending |
+| 2026-11-18 | Desktop providers + Fallback model | cross-provider ordered fallback chain with sticky cursor/wrap, per-model context and compaction, Popular providers stay green in place, AgentRouter Responses + client compatibility, clear content-filter errors, faster provider switching | +5 core tests; 125 core; full suite green |
+| 2026-11-18 | Release | `v0.3.12` Fallback model + provider upgrades | workflow run `44148751825` succeeded; installer `115730294` bytes, blockmap, `latest.yml`, CLI `0.3.12`; installer SHA-512 matched |
+| 2026-11-18 | Repo + website | professional README, screenshots, issue/security/support templates, GitHub description/topics/homepage, website Fallback section + SEO/robots/sitemap | website `721f4ed`; website tests 18/18 |
 
 ---
 

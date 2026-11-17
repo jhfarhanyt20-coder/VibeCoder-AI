@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Download VibeCoder AI
+    url: https://vibecoderai.onrender.com/download-page
+    about: Get the latest Windows installer.
+  - name: Latest release and update notes
+    url: https://github.com/jhfarhanyt20-coder/VibeCoder-AI/releases/latest
+    about: Check the version and published installer assets.
+  - name: Report a security vulnerability
+    url: https://github.com/jhfarhanyt20-coder/VibeCoder-AI/security/advisories/new
+    about: Please report vulnerabilities privately, not in a public issue.
+  - name: Support guide
+    url: https://github.com/jhfarhanyt20-coder/VibeCoder-AI/blob/master/SUPPORT.md
+    about: Troubleshooting, update steps, and what to include in a report.

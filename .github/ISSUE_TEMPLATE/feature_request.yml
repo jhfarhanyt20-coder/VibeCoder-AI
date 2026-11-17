@@ -1,0 +1,51 @@
+name: Feature request
+description: Suggest a focused improvement for the desktop app, CLI, or website.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem first, then the smallest improvement that would solve it. Large redesigns or new runtime dependencies need a maintainer decision before implementation.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Providers and models
+        - Fallback model
+        - Chat and agent workflow
+        - Permissions, Locks and Rewind
+        - CLI
+        - Website and downloads
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      placeholder: Today I have to ...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Keep it additive and describe how existing users and sessions stay compatible.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirmation
+      options:
+        - label: I searched existing issues before opening this request.
+          required: true
+        - label: This request does not require copying another product's name, prompt, code, or assets.
+          required: true

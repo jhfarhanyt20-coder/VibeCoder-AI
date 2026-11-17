@@ -1,0 +1,81 @@
+name: Bug report
+description: Report a reproducible problem in the desktop app or CLI.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please remove API keys, tokens, passwords, private source code and personal data before submitting.
+
+        For a security vulnerability, use the private advisory link in SECURITY.md instead of this form.
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where does it happen?
+      options:
+        - Desktop app
+        - CLI
+        - Website or download
+        - Both desktop and CLI
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: VibeCoder AI version
+      description: Settings → General, or `vibe --version`.
+      placeholder: 0.3.12
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: Windows 11 24H2
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: Provider and model
+      description: Provider name, API format (Chat Completions / Responses / Anthropic), and model ID.
+      placeholder: My gateway · Chat Completions · model-id
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open Settings → Model settings
+        2. Select ...
+        3. Send ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result and sanitized error
+      description: Paste the exact error text with secrets removed.
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots (no secrets), whether it is reproducible, and whether another provider works.
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirmation
+      options:
+        - label: I removed API keys, tokens, passwords and private source from this report.
+          required: true
+        - label: This is not a security vulnerability (those go through the private advisory link).
+          required: true

@@ -1,12 +1,15 @@
 # VibeCoder AI — Project Rules (read this first)
 
-Last updated: 2026-11-14
-Current release: **0.3.10** (tag `v0.3.10`, commit `bb044c9`)
-Release assets verified: `VibeCoderAI-v2-0.3.10.exe`,
-`VibeCoderAI-v2-0.3.10.exe.blockmap`, `latest.yml` (`version: 0.3.10`)
-Published installer SHA-512 matched `latest.yml`; release workflow run `43600427906` succeeded.
+Last updated: 2026-11-18
+Current release: **0.3.12** (tag `v0.3.12`, commit `a8aad17`)
+Release assets verified: `VibeCoderAI-v2-0.3.12.exe`,
+`VibeCoderAI-v2-0.3.12.exe.blockmap`, `latest.yml` (`version: 0.3.12`) and
+`VibeCoder-CLI-0.3.12.tgz`.
+Published installer SHA-512 matched `latest.yml`; release workflow run `44148751825` succeeded.
 Repository: https://github.com/jhfarhanyt20-coder/VibeCoder-AI — **PUBLIC**
 Application directory: `VibeCoderAI-live-fixed/`
+Website: https://vibecoderai.onrender.com (private source repository
+`VibeCoder-AI-Website`)
 License: proprietary, all rights reserved. See `LICENSE`.
 
 This file is the persistent contract for every future session. If a model

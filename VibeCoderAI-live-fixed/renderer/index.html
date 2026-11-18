@@ -11,12 +11,22 @@
   <link rel="stylesheet" href="obsidian.css" />
 </head>
 <body>
+  <div class="window-drag" id="window-drag">
+    <div class="win-controls">
+      <button class="win-btn" id="win-min" type="button" title="Minimize" aria-label="Minimize">–</button>
+      <button class="win-btn" id="win-max" type="button" title="Maximize" aria-label="Maximize">□</button>
+      <button class="win-btn win-close" id="win-close" type="button" title="Close" aria-label="Close">✕</button>
+    </div>
+  </div>
   <div class="shell">
     <!-- ============ SIDEBAR ============ -->
     <aside class="sidebar" id="app-sidebar">
       <div class="side-top">
         <div class="brand">
-          <button class="brand-mark" id="btn-sidebar-toggle" type="button" title="Hide sidebar" aria-label="Hide sidebar" aria-controls="app-sidebar" aria-expanded="true">V</button>
+          <button class="brand-mark" id="btn-sidebar-toggle" type="button" title="Hide sidebar" aria-label="Hide sidebar" aria-controls="app-sidebar" aria-expanded="true" data-tip="Hide sidebar">
+            <span class="brand-v">V</span>
+            <span class="brand-panel" aria-hidden="true"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M6.4 2.5v11"/></svg></span>
+          </button>
           <div class="brand-copy">
             <strong>VibeCoder</strong>
             <span>Workspace</span>
@@ -61,8 +71,8 @@
           </button>
           <div class="drop-menu connect-menu" id="connect-menu" hidden>
             <div class="drop-title">VibeCoderAI account</div>
-            <div class="conn-state" id="conn-state">Coming soon — your own VibeCoderAI API host</div>
-            <button class="drop-item" id="conn-connect" disabled>Login — coming soon</button>
+            <div class="conn-state" id="conn-state">Sign in with VibeCoder to use free models</div>
+            <button class="drop-item" id="conn-connect">Sign in with VibeCoder</button>
             <button class="drop-item danger" id="conn-logout" disabled>Logout</button>
           </div>
         </div>
@@ -380,25 +390,25 @@
             <div class="s-row">
               <div>
                 <div class="s-name">Language</div>
-                <div class="s-desc">Choose the display language used by the application UI.</div>
+                <div class="s-desc">Choose the display language used by the application UI. Additional languages are coming soon; English is used for now.</div>
               </div>
-              <select><option>System default</option><option>English</option></select>
+              <select disabled title="More languages are coming soon"><option>English</option><option>System default (coming soon)</option></select>
             </div>
 
             <div class="s-row">
               <div>
                 <div class="s-name">Interface mode</div>
-                <div class="s-desc">Office mode focuses on summaries and results. Coding mode shows commands, output, and code changes.</div>
+                <div class="s-desc">Office mode will focus on summaries and results. Coding mode shows commands, output, and code changes. Coding mode is the only mode available today; the switch is coming soon.</div>
               </div>
-              <select><option>Coding mode</option><option>Office mode</option></select>
+              <select disabled title="Office mode is coming soon"><option>Coding mode</option><option>Office mode (coming soon)</option></select>
             </div>
 
             <div class="s-row">
               <div>
                 <div class="s-name">Proactive task suggestions</div>
-                <div class="s-desc">Available only in Office mode.</div>
+                <div class="s-desc">Coming soon with Office mode.</div>
               </div>
-              <div class="toggle"></div>
+              <div class="toggle" aria-disabled="true" title="Coming soon with Office mode"></div>
             </div>
 
             <div class="s-row" id="row-notify">
@@ -426,44 +436,6 @@
 
             <div class="s-row">
               <div>
-                <div class="s-name">Backend</div>
-                <div class="s-desc">CLI service (free models) or embedded SDK</div>
-              </div>
-              <select id="setting-backend">
-                <option value="cli">CLI Service</option>
-                <option value="sdk">Embedded SDK</option>
-              </select>
-            </div>
-
-            <div class="s-row">
-              <div>
-                <div class="s-name">OpenCode CLI</div>
-                <div class="s-desc" id="cli-desc">Checking…</div>
-              </div>
-              <button class="save-btn" id="cli-fix" type="button" hidden>Install tested version</button>
-            </div>
-
-            <div class="s-row" id="row-cli-update">
-              <div>
-                <div class="s-name">CLI updates <span class="dot-ind" id="cli-update-dot" hidden></span></div>
-                <div class="s-desc" id="cli-update-desc">Not checked yet. This app never updates itself — it only tells you when npm has a newer pinned version.</div>
-              </div>
-              <button class="save-btn" id="cli-update-check" type="button">Check now</button>
-            </div>
-
-            <div class="s-row" id="row-upgrade" hidden>
-              <div>
-                <div class="s-name">Upgrade &amp; rebuild (dev)</div>
-                <div class="s-desc" id="upgrade-desc">Source tree detected. One click bumps the three OpenCode pins, runs the tests and rebuilds the installer.</div>
-              </div>
-              <button class="save-btn" id="btn-upgrade" type="button">Upgrade &amp; rebuild</button>
-            </div>
-            <div class="upgrade-log-wrap" id="upgrade-log-wrap" hidden>
-              <pre class="upgrade-log" id="upgrade-log"></pre>
-            </div>
-
-            <div class="s-row">
-              <div>
                 <div class="s-name">Inherit system terminal profile</div>
                 <div class="s-desc">When launching the built-in terminal, inherit login shell environment, proxy, and variables when possible.</div>
               </div>
@@ -483,6 +455,17 @@
               <div class="s-name">Integrated terminal shell</div>
               <select><option>System default</option><option>PowerShell</option><option>cmd</option><option>Git Bash</option></select>
             </div>
+          </div>
+
+          <div class="s-card">
+            <div class="s-row">
+              <div>
+                <div class="s-name">Trusted project tools</div>
+                <div class="s-desc">Workspaces you approved for project extensions, plugins and MCP servers. Revoke access at any time; the next prompt asks again.</div>
+              </div>
+              <button class="save-btn ghost" id="trust-refresh" type="button">Refresh</button>
+            </div>
+            <div class="trust-list" id="trust-list"></div>
           </div>
         </div>
 
@@ -624,6 +607,16 @@
                 <span class="fs-val" id="font-size-value">14 px</span>
               </div>
             </div>
+            <div class="s-row">
+              <div class="s-col">
+                <div class="s-name">Chat font size</div>
+                <div class="s-desc">Adjust message and composer text only. Sidebar and settings keep the UI size above.</div>
+              </div>
+              <div class="fs-box">
+                <input class="fs-range" id="chat-font-size-range" type="range" min="11" max="22" step="1" value="14" />
+                <span class="fs-val" id="chat-font-size-value">14 px</span>
+              </div>
+            </div>
           </div>
 
           <section class="s-card timeline-settings" aria-labelledby="timeline-settings-title">
@@ -672,7 +665,7 @@
               <div class="ml-item provider-item" data-provider="opencode">
                 <span class="prov-ic">◈</span>
                 <span class="prov-nm">VibeCoderAI</span>
-                <span class="prov-soon">coming soon</span>
+                <span class="prov-soon">free</span>
                 <span class="prov-dot" id="opencode-dot"></span>
               </div>
 
@@ -700,13 +693,13 @@
                   <div class="mdp-logo">◈</div>
                   <div>
                     <div class="mdp-name">VibeCoderAI</div>
-                    <div class="mdp-sub" id="opencode-sub">Your own VibeCoderAI API host — coming soon</div>
+                    <div class="mdp-sub" id="opencode-sub">Sign in with VibeCoder to use free models — no API key needed</div>
                   </div>
                 </div>
 
                 <div class="mdp-status" id="opencode-status">
                   <span class="st-dot soon" id="opencode-st-dot"></span>
-                  <span id="opencode-st-text">Coming soon</span>
+                  <span id="opencode-st-text">Not connected</span>
                 </div>
 
                 <div class="mdp-device" id="opencode-device" hidden>
@@ -716,7 +709,7 @@
                 </div>
 
                 <div class="mdp-actions">
-                  <button class="save-btn" id="opencode-connect" disabled>Coming soon</button>
+                  <button class="save-btn" id="opencode-connect">Sign in with VibeCoder</button>
                   <button class="danger-btn" id="opencode-disconnect" hidden>Disconnect</button>
                 </div>
               </div>
@@ -838,8 +831,8 @@
           <div class="s-card">
             <div class="s-row">
               <div class="s-col">
-                <div class="s-name">OpenCode desktop browser</div>
-                <div class="s-desc">OpenCode also ships a browser plugin that attaches to the tabs of the OpenCode desktop app. It only works inside that desktop app, so VibeCoder AI does not offer it here.</div>
+                <div class="s-name">Third-party desktop browser</div>
+                <div class="s-desc">Some desktop apps ship their own browser plugin. It only works inside that app, so VibeCoder AI does not offer it here.</div>
               </div>
               <span class="cfg-tag">not available here</span>
             </div>
@@ -926,7 +919,7 @@
           <div class="s-head-row">
             <div>
               <h1 class="s-title">Subagents</h1>
-              <p class="s-sub">The agents the main agent can call for a job. Switch one off and OpenCode removes it — the main agent then cannot use it.</p>
+              <p class="s-sub">The agents the main agent can call for a job. Switch one off and VibeCoder removes it — the main agent then cannot use it.</p>
             </div>
           </div>
 
@@ -954,7 +947,7 @@
           <div class="s-head-row">
             <div>
               <h1 class="s-title">Marketplace</h1>
-              <p class="s-sub">Free MCP servers, plugins and skills. Install once — OpenCode picks them up automatically.</p>
+              <p class="s-sub">Free MCP servers, plugins and skills. Install once — VibeCoder picks them up automatically.</p>
             </div>
             <div class="s-head-actions">
               <button class="save-btn" id="mkt-refresh">⟳ Refresh</button>
@@ -996,7 +989,7 @@
           <div class="s-head-row">
             <div>
               <h1 class="s-title">Plugins</h1>
-              <p class="s-sub">Ordered plugin declarations from your OpenCode config (global + project).</p>
+              <p class="s-sub">Ordered plugin declarations from your VibeCoder config (global + project).</p>
             </div>
             <div class="s-head-actions">
               <button class="save-btn" id="plugin-refresh">⟳ Refresh</button>
@@ -1007,9 +1000,9 @@
             <div class="s-row">
               <div class="s-col">
                 <div class="s-name">Add plugin</div>
-                <div class="s-desc">npm package or Git specifier, e.g. <code>opencode-plugin-foo</code>. Installs via <code>opencode plugin add</code>.</div>
+                <div class="s-desc">npm package or Git specifier, e.g. <code>vibe-plugin-foo</code>. Install a reviewed package or public GitHub repository.</div>
                 <div class="s-inline">
-                  <input class="s-input grow" id="plugin-add-input" placeholder="opencode-plugin-… or github:user/repo" />
+                  <input class="s-input grow" id="plugin-add-input" placeholder="vibe-plugin-… or github:user/repo" />
                   <button class="save-btn" id="plugin-add-btn">Add</button>
                 </div>
               </div>
@@ -1021,7 +1014,7 @@
               <div class="s-name">Built-in plugins</div>
               <label class="s-check"><input type="checkbox" id="builtin-plugin-global" /> Install globally</label>
             </div>
-            <div class="cfg-note cfg-note-top">Installed into <code>.opencode/plugins/</code> of the open project, or the global config folder when no project is open.</div>
+            <div class="cfg-note cfg-note-top">Installed into <code>.vibe/plugins/</code> of the open project, or the global config folder when no project is open.</div>
             <div class="cfg-list" id="builtin-plugin-list"></div>
           </div>
 
@@ -1039,7 +1032,7 @@
           <div class="s-head-row">
             <div>
               <h1 class="s-title">MCP Servers</h1>
-              <p class="s-sub">Model Context Protocol servers from your OpenCode config (global + project).</p>
+              <p class="s-sub">Model Context Protocol servers from your VibeCoder config (global + project).</p>
             </div>
             <div class="s-head-actions">
               <button class="save-btn" id="mcp-refresh">⟳ Refresh</button>
@@ -1095,7 +1088,7 @@
           <div class="s-head-row">
             <div>
               <h1 class="s-title">Skills</h1>
-              <p class="s-sub">Installed skills from .opencode/skills (project) and the global OpenCode folder.</p>
+              <p class="s-sub">Installed playbooks from .vibe/playbooks (project) and the global VibeCoder folder.</p>
             </div>
             <div class="s-head-actions">
               <button class="save-btn" id="skills-open-market">🛍 Marketplace</button>
@@ -1134,7 +1127,7 @@
             <div class="s-row">
               <div class="s-col">
                 <div class="s-name">Custom commands</div>
-                <div class="s-desc">Custom slash commands live in <code>.opencode/command/</code> of the project — OpenCode picks them up automatically. Type <code>/</code> in the composer to use one.</div>
+                <div class="s-desc">Custom recipes live in <code>.vibe/recipes/</code> of the project — VibeCoder picks them up automatically. Type <code>/</code> in the composer to use one.</div>
               </div>
             </div>
           </div>
@@ -1145,7 +1138,7 @@
             <div class="s-row">
               <div class="s-col">
                 <div class="s-name">Hooks</div>
-                <div class="s-desc">Hooks are configured in the OpenCode config (the <code>hook</code> key). VibeCoder AI ships its own plugins for the environment guard and the compaction context.</div>
+                <div class="s-desc">Hooks are configured in the VibeCoder config (the <code>hook</code> key). VibeCoder AI ships its own plugins for the environment guard and the compaction context.</div>
               </div>
             </div>
           </div>

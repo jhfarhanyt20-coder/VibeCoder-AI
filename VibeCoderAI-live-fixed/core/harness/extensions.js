@@ -13,6 +13,7 @@
 const fs = require("node:fs")
 const path = require("node:path")
 const { homeDir } = require("../util")
+const trust = require("./trust")
 
 const safeId = (value) => String(value || "extension").toLowerCase().replace(/[^a-z0-9.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "extension"
 
@@ -23,10 +24,11 @@ class ExtensionManager {
   }
 
   _sources(directory) {
+    const project = directory && trust.isProjectTrusted(directory, this.home)
     return [
       { dir: path.join(this.home, "plugins"), scope: "global", legacy: true },
       { dir: path.join(this.home, "extensions"), scope: "global", legacy: false },
-      ...(directory ? [
+      ...(project ? [
         { dir: path.join(directory, ".vibe", "plugins"), scope: "project", legacy: true },
         { dir: path.join(directory, ".vibe", "extensions"), scope: "project", legacy: false },
       ] : []),

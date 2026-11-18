@@ -13,6 +13,7 @@ const fs = require("fs")
 const path = require("path")
 const { spawnSync } = require("child_process")
 const { homeDir } = require("../util")
+const trust = require("../harness/trust")
 
 const globalDir = (home) => path.join(home || homeDir(), "plugins")
 const projectDir = (dir) => path.join(dir || "", ".vibe", "plugins")
@@ -28,6 +29,7 @@ const slug = (s) =>
 /** [{file,name,scope,ok,error}] */
 function listPlugins(directory, home) {
   const out = []
+  const projectTrusted = !directory || trust.isProjectTrusted(directory, home || homeDir())
   const scan = (dir, scope) => {
     let files = []
     try {
@@ -53,7 +55,7 @@ function listPlugins(directory, home) {
     }
   }
   scan(globalDir(home), "global")
-  if (directory) scan(projectDir(directory), "project")
+  if (directory && projectTrusted) scan(projectDir(directory), "project")
   return out
 }
 
@@ -61,7 +63,7 @@ function listPlugins(directory, home) {
 function toolObjects(directory, ctx = {}) {
   const tools = require("../tools")
   const out = []
-  for (const row of listPlugins(directory)) {
+  for (const row of listPlugins(directory, ctx.home)) {
     if (!row.ok) continue
     let mod
     try {
@@ -103,16 +105,25 @@ function installPlugin({ file, content, spec, global, directory, home }) {
     target = path.join(dir, id + ".js")
     fs.writeFileSync(target, String(content), "utf8")
   } else if (spec) {
+    const requested = String(spec).trim()
+    // Accept a reviewed npm package/version or a public GitHub HTTPS repo.
+    // Never let shell syntax reach the npm process.
+    const npmSpec = /^(?:@[a-z0-9._-]+\/)?[a-z0-9][a-z0-9._-]*(?:@[a-z0-9.*~^+-]+)?$/i.test(requested)
+    const gitSpec = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+(?:#[\w./-]+)?$/i.test(requested)
+    if (!npmSpec && !gitSpec) throw new Error("Use a reviewed npm package/version or a public GitHub HTTPS repository; shell flags and shell syntax are not accepted.")
     // fetch the npm package into a temp folder with the user's own npm, copy its main js
     const tmp = fs.mkdtempSync(path.join(require("os").tmpdir(), "vibe-plugin-"))
     try {
-      const r = spawnSync("npm", ["install", "--prefix", tmp, "--no-audit", "--no-fund", "--ignore-scripts", String(spec)], {
+      const isWin = process.platform === "win32"
+      const npm = isWin ? (process.env.ComSpec || "cmd.exe") : "npm"
+      const npmArgs = ["install", "--prefix", tmp, "--no-audit", "--no-fund", "--ignore-scripts", requested]
+      const r = spawnSync(npm, isWin ? ["/d", "/s", "/c", "npm", ...npmArgs] : npmArgs, {
         windowsHide: true,
         timeout: 120000,
         stdio: "ignore",
-        shell: process.platform === "win32",
+        shell: false,
       })
-      if (r.status !== 0) throw new Error("npm could not fetch: " + spec)
+      if (r.status !== 0) throw new Error("npm could not fetch: " + requested)
       const nm = path.join(tmp, "node_modules")
       const pkg = fs.readdirSync(nm).flatMap((p) => (p.startsWith("@") ? fs.readdirSync(path.join(nm, p)).map((q) => p + "/" + q) : [p]))[0]
       if (!pkg) throw new Error("package installed but empty")

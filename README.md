@@ -83,7 +83,7 @@ The CLI calls the same SDK and tool registry as the desktop app. See the [CLI pa
 
 ```text
 VibeCoderAI-live-fixed/   Desktop app, core engine, SDK, CLI, renderer and tests
-docs/                     Screenshots and project documentation
+docs/                     Screenshots; app documentation lives in VibeCoderAI-live-fixed/docs/
 .github/workflows/        Tag-driven Windows release workflow
 ```
 

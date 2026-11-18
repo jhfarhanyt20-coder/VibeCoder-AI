@@ -1,4 +1,4 @@
-/* BDCoder AI — dark IDE-style theme (ZCode-like) */
+/* VibeCoder AI — dark IDE-style theme */
 
 :root {
   color-scheme: dark;
@@ -200,37 +200,37 @@ html[data-theme="light"] {
   color-scheme: light;
   /* the interface text scale (Settings > Interface Setting > UI font size) */
   --fs-scale: 1;
-  --bg: #eef0f3;
-  --bg-main: #ffffff;
-  --panel: #ffffff;
-  --panel-2: #f4f5f8;
-  --border: #d9dde3;
-  --text: #1d2026;
-  --muted: #666d78;
-  --accent: #b4600f;
-  --accent-soft: rgba(180, 96, 15, 0.12);
-  --hover: #e9ebef;
-  --ok: #1f8b45;
-  --ok-soft: #2fae5b;
-  --danger: #c23a3a;
-  --danger-soft: #d95a5a;
-  --warn: #a5761a;
-  --text-strong: #101318;
-  --overlay: rgba(20, 22, 26, 0.34);
-  --overlay-soft: rgba(20, 22, 26, 0.18);
-  --overlay-strong: rgba(20, 22, 26, 0.46);
-  --shadow: rgba(20, 22, 26, 0.16);
-  --shadow-strong: rgba(20, 22, 26, 0.3);
-  --popover: #ffffff;
-  --row-bg: #f7f8fa;
-  --row-bg-hover: #eef0f3;
-  --row-border: #dfe3e8;
-  --row-border-hover: #c6ccd4;
-  --code-bg: #f4f5f8;
-  --code-bg-2: #eceef1;
-  --code-head: #dfe3e8;
-  --scroll-thumb: #c3c8d0;
-  --toggle-knob: #ffffff;
+  --bg: #bdbdb8;
+  --bg-main: #c6c6c1;
+  --panel: #cecec9;
+  --panel-2: #bcbcb7;
+  --border: #a9a9a3;
+  --text: #1f1f1f;
+  --muted: #55554f;
+  --accent: #a95308;
+  --accent-soft: rgba(169, 83, 8, 0.14);
+  --hover: #b8b8b3;
+  --ok: #1c7a3d;
+  --ok-soft: #2a9a50;
+  --danger: #b32f2f;
+  --danger-soft: #ca4a4a;
+  --warn: #916510;
+  --text-strong: #101010;
+  --overlay: rgba(0, 0, 0, 0.38);
+  --overlay-soft: rgba(0, 0, 0, 0.20);
+  --overlay-strong: rgba(0, 0, 0, 0.50);
+  --shadow: rgba(0, 0, 0, 0.20);
+  --shadow-strong: rgba(0, 0, 0, 0.34);
+  --popover: #cecec9;
+  --row-bg: #c2c2bd;
+  --row-bg-hover: #b9b9b4;
+  --row-border: #a9a9a3;
+  --row-border-hover: #94948e;
+  --code-bg: #c0c0bb;
+  --code-bg-2: #b7b7b2;
+  --code-head: #adada7;
+  --scroll-thumb: #989892;
+  --toggle-knob: #cecec9;
   --hover-strong: #d9dde3;
   --accent-contrast: #ffffff;
   --accent-soft-strong: rgba(180, 96, 15, 0.7);
@@ -423,6 +423,59 @@ html[data-theme="light"] .hero-title { color: var(--text-strong); }
 html, body { height: 100%; }
 
 body {
+  padding-top: 32px;
+}
+
+/* Chat text has its own scale; the rest of the app keeps --fs-scale. */
+#messages,
+.composer {
+  --fs-scale: var(--chat-fs-scale, 1);
+}
+
+/* Custom title bar: painted by the app theme, native window buttons sit on
+   the right. The 32px strip stays draggable and uses the same surface colour
+   as the rest of the window on Windows 10 and 11. */
+.window-drag {
+  position: fixed;
+  inset: 0 0 auto 0;
+  z-index: 100001;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0;
+  background: var(--bg-main);
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: calc(11px * var(--fs-scale, 1));
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+.win-controls {
+  height: 32px;
+  display: flex;
+  -webkit-app-region: no-drag;
+}
+.win-btn {
+  width: 46px;
+  height: 32px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: calc(14px * var(--fs-scale, 1));
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.win-btn:hover { background: var(--hover); color: var(--text); }
+.win-btn.win-close:hover { background: #c42b1c; color: #ffffff; }
+
+body {
   font-family: "Segoe UI", system-ui, sans-serif;
   background: var(--bg-main);
   color: var(--text);
@@ -430,7 +483,7 @@ body {
   font-size: calc(14px * var(--fs-scale, 1));
 }
 
-.shell { display: flex; height: 100vh; }
+.shell { display: flex; height: calc(100vh - 32px); }
 
 /* ============ SIDEBAR ============ */
 .sidebar {
@@ -1380,7 +1433,10 @@ body {
 /* ============ SETTINGS (full page) ============ */
 .settings-page {
   position: fixed;
-  inset: 0;
+  top: 32px;
+  right: 0;
+  bottom: 0;
+  left: 0;
   z-index: 40;
   display: flex;
   background: var(--bg-main);
@@ -3363,6 +3419,7 @@ body {
   padding: 2px 6px 10px;
 }
 .brand-mark {
+  position: relative;
   width: 28px;
   height: 28px;
   flex-shrink: 0;
@@ -3382,6 +3439,47 @@ body {
 }
 .brand-mark:hover { background: var(--hover); border-color: var(--row-border-hover); }
 .brand-mark:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.brand-v,
+.brand-panel {
+  display: grid;
+  place-items: center;
+  transition: opacity .13s ease, transform .13s ease;
+}
+.brand-panel {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transform: scale(.88);
+  color: var(--text);
+}
+.brand-mark:hover .brand-v,
+.brand-mark:focus-visible .brand-v { opacity: 0; transform: scale(.88); }
+.brand-mark:hover .brand-panel,
+.brand-mark:focus-visible .brand-panel { opacity: 1; transform: scale(1); }
+/* professional hover label, kept inside the sidebar so it cannot be clipped */
+.brand-mark::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: calc(100% + 9px);
+  top: 50%;
+  z-index: 8;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: calc(10.5px * var(--fs-scale, 1));
+  font-weight: 600;
+  letter-spacing: 0;
+  white-space: nowrap;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--shadow) 45%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-4px, -50%);
+  transition: opacity .13s ease, transform .13s ease;
+}
+.brand-mark:hover::after,
+.brand-mark:focus-visible::after { opacity: 1; transform: translate(0, -50%); }
 .brand-copy { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
 .brand-copy strong {
   color: var(--text-strong);
@@ -3592,6 +3690,23 @@ body {
   border-top: 1px solid var(--border);
 }
 .fb-current { color: var(--muted); font-size: calc(11.5px * var(--fs-scale, 1)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Settings → General → trusted project tools */
+.trust-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.trust-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-main);
+  font-size: calc(12.5px * var(--fs-scale, 1));
+}
+.trust-row .tr-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trust-row .tr-meta { color: var(--muted); font-size: calc(10.5px * var(--fs-scale, 1)); white-space: nowrap; }
+.trust-row .tr-stale { color: var(--warn); }
+.trust-empty { color: var(--muted); font-size: calc(12px * var(--fs-scale, 1)); padding: 8px 2px; }
 @media (max-width: 760px) {
   .fb-body { grid-template-columns: 1fr; overflow-y: auto; }
   .fb-added-col { border-right: 0; border-bottom: 1px solid var(--border); }

@@ -18,7 +18,7 @@
 const { toPosix, globToRegExp, globToRegExpLoose } = require("../util")
 const { normalizeRule, decide } = require("../perm/rules")
 
-const LAYERS = ["default", "project", "inherited", "session", "agent"]
+const LAYERS = ["default", "project", "inherited", "session", "parentAgent", "agent"]
 
 /**
  * Flatten rule layers in precedence order. An unknown layer name is kept last

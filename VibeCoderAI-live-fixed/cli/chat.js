@@ -11,7 +11,7 @@ const { stopSessionWork } = require("./run")
 const { homeDir } = require("../core/util")
 const { redactText } = require("../core/harness/guard")
 
-const LOCAL_COMMANDS = ["help", "model", "models", "agent", "new", "sessions", "use", "rename", "delete", "compact", "undo", "redo", "steps", "step", "diff", "history", "export", "usage", "skills", "skill", "playbooks", "agents", "recipes", "recipe", "memory", "mcp", "plugins", "extensions", "tools", "doctor", "config", "theme", "access", "provider", "permissions", "locks", "forms", "crew", "shells", "shell", "trail", "todos", "browser", "marketplace", "registry", "auth", "profile", "reasoning", "thinking", "verbose", "yes", "dir", "clear", "exit", "quit"]
+const LOCAL_COMMANDS = ["help", "model", "models", "fallback", "agent", "new", "sessions", "use", "rename", "delete", "compact", "undo", "redo", "steps", "step", "diff", "history", "export", "usage", "skills", "skill", "playbooks", "agents", "recipes", "recipe", "memory", "mcp", "plugins", "extensions", "tools", "doctor", "config", "theme", "access", "provider", "permissions", "locks", "forms", "crew", "shells", "shell", "trail", "todos", "browser", "marketplace", "registry", "auth", "profile", "reasoning", "thinking", "verbose", "yes", "dir", "clear", "exit", "quit"]
 const HELP = `VibeCoder chat
 
   /model [id]       pick/switch model    /agent [id]     pick/switch persona
@@ -26,6 +26,7 @@ const HELP = `VibeCoder chat
   /recipes /skills /agents /mcp /plugins /extensions /tools /marketplace
   /memory /todos /trail /usage /config /permissions /locks /crew /shell
   /browser          real desktop browser (start with vibe attach)
+  /fallback         ordered failover chain for rate limits and outages
   /provider         add, remove, key, test or list providers
   /auth add <id>    masked API key       /profile        advanced profiles
   /theme [name]     terminal colors      /reasoning      show/hide thinking

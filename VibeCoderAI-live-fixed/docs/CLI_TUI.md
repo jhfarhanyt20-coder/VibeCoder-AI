@@ -1,5 +1,9 @@
 # VibeCoder full-screen terminal — design and resume plan
 
+> **Historical review record.** The version strings and screenshots below are
+> from the v0.3.10–0.3.11 review window. For the current version and test
+> baseline, see `package.json` and the root `VIBE.md`.
+
 Status: **implemented; screen/regression tests green; live review in progress**
 Updated: 2026-11-16
 

@@ -78,7 +78,7 @@ function ensureAutoUpdater() {
   const { autoUpdater: au } = require("electron-updater")
   autoUpdater = au
   autoUpdater.autoDownload = !!prefs.autoDownload
-  autoUpdater.autoInstallOnAppQuit = true
+  autoUpdater.autoInstallOnAppQuit = false
   autoUpdater.allowPrerelease = false
   autoUpdater.allowDowngrade = false
 

@@ -1,6 +1,6 @@
 name: Release stable VibeCoder AI
 
-# Trigger ONLY on version tags like v1.1.0. Ordinary commits never build or
+# Trigger ONLY on version tags like v0.3.12. Ordinary commits never build or
 # publish a stable release (run the workflow on tag v* only).
 on:
   push:
@@ -10,8 +10,9 @@ on:
 permissions:
   contents: write # needed to publish the release assets (NSIS installer + latest.yml)
 
-# The app source lives in VibeCoderAI-live-fixed/ under this repo. All commands
-# run there; the repo root only carries PLAN.md and .github/.
+# The app source lives in VibeCoderAI-live-fixed/ under this repo; the repo root
+# carries the docs, website config and templates. All build commands run inside
+# the app directory.
 env:
   APP_DIR: VibeCoderAI-live-fixed
 
@@ -32,6 +33,15 @@ jobs:
       - name: Install dependencies
         working-directory: ${{ env.APP_DIR }}
         run: npm ci
+
+      - name: Verify tag matches package.json
+        working-directory: ${{ env.APP_DIR }}
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ("v$version" -ne "$env:GITHUB_REF_NAME") {
+            throw "Tag $env:GITHUB_REF_NAME does not match package.json version $version"
+          }
 
       - name: Run the test suite
         working-directory: ${{ env.APP_DIR }}

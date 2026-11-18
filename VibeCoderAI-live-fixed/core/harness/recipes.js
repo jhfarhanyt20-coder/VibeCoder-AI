@@ -134,6 +134,7 @@ function expandRecipe(text, options = {}) {
     file: recipe.file,
     agent: recipe.agent,
     model: recipe.model,
+    scope: recipe.scope,
     args: splitArguments(rawArgs),
     rawArgs,
     hasShellBlocks: recipe.hasShellBlocks,

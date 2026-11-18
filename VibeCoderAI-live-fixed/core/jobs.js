@@ -73,6 +73,7 @@ function decodeClixmlRecords(buffer) {
 }
 
 const KEEP_OUTPUT = 64 * 1024 // per-job in-memory tail (full output stays in the file)
+const MAX_OUTPUT_FILE = 50 * 1024 * 1024 // on-disk cap; flood output cannot fill the disk
 const EXITED_LIMIT = 25 // settled jobs kept for status/output lookups
 const LIVE_OUTPUT_LIMIT = 16 * 1024 // one renderer event can never grow without bound
 const LIVE_OUTPUT_DELAY = 40 // coalesce noisy processes without making output feel delayed
@@ -341,7 +342,7 @@ function createShell({ sessionID, command, cwd, background = false, env, emit, t
   }
 
   try {
-    stream = fs.createWriteStream(file, { flags: "w" })
+    stream = fs.createWriteStream(file, { flags: "w", mode: 0o600 })
     stream.on("error", () => {})
   } catch {}
 
@@ -410,7 +411,12 @@ function createShell({ sessionID, command, cwd, background = false, env, emit, t
     job.output = clipTail(job.output + text, KEEP_OUTPUT)
     job.size += Buffer.byteLength(text)
     try {
-      stream && stream.write(text)
+      if (stream && job.size <= MAX_OUTPUT_FILE) stream.write(text)
+      else if (stream) {
+        stream.end("\n[output truncated: on-disk log reached its 50 MB cap]\n")
+        stream = null
+        job.fileTruncated = true
+      }
     } catch {}
     if (job.emit) {
       liveBuffer += text

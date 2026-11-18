@@ -1419,6 +1419,7 @@ function applySidebarHidden(hidden, moveFocus = false) {
   if (toggle) {
     toggle.setAttribute("aria-expanded", hidden ? "false" : "true")
     toggle.title = hidden ? "Show sidebar" : "Hide sidebar"
+    toggle.dataset.tip = toggle.title
   }
   try {
     localStorage.setItem(SIDEBAR_HIDDEN_KEY, hidden ? "1" : "0")
@@ -3315,7 +3316,7 @@ function typingPush(text) {
    that into the real reason (or the real error message). */
 const INTERRUPT_REASON_TEXT = {
   user: "You stopped this run.",
-  shutdown: "The OpenCode service shut down while this run was going.",
+  shutdown: "The VibeCoder service shut down while this run was going.",
   superseded: "Another run replaced this one.",
   inactivity: "The run was stopped after a period of inactivity.",
   unknown: "The run was interrupted.",
@@ -3402,6 +3403,11 @@ vibe.onEvent(async (event) => {
   // derived UI state when a provider/model/key is changed inside or outside the app.
   if (type === "providers.changed") {
     refreshProviderStateLive().catch((error) => showError("Could not refresh providers", String(error?.message || error), { key: "providers-refresh" }))
+    return
+  }
+  // VibeCoder account: signed in / out, code expired, or models refreshed.
+  if (type === "auth.changed" || type === "auth.models") {
+    refreshAuthUI().catch(() => {})
     return
   }
   if (type === "skills.changed") {
@@ -4355,6 +4361,71 @@ async function refreshCliUpdates({ force = false } = {}) {
 const cliUpdateBtn = document.getElementById("cli-update-check")
 if (cliUpdateBtn) cliUpdateBtn.onclick = () => refreshCliUpdates({ force: true })
 
+/* ---------- Settings → General → trusted project tools ---------- */
+async function refreshTrustList() {
+  const list = document.getElementById("trust-list")
+  const btn = document.getElementById("trust-refresh")
+  if (!list || !vibe.trustList) return []
+  if (btn) btn.disabled = true
+  let projects = []
+  try {
+    const res = await vibe.trustList()
+    if (!res || res.ok === false) throw new Error((res && res.error) || "unknown error")
+    projects = (res.data && res.data.projects) || []
+  } catch (err) {
+    list.innerHTML = ""
+    const row = document.createElement("div")
+    row.className = "trust-empty"
+    row.textContent = `Could not load trusted workspaces: ${(err && err.message) || err}`
+    list.appendChild(row)
+    return []
+  } finally {
+    if (btn) btn.disabled = false
+  }
+  list.innerHTML = ""
+  if (!projects.length) {
+    const empty = document.createElement("div")
+    empty.className = "trust-empty"
+    empty.textContent = "No workspace is trusted yet. Approve one when VibeCoder asks about project extensions, plugins or MCP servers."
+    list.appendChild(empty)
+    return projects
+  }
+  for (const project of projects) {
+    const row = document.createElement("div")
+    row.className = "trust-row"
+    const name = document.createElement("div")
+    name.className = "tr-path"
+    name.textContent = project.directory
+    name.title = project.directory
+    const meta = document.createElement("div")
+    meta.className = "tr-meta" + (project.current ? "" : " tr-stale")
+    if (project.current) meta.textContent = `${project.files} file${project.files === 1 ? "" : "s"}`
+    else meta.textContent = "Changed since approval"
+    const revoke = document.createElement("button")
+    revoke.type = "button"
+    revoke.className = "save-btn ghost"
+    revoke.textContent = "Revoke"
+    revoke.onclick = async () => {
+      revoke.disabled = true
+      try {
+        await vibe.trustRevoke({ directory: project.directory })
+      } catch (err) {
+        revoke.disabled = false
+        meta.className = "tr-meta tr-stale"
+        meta.textContent = `Revoke failed: ${(err && err.message) || err}`
+        return
+      }
+      await refreshTrustList()
+    }
+    row.append(name, meta, revoke)
+    list.appendChild(row)
+  }
+  return projects
+}
+
+const trustRefreshBtn = document.getElementById("trust-refresh")
+if (trustRefreshBtn) trustRefreshBtn.onclick = () => refreshTrustList()
+
 // One quiet check after startup (answers are cached for 6 h in the main
 // process), plus a refresh whenever the settings page opens.
 setTimeout(() => { refreshCliUpdates().catch(() => {}) }, 8000)
@@ -4710,6 +4781,7 @@ function openSettings() {
   settings.hidden = false
   refreshCliStatus()
   refreshCliUpdates().catch(() => {})
+  refreshTrustList().catch(() => {})
   vibe.info().then((info) => {
     const sel = document.getElementById("setting-backend")
     if (sel && info.ok) sel.value = info.data.mode
@@ -4764,6 +4836,7 @@ settingsNav.querySelectorAll(".nav-item").forEach((item) => {
     if (page === "browser-use") loadBrowserUse()
     if (page === "browser-use") loadBrowserUse()
     if (page === "model-settings") { loadProviders(); loadFallbackState() }
+    if (page === "general") refreshTrustList()
     if (page === "skills") loadSkills()
     if (page === "usage") loadUsage()
     if (page === "app-updates") refreshAppUpdateStatus()
@@ -5810,7 +5883,9 @@ function renderModelList(filter = "") {
       m.providerID.toLowerCase().includes(q) ||
       `${m.providerID}/${m.id}`.toLowerCase().includes(q) ||
       // the display name of a custom provider is searchable too
-      (custom.get(m.providerID)?.name || "").toLowerCase().includes(q)
+      (custom.get(m.providerID)?.name || "").toLowerCase().includes(q) ||
+      // and a model's own name (VibeCoder models: "NVIDIA Nemotron 3 Ultra")
+      String(m.name || "").toLowerCase().includes(q)
     )
   })
   if (state.models.length === 0) {
@@ -5845,7 +5920,9 @@ function renderModelList(filter = "") {
       const key = `${m.providerID}/${m.id}`
       b.dataset.model = key
       if (state.selectedModel === key) b.classList.add("selected")
-      b.textContent = m.id === "fallback" && m.isGroup ? (m.name || "Fallback model") : m.id
+      // VibeCoder account models have opaque ids (vibecoder/free-3): show their real name.
+      b.textContent = m.id === "fallback" && m.isGroup ? (m.name || "Fallback model") : (m.providerID === "vibecoder" && m.name ? m.name : m.id)
+      if (m.providerID === "vibecoder") b.title = Array.isArray(m.tags) && m.tags.length ? `${m.name} — ${m.tags.join(", ")}` : (m.name || m.id)
       if (m.isGroup) {
         const badge = document.createElement("span")
         badge.className = "mr-badge"
@@ -5854,7 +5931,7 @@ function renderModelList(filter = "") {
         b.appendChild(badge)
         b.title = (m.groupModels || []).map((model, index) => `${index + 1}. ${model}`).join("\n")
       }
-      if (key.toLowerCase().includes("free")) {
+      if (m.free || key.toLowerCase().includes("free")) {
         const badge = document.createElement("span")
         badge.className = "mr-badge"
         badge.textContent = "FREE"
@@ -8185,6 +8262,7 @@ $("owner-code")?.addEventListener("keydown", (e) => {
 /* ---------- the theme (Obsidian + original dark / amoled / light / system) ---------- */
 const THEME_KEY = "vibecoder.theme"
 const FONT_KEY = "vibecoder.fontScale"
+const CHAT_FONT_KEY = "vibecoder.chatFontScale"
 const THEMES = ["obsidian", "dark", "amoled", "light", "system"]
 
 function currentTheme() {
@@ -8209,6 +8287,26 @@ function resolvedTheme(name) {
   return t === "system" ? systemTheme() : t
 }
 
+function syncWindowTheme() {
+  try {
+    if (!window.vibe || typeof vibe.windowTheme !== "function") return
+    const resolved = document.documentElement.dataset.theme || "dark"
+    const css = getComputedStyle(document.documentElement)
+    const pick = (name, fallback) => {
+      const value = css.getPropertyValue(name).trim()
+      return /^#[0-9a-f]{6}$/i.test(value) ? value : fallback
+    }
+    // The native Windows title bar and 1px window border use the same surface
+    // colours as the app, regardless of the Windows accent/theme setting.
+    vibe.windowTheme({
+      caption: pick("--bg-main", resolved === "light" ? "#ffffff" : "#0b0d12"),
+      text: pick("--text", resolved === "light" ? "#1d2026" : "#d7dbe2"),
+      border: pick("--border", resolved === "light" ? "#d9dde3" : "#26292f"),
+      dark: resolved !== "light",
+    })
+  } catch {}
+}
+
 function applyTheme(name, save = true) {
   const theme = THEMES.includes(name) ? name : "dark"
   document.documentElement.dataset.theme = resolvedTheme(theme)
@@ -8217,6 +8315,7 @@ function applyTheme(name, save = true) {
   }
   const sel = $("theme-select")
   if (sel) sel.value = theme
+  syncWindowTheme()
 }
 
 /* the interface text size (only the text, not the icons) */
@@ -8247,10 +8346,69 @@ function applyFontScale(px, save = true) {
   }
 }
 
+/* Chat text has its own scale so messages can grow without changing the
+   sidebar, settings, or other app chrome. */
+function normalizedChatFontPx(value) {
+  const raw = Number(value)
+  if (!Number.isFinite(raw) || raw <= 0) return 14
+  const px = raw < 4 ? raw * 14 : raw
+  return Math.min(22, Math.max(11, Math.round(px)))
+}
+
+function applyChatFontScale(px, save = true) {
+  const n = normalizedChatFontPx(px)
+  document.documentElement.style.setProperty("--chat-fs-scale", String(n / 14))
+  const range = $("chat-font-size-range")
+  if (range) {
+    if (range.value !== String(n)) range.value = String(n)
+    const min = Number(range.min) || 11
+    const max = Number(range.max) || 22
+    const pct = max > min ? ((n - min) / (max - min)) * 100 : 0
+    range.style.setProperty("--range-pct", `${pct}%`)
+  }
+  const label = $("chat-font-size-value")
+  if (label) label.textContent = `${n} px`
+  if (save) {
+    try { localStorage.setItem(CHAT_FONT_KEY, String(n)) } catch {}
+  }
+}
+
 $("theme-select")?.addEventListener("change", (e) => applyTheme(e.target.value))
 $("font-size-range")?.addEventListener("input", (e) => applyFontScale(e.target.value))
+$("chat-font-size-range")?.addEventListener("input", (e) => applyChatFontScale(e.target.value))
 // the theme has to be set before the first paint -> renderer/theme.js does that
 applyTheme(currentTheme(), false)
+try {
+  const storedChatFont = localStorage.getItem(CHAT_FONT_KEY)
+  applyChatFontScale(storedChatFont || 14, false)
+} catch {
+  applyChatFontScale(14, false)
+}
+
+/* custom window controls (the window is frameless so the title strip can use
+   the app theme instead of the Windows accent colour) */
+function updateMaximizeButton(maximized) {
+  const button = $("win-max")
+  if (!button) return
+  button.textContent = maximized ? "❐" : "□"
+  button.title = maximized ? "Restore" : "Maximize"
+  button.setAttribute("aria-label", button.title)
+}
+$("win-min")?.addEventListener("click", () => { try { void vibe.windowMinimize?.() } catch {} })
+$("win-max")?.addEventListener("click", async () => {
+  try {
+    const result = await vibe.windowMaximize?.()
+    updateMaximizeButton(!!result?.data?.maximized)
+  } catch {}
+})
+$("win-close")?.addEventListener("click", () => { try { void vibe.windowClose?.() } catch {} })
+$("window-drag")?.addEventListener("dblclick", async (event) => {
+  if (event.target.closest(".win-btn")) return
+  try {
+    const result = await vibe.windowMaximize?.()
+    updateMaximizeButton(!!result?.data?.maximized)
+  } catch {}
+})
 try {
   const stored = localStorage.getItem(FONT_KEY)
   applyFontScale(stored || 14, false)
@@ -8485,6 +8643,12 @@ async function refreshPermissionRequests() {
     el.querySelector(".perm-scope").textContent = permissionScope(p.action)
     el.querySelector(".perm-res").textContent =
       (Array.isArray(p.resources) ? p.resources.join(", ") : p.resource) || ""
+    // One-shot actions (e.g. browser JS, or an origin that is not known yet)
+    // must not offer a blanket "Always allow".
+    if (p.neverPersist) {
+      const always = el.querySelector('[data-d="always"]')
+      if (always) always.remove()
+    }
     // The agent is blocked -> tell the user, even if the app is in the background
     notifyAgent(
       "Permission needed",
@@ -9100,10 +9264,10 @@ const connState = document.getElementById("conn-state")
 const connLabel = document.getElementById("connect-label")
 let authPoll = null
 
-/* The VibeCoderAI account is not live yet. The button stays so the planned
-   own API host has a home, but it never starts a device login. Flip this to
-   false (and re-enable the buttons in index.html) when the host is ready. */
-const VIBECODER_ACCOUNT_COMING_SOON = true
+/* The VibeCoderAI account is live: "Sign in with VibeCoder" opens the website,
+   the user presses Allow, and the free VibeCoder models appear as a provider.
+   Setting this back to true restores the old "coming soon" state. */
+const VIBECODER_ACCOUNT_COMING_SOON = false
 
 function applyComingSoonAccount() {
   if (ocSub) ocSub.textContent = "Your own VibeCoderAI API host — coming soon"
@@ -9124,29 +9288,59 @@ function applyComingSoonAccount() {
   }
 }
 
-/* Sidebar "Connect" button -> popover with login / logout */
+/* Sidebar account button. Signed out: one click opens the VibeCoder website in
+   the browser to sign in (the menu shows the code to match). Signed in: the menu
+   shows the account, today's usage and Logout. */
+let authSignedIn = false
+let authStarting = false
+
+async function startVibecoderSignIn() {
+  if (VIBECODER_ACCOUNT_COMING_SOON || authStarting) return
+  authStarting = true
+  connState.textContent = "Opening VibeCoder in your browser…"
+  if (ocStText) ocStText.textContent = "Opening VibeCoder in your browser…"
+  if (ocStDot) ocStDot.className = "st-dot checking"
+  try {
+    const res = await vibe.authConnect()
+    if (res && res.ok === false) {
+      const why = res.error || "unknown error"
+      connState.textContent = `Sign-in failed — ${why}`
+      if (ocStText) ocStText.textContent = `Sign-in failed — ${why}`
+      if (ocStDot) ocStDot.className = "st-dot off"
+      return
+    }
+    showAuthCode(res?.data?.code)
+    if (authPoll) clearInterval(authPoll)
+    authPoll = setInterval(() => { refreshAuthUI().catch(() => {}) }, 3000)
+  } finally {
+    authStarting = false
+  }
+}
+
+function showAuthCode(code) {
+  if (!code) return
+  connState.textContent = `Code ${code} — press Allow in your browser. Signing in finishes here automatically.`
+  if (ocDevice) ocDevice.hidden = false
+  const codeEl = document.getElementById("opencode-code")
+  if (codeEl) codeEl.textContent = code
+  if (ocStDot) ocStDot.className = "st-dot checking"
+  if (ocStText) ocStText.textContent = "Waiting for you to press Allow in the browser…"
+}
+
 $("btn-connect").onclick = async (e) => {
   e.stopPropagation()
   const menu = document.getElementById("connect-menu")
   const wasHidden = menu.hidden
   closeAllMenus()
-  if (wasHidden) {
-    menu.hidden = false
-    await refreshAuthUI()
-  }
+  if (!wasHidden) return
+  menu.hidden = false
+  await refreshAuthUI()
+  if (!authSignedIn && !VIBECODER_ACCOUNT_COMING_SOON) await startVibecoderSignIn()
 }
 
 $("conn-connect").onclick = async () => {
   if (VIBECODER_ACCOUNT_COMING_SOON) return
-  closeAllMenus()
-  connState.textContent = "Sign in in your browser…"
-  const res = await vibe.authConnect()
-  if (res && res.ok === false) {
-    connState.textContent = `Login failed — ${res.error || "unknown error"}`
-    return
-  }
-  if (authPoll) clearInterval(authPoll)
-  authPoll = setInterval(refreshAuthUI, 3000)
+  await startVibecoderSignIn()
 }
 
 $("conn-logout").onclick = async () => {
@@ -9175,8 +9369,8 @@ $("conn-logout").onclick = async () => {
 // next account can have a different catalog and the old pick would 404. Models
 // of the other providers stay usable.
 function resetOpenCodeModelCache() {
-  state.models = (state.models || []).filter((m) => m && m.providerID !== "opencode")
-  if (String(state.selectedModel || "").startsWith("opencode/")) {
+  state.models = (state.models || []).filter((m) => m && m.providerID !== "opencode" && m.providerID !== "vibecoder")
+  if (String(state.selectedModel || "").startsWith("opencode/") || String(state.selectedModel || "").startsWith("vibecoder/")) {
     state.selectedModel = null
     try {
       localStorage.removeItem("vibecoder.model")
@@ -9199,34 +9393,64 @@ async function refreshAuthUI() {
     return
   }
   const connected = !!(res.ok && res.data?.connected)
+  authSignedIn = connected
+  const pending = !connected && res.ok ? res.data?.pending : null
+  if (connected || !pending) {
+    if (authPoll) clearInterval(authPoll)
+    authPoll = null
+  }
   if (connected) {
     const who = res.data.email || res.data.org || "account"
-    ocSub.textContent = "VibeCoderAI account connected"
+    const usage = res.data.usage && res.data.dailyLimit != null
+      ? ` · ${Number(res.data.usage.requests) || 0}/${Number(res.data.dailyLimit) || 0} requests today`
+      : ""
+    ocSub.textContent = "Signed in — free VibeCoder models are in the model picker"
     ocStDot.className = "st-dot on"
-    ocStText.textContent = `Connected — ${who}`
+    ocStText.textContent = `Connected — ${who}${usage}`
     ocConnect.hidden = true
     ocDisconnect.hidden = false
     ocDevice.hidden = true
     ocDot.classList.add("on")
-    connState.textContent = `Connected — ${who}`
-    // Sidebar shows the signed-in account (gmail username) instead of "Connect".
-    const user = String(res.data.email || "").split("@")[0]
+    connState.textContent = `Signed in — ${who}${usage}`
+    // Sidebar shows the signed-in account (name or gmail username) instead of "Connect".
+    const user = String(res.data.name || "").trim() || String(res.data.email || "").split("@")[0]
     connLabel.textContent = user || res.data.org || "Connected"
     connLabel.title = res.data.email || who
-    if (state.models.length === 0) loadModels().then(() => renderModelList())
-  } else {
-    ocSub.textContent = "Connect your VibeCoderAI account to use hosted models"
-    ocStDot.className = "st-dot off"
-    ocStText.textContent = "Not connected"
+    const logout = document.getElementById("conn-logout")
+    if (logout) logout.disabled = false
+    const login = document.getElementById("conn-connect")
+    if (login) login.hidden = true
+    if (!(state.models || []).some((m) => m && m.providerID === "vibecoder")) loadModels().then(() => renderModelList()).catch(() => {})
+  } else if (pending) {
+    ocSub.textContent = "Finish signing in in your browser"
     ocConnect.hidden = false
+    ocConnect.disabled = false
+    ocConnect.textContent = "Open the sign-in page again"
     ocDisconnect.hidden = true
+    ocDot.classList.remove("on")
+    showAuthCode(pending.code)
+    connLabel.textContent = "Signing in…"
+    connLabel.title = `Code ${pending.code}`
+  } else {
+    ocSub.textContent = "Sign in with VibeCoder to use free models — no API key needed"
+    ocStDot.className = "st-dot off"
+    ocStText.textContent = res.data?.error || "Not connected"
+    ocConnect.hidden = false
+    ocConnect.disabled = false
+    ocConnect.textContent = "Sign in with VibeCoder"
+    ocDisconnect.hidden = true
+    ocDevice.hidden = true
     ocDot.classList.remove("on")
     // Clearing the OpenCode model cache also drops a stale opencode selection,
     // so nothing tries to use the logged-out account's models.
     resetOpenCodeModelCache()
-    connState.textContent = "Not connected"
-    connLabel.textContent = "Connect"
-    connLabel.title = "Connect your VibeCoderAI account"
+    connState.textContent = res.data?.error || "Not signed in — sign in with VibeCoder to use free models"
+    connLabel.textContent = "Sign in"
+    connLabel.title = "Sign in with VibeCoder"
+    const login = document.getElementById("conn-connect")
+    if (login) { login.hidden = false; login.disabled = false; login.textContent = "Sign in with VibeCoder" }
+    const logout = document.getElementById("conn-logout")
+    if (logout) logout.disabled = true
   }
   const provItems = document.querySelectorAll(".provider-item")
   provItems.forEach((i) =>
@@ -9255,18 +9479,7 @@ document.querySelector(".provider-item[data-provider=opencode]").onclick = () =>
 }
 
 ocConnect.onclick = async () => {
-  ocStDot.className = "st-dot checking"
-  ocStText.textContent = "Starting device login…"
-  ocDevice.hidden = true
-  const res = await vibe.authConnect()
-  if (res && res.ok === false) {
-    ocStDot.className = "st-dot off"
-    ocStText.textContent = `Login failed — ${res.error || "unknown error"}`
-    return
-  }
-  // Poll status every 4s until the flow closes / page refreshes
-  if (authPoll) clearInterval(authPoll)
-  authPoll = setInterval(refreshAuthUI, 4000)
+  await startVibecoderSignIn()
 }
 
 ocDisconnect.onclick = async () => {
@@ -9348,11 +9561,12 @@ $("btn-test-notify")?.addEventListener("click", async () => {
   }
 })
 
-document.getElementById("setting-backend").onchange = async (e) => {
+const backendSelect = document.getElementById("setting-backend")
+if (backendSelect) backendSelect.onchange = async (e) => {
   const res = await vibe.setMode(e.target.value)
   if (!res.ok) {
     alert(res.error)
-    e.target.value = state.mode ?? "cli"
+    e.target.value = state.mode ?? "sdk"
   }
 }
 
@@ -9849,7 +10063,8 @@ function brRestoreTabs() {
   if (!list.length && prefs.url) list = [{ id: "t-restored", url: prefs.url, title: "" }]
   for (const t of list) {
     if (!t || !t.id) continue
-    const tab = brCreateTab(t.url || "about:blank", { id: String(t.id), activate: false })
+    const url = /^(https?:\/\/|about:blank$)/i.test(String(t.url || "")) ? String(t.url) : "about:blank"
+    const tab = brCreateTab(url, { id: String(t.id), activate: false })
     if (tab && t.title) tab.title = String(t.title)
   }
   const wanted = prefs.activeId && brTabs.has(prefs.activeId) ? prefs.activeId : [...brTabs.keys()][0] || ""

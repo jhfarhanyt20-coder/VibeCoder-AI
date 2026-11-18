@@ -25,7 +25,7 @@ body:
     id: version
     attributes:
       label: VibeCoder AI version
-      description: Settings → General, or `vibe --version`.
+      description: Settings → App Updates → Installed version, or `vibe --version`.
       placeholder: 0.3.12
     validations:
       required: true

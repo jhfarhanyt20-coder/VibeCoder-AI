@@ -5,9 +5,14 @@
  * (in-process engine) + the `vibe serve` HTTP/SSE API started in backend.cjs.
  */
 const path = require("path")
-const { app, BrowserWindow, Menu, clipboard, shell, nativeImage } = require("electron")
+const { pathToFileURL } = require("node:url")
+const { app, BrowserWindow, Menu, clipboard, shell, nativeImage, session } = require("electron")
 const { initBackend, shutdownBackend } = require("./backend.cjs")
 const updater = require("./updater.cjs")
+const { setWindowTheme } = require("./window-theme.cjs")
+
+const APP_ENTRY = pathToFileURL(path.join(__dirname, "..", "renderer", "index.html")).href
+const WEBVIEW_URL = /^(https?|about|file|data):/i
 
 /* The native menu bar (File/Edit/View/Window) is not wanted - the app has its own
    UI. Copy/paste keeps working through the right-click menu and Ctrl+C/Ctrl+V
@@ -20,7 +25,9 @@ function attachContextMenu(win) {
   win.webContents.on("context-menu", (_e, params) => {
     const items = []
     if (params.linkURL) {
-      items.push({ label: "Open link in browser", click: () => shell.openExternal(params.linkURL) })
+      if (/^https?:\/\//i.test(params.linkURL)) {
+        items.push({ label: "Open link in browser", click: () => shell.openExternal(params.linkURL) })
+      }
       items.push({ label: "Copy link address", click: () => clipboard.writeText(params.linkURL) })
     }
     if (params.mediaType === "image" && params.srcURL) {
@@ -71,6 +78,9 @@ function createWindow() {
     // normal app icon.
     icon: process.platform === "win32" ? transparentTitleBarIcon() : appIcon(),
     backgroundColor: "#0b0d12",
+    // Frameless window: the renderer paints the title strip and its
+    // minimize/maximize/close buttons in the app's current theme colour.
+    frame: false,
     show: false,
     autoHideMenuBar: true,
     webPreferences: {
@@ -82,7 +92,15 @@ function createWindow() {
     },
   })
   win.setMenuBarVisibility(false)
-  win.once("ready-to-show", () => win.show())
+  // The renderer sends the active app theme after its CSS loads; this first
+  // pass avoids a bright Windows-accent title bar while the window starts.
+  setWindowTheme(win, { caption: "#0b0d12", text: "#d7dbe2", border: "#26292f", dark: true })
+  // Launch fitted to the current display's work area. Maximizing (rather than a
+  // fixed pixel size) keeps the app correct for every display scale and size.
+  win.once("ready-to-show", () => {
+    if (!win.isMaximized()) win.maximize()
+    win.show()
+  })
   win.loadFile(path.join(__dirname, "..", "renderer", "index.html"))
   attachContextMenu(win)
 
@@ -93,12 +111,34 @@ function createWindow() {
     if (/^https?:/i.test(url)) shell.openExternal(url).catch(() => {})
     return { action: "deny" }
   })
-  win.webContents.on("will-navigate", (e, url) => {
-    if (!url.startsWith("file:")) {
-      e.preventDefault()
-      if (/^https?:/i.test(url)) shell.openExternal(url).catch(() => {})
-    }
+  const guardAppNavigation = (e, url) => {
+    if (url === APP_ENTRY || url.startsWith(APP_ENTRY + "#")) return
+    e.preventDefault()
+    if (/^https?:/i.test(url)) shell.openExternal(url).catch(() => {})
+  }
+  win.webContents.on("will-navigate", guardAppNavigation)
+  win.webContents.on("will-redirect", guardAppNavigation)
+  // The browser dock is the only webview in the app. Never let a guest inherit
+  // a preload or Node privileges, and keep its permission requests denied.
+  win.webContents.on("will-attach-webview", (event, webPreferences, params) => {
+    delete webPreferences.preload
+    delete params.preload
+    webPreferences.nodeIntegration = false
+    webPreferences.nodeIntegrationInSubFrames = false
+    webPreferences.contextIsolation = true
+    webPreferences.sandbox = true
+    webPreferences.webSecurity = true
+    webPreferences.allowRunningInsecureContent = false
+    const src = String(params.src || "")
+    if (src && !WEBVIEW_URL.test(src)) event.preventDefault()
   })
+  try {
+    const dock = session.fromPartition("persist:vibecoder-browser")
+    dock.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
+    dock.setPermissionCheckHandler(() => false)
+    win.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
+    win.webContents.session.setPermissionCheckHandler(() => false)
+  } catch {}
 
   // dev mode: open the devtools (F12 toggles them anytime)
   if (process.argv.includes("--dev") || process.env.VIBE_DEV === "1") win.webContents.openDevTools({ mode: "detach" })
@@ -147,6 +187,15 @@ if (!gotLock) {
 }
 
 app.whenReady().then(() => {
+  // Guest pages in the browser dock are isolated: no popups and no navigation
+  // outside normal web/about/file/data URLs.
+  app.on("web-contents-created", (_event, contents) => {
+    if (contents.getType() !== "webview") return
+    contents.setWindowOpenHandler(() => ({ action: "deny" }))
+    const guard = (event, url) => { if (!WEBVIEW_URL.test(url)) event.preventDefault() }
+    contents.on("will-navigate", guard)
+    contents.on("will-redirect", guard)
+  })
   // Provide the updater with a live "is any agent work active?" check so it can
   // refuse to install a restart while a run is in flight. The engine is owned by
   // backend.cjs, so ask it for the live engine each time (never cache a copy).

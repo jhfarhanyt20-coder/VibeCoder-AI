@@ -46,22 +46,22 @@ html[data-theme="amoled"] {
 }
 
 html[data-theme="light"] {
-  --bg: #f4f5f7;
-  --bg-main: #ffffff;
-  --panel: #ffffff;
-  --panel-2: #f3f4f6;
-  --border: #e1e4e9;
-  --hover: #eceef2;
-  --text: #2a2f37;
-  --muted: #6b7380;
-  --text-strong: #12151a;
-  --popover: #ffffff;
-  --row-bg: #f8f9fa;
-  --row-bg-hover: #f1f3f5;
-  --row-border: #e1e4e9;
-  --row-border-hover: #c9cfd7;
-  --code-bg: #f6f7f9;
-  --code-bg-2: #eef0f3;
+  --bg: #bdbdb8;
+  --bg-main: #c6c6c1;
+  --panel: #cecec9;
+  --panel-2: #bcbcb7;
+  --border: #a9a9a3;
+  --hover: #b8b8b3;
+  --text: #1f1f1f;
+  --muted: #55554f;
+  --text-strong: #101010;
+  --popover: #cecec9;
+  --row-bg: #c2c2bd;
+  --row-bg-hover: #b9b9b4;
+  --row-border: #a9a9a3;
+  --row-border-hover: #94948e;
+  --code-bg: #c0c0bb;
+  --code-bg-2: #b7b7b2;
 }
 
 /* ---------- base ---------- */
@@ -96,16 +96,16 @@ body {
 }
 .side-item .ic { opacity: 0.8; }
 
-/* the one primary action of the sidebar */
+/* New Task behaves like a normal sidebar action; only hover highlights it. */
 #btn-new-task {
   margin-bottom: 6px;
   padding: 8px 10px;
-  border: 1px solid var(--border);
-  background: var(--panel);
-  color: var(--text-strong);
-  font-weight: 600;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  font-weight: 500;
 }
-#btn-new-task:hover { border-color: var(--hover-strong); background: var(--panel-2); }
+#btn-new-task:hover { border-color: var(--border); background: var(--hover); }
 #btn-new-task .ic { color: var(--accent); opacity: 1; }
 
 .kbd { font-family: var(--font-mono); font-size: calc(11px * var(--fs-scale, 1)); border-radius: var(--r-sm); }
@@ -541,8 +541,8 @@ body { font-family: var(--font-ui); letter-spacing: -0.006em; }
 .side-top { gap: 4px; }
 .side-item { min-height: 38px; border: 1px solid transparent; transition: background .16s ease, border-color .16s ease, color .16s ease; }
 .side-item:hover { border-color: var(--border); background: var(--panel-2); }
-#btn-new-task { min-height: 42px; border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border)); background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 13%, var(--panel)), var(--panel)); box-shadow: 0 5px 18px color-mix(in srgb, var(--shadow) 56%, transparent); }
-#btn-new-task:hover { border-color: color-mix(in srgb, var(--accent) 56%, var(--border)); background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
+#btn-new-task { min-height: 42px; padding: 8px 10px; }
+#btn-new-task:hover { border-color: var(--border); background: var(--hover); }
 .side-section { margin-top: 20px; letter-spacing: .055em; text-transform: uppercase; font-size: calc(10.5px * var(--fs-scale, 1)); }
 .workspace-list li, .session-list li { border: 1px solid transparent; transition: background .14s ease, border-color .14s ease; }
 .session-list li:hover { border-color: var(--border); }

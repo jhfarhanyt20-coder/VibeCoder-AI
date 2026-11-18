@@ -1,5 +1,10 @@
 # VibeCoder CLI — parity, implementation and resume memory
 
+> **Historical review record.** This document captures the CLI work as it was
+> reviewed around v0.3.10–0.3.11. The current shipped version and test counts
+> live in `package.json` and the root `VIBE.md`; treat the notes below as
+> history, not as the current release state.
+
 Status: **agent features verified; full-screen CLI visual pass in progress**
 Last updated: 2026-11-15
 App root: `VibeCoderAI-live-fixed/`

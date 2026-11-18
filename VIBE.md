@@ -50,10 +50,11 @@ same repository. Therefore:
    - run `npm test` from `VibeCoderAI-live-fixed`;
    - commit the intended files and push `master`;
    - create tag `v<version>` on that commit and push the tag.
-3. `.github/workflows/release.yml` runs only on `v*` tags. It runs
-   `npm ci`, `npm test`, then
+3. `.github/workflows/release.yml` runs only on `v*` tags. It validates that the
+   tag matches `package.json`, runs `npm ci`, `npm test`, then
    `electron-builder --win nsis --x64 --publish always`, which publishes the
-   NSIS installer, `latest.yml` and blockmap to the GitHub Release.
+   NSIS installer, `latest.yml`, blockmap and the standalone CLI `.tgz` to the
+   GitHub Release.
 4. The tag and the `package.json` version must match exactly. Never reuse or
    move an already published tag.
 5. Do not commit when tests are red. Leave the working tree uncommitted instead.
@@ -165,9 +166,10 @@ Run from `VibeCoderAI-live-fixed`:
 npm test
 ```
 
-Expected baseline: core 110, agents 11, skills/playbooks 8, harness 23,
-Electron backend smoke 124 IPC handlers, compaction/subagent/harness UI
-regressions, updater 7. The suite must be fully green before a release commit.
+Expected baseline: core 131, agents 11, skills/playbooks 8, harness 23,
+control 14, CLI 16, CLI runtime 23, CLI screen 15, provider 5,
+Electron backend smoke 138 IPC handlers, compaction/subagent/harness UI
+regressions, updater 8. The suite must be fully green before a release commit.
 
 ## 7. Resume after a context-limit reset
 

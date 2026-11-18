@@ -14,7 +14,7 @@
 const fs = require("fs")
 const path = require("path")
 const { homeDir } = require("../util")
-const { redactFileBody } = require("../harness/guard")
+const { redactFileBody, isSecretFile } = require("../harness/guard")
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024 // bigger files are recorded as "skipped"
 const MAX_TURNS = 50 // oldest snapshot turns are dropped beyond this
@@ -42,7 +42,7 @@ function save(home, id, data) {
   fs.mkdirSync(dirOf(home), { recursive: true })
   const f = fileOf(home, id)
   const tmp = f + "." + process.pid + ".tmp"
-  fs.writeFileSync(tmp, JSON.stringify(data), "utf8")
+  fs.writeFileSync(tmp, JSON.stringify(data), { encoding: "utf8", mode: 0o600 })
   fs.renameSync(tmp, f)
 }
 
@@ -82,7 +82,10 @@ function capture(c, abs) {
     try {
       const st = fs.statSync(abs)
       if (!st.isFile()) return
-      entry = st.size > MAX_FILE_BYTES ? { existed: true, skipped: true } : { existed: true, b64: fs.readFileSync(abs).toString("base64") }
+      // A snapshot is a plain file copy. Never persist .env/private-key contents;
+      // undo reports the file as skipped instead of leaking it to disk.
+      if (isSecretFile(abs)) entry = { existed: true, skipped: true, secret: true }
+      else entry = st.size > MAX_FILE_BYTES ? { existed: true, skipped: true } : { existed: true, b64: fs.readFileSync(abs).toString("base64") }
     } catch {
       entry = { existed: false } // the agent is creating this file
     }

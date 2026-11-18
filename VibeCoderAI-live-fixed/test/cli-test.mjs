@@ -196,6 +196,35 @@ test("renderer answers permissions and question forms, and JSON is NDJSON", asyn
   }
 })
 
+test("fallback chain can be added, shown and removed from the CLI", () => {
+  const add = run(["fallback", "add", "openai/gpt-4.1"])
+  assert.equal(add.status, 0, add.stderr)
+  assert.match(add.stdout, /openai\/gpt-4\.1/)
+  const show = run(["fallback"])
+  assert.equal(show.status, 0, show.stderr)
+  assert.match(show.stdout, /\*\s+openai\/gpt-4\.1/)
+  assert.match(show.stdout, /group:fallback/)
+  const remove = run(["fallback", "remove", "1"])
+  assert.equal(remove.status, 0, remove.stderr)
+  assert.match(remove.stdout, /empty/i)
+})
+
+test("trust list shows an approved workspace and revoke removes it", () => {
+  fs.mkdirSync(path.join(work, ".vibe", "plugins"), { recursive: true })
+  fs.writeFileSync(path.join(work, ".vibe", "plugins", "demo.js"), "module.exports = { name: 'demo' }\n")
+  const approve = run(["trust", work, "--yes"])
+  assert.equal(approve.status, 0, approve.stderr)
+  const list = run(["trust", "list"])
+  assert.equal(list.status, 0, list.stderr)
+  assert.ok(list.stdout.includes(work), "trust list should include the approved workspace")
+  const revoke = run(["trust", "revoke", work, "--yes"])
+  assert.equal(revoke.status, 0, revoke.stderr)
+  assert.match(revoke.stdout, /Revoked/)
+  const after = run(["trust", "list"])
+  assert.equal(after.status, 0, after.stderr)
+  assert.match(after.stdout, /No trusted workspaces/)
+})
+
 let failed = 0
 for (const { name, fn } of tests) {
   try {

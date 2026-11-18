@@ -409,6 +409,12 @@ class SubAgentManager {
         if (ev?.type === "tool.start") { agent.liveText = ""; agent.liveReasoning = "" }
         this._event(agent, ev)
       }
+      const parentSession = this.engine.store.get(agent.sessionId)
+      let parentAgentRules = []
+      try {
+        const parentAgent = parentSession?.agent ? this.engine.getAgent(parentSession.agent, parentSession.dir) : null
+        if (parentAgent && Array.isArray(parentAgent.rules)) parentAgentRules = parentAgent.rules
+      } catch {}
       await runLoop({
         session,
         store,
@@ -418,7 +424,7 @@ class SubAgentManager {
         signal: agent.ctl.signal,
         // Reuse the session's actual permission policy, plus the parent's saved
         // "always" approvals. Prompts still surface on the parent session.
-        askPermission: this.engine._ask(session, agent.ctl.signal, (ev) => this._event(agent, ev), this.engine.store.get(agent.sessionId), agent.definition?.rules || []),
+        askPermission: this.engine._ask(session, agent.ctl.signal, (ev) => this._event(agent, ev), this.engine.store.get(agent.sessionId), agent.definition?.rules || [], parentAgentRules),
         agentName: agent.name,
         extraSystem: system,
         maxSteps: agent.maxSteps,

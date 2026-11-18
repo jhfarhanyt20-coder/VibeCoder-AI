@@ -4,10 +4,10 @@
 > প্রথমে এই ফাইল পড়বে, তারপর প্রথম unchecked phase থেকে কাজ শুরু করবে।
 > প্রতিটা phase শেষে "Progress Log" আপডেট করবে।
 
-Last updated: 2026-11-15
+Last updated: 2026-11-18
 App root: `VibeCoderAI-live-fixed`
 Git root: `C:\Users\farhan\Downloads\VibeCoderAI-live-provider-browser-fixed`
-Git HEAD at start: `9d8a18a`
+Git HEAD at start: `41bf358`
 
 ---
 
@@ -32,16 +32,17 @@ additive হবে। ডিফল্টে পুরোনো behaviour বদ�
 
 ## 2. Baseline (এটা আবার check করতে হবে)
 
-শেষ full test run: **2026-11-07 — সব pass**
+শেষ full test run: **2026-11-18 — সব pass**
 
 ```text
 npm test
 shell-output-regression.cjs    PASS (100,000 chars, ordered)
-core-test.mjs                 120 passed
+core-test.mjs                 131 passed
 agents-test.mjs                11 passed
 skills-test.mjs                 8 passed
 harness-test.mjs               23 passed
-electron-backend-smoke.cjs     125 IPC handlers
+cli-test.mjs                   16 passed
+electron-backend-smoke.cjs     138 IPC handlers
 compaction-ui-regression       PASS
 subagent-ui-regression         PASS
 harness-ui-regression          PASS
@@ -72,7 +73,7 @@ file commit করা যাবে না; বিশেষ করে ignored loc
 | Concept | Our name | Location |
 |---|---|---|
 | Whole harness | **VibeCore** | `core/harness/` |
-| Agent loop | **Pulse** | `core/harness/pulse.js` |
+| Agent loop | **Pulse** | `core/agent/loop.js` |
 | Context builder | **Loom** | `core/harness/loom.js` |
 | Default persona | **Pilot** | `.vibe/personas/pilot.md` |
 | Planning persona | **Architect** | `.vibe/personas/architect.md` |
@@ -80,16 +81,16 @@ file commit করা যাবে না; বিশেষ করে ignored loc
 | Coding helper | **Maker** | `.vibe/personas/maker.md` |
 | Review helper | **Inspector** | `.vibe/personas/inspector.md` |
 | Web helper | **Researcher** | `.vibe/personas/researcher.md` |
-| Subagent system | **Crew** | `core/harness/crew.js` |
+| Subagent system | **Crew** | `core/subagents/index.js` |
 | Skills | **Playbooks** | `.vibe/playbooks/<id>/PLAYBOOK.md` |
 | Slash commands | **Recipes** | `.vibe/recipes/*.md` |
 | Permission rules | **Guardrails** | `core/harness/guard.js` |
 | Hard deny rules | **Locks** | `core/harness/locks.js` |
-| Snapshots | **Rewind** | `core/harness/rewind.js` |
-| Compaction | **Weave** | `core/harness/weave.js` |
+| Snapshots | **Rewind** | `core/store/snapshots.js` |
+| Compaction | **Weave** | `core/agent/compaction.js` |
 | Project instructions | **Brief** | `VIBE.md` + `.vibe/briefs/` |
 | MCP | **Connectors** | `core/harness/connectors/` |
-| Plugins | **Extensions** | `core/harness/extensions/` |
+| Plugins | **Extensions** | `core/harness/extensions.js` |
 | Event/audit log | **Trail** | `core/harness/trail.js` |
 
 Project layout:
@@ -256,7 +257,7 @@ are isolated from the run.
 
 **Phase 10 result:** done. See `docs/VIBECORE.md` and
 `docs/VIBECORE_SECURITY.md`. The Electron backend now exposes Trail and complete
-Rewind APIs; 124 IPC handlers pass preload coverage.
+Rewind APIs; 138 IPC handlers pass preload coverage.
 
 ### Phase 11 — Live Shell + Project Diagnostics
 - [x] stream bounded shell output to the UI in real time
@@ -362,6 +363,11 @@ Thin vertical slice first:
 | 2026-11-18 | Desktop providers + Fallback model | cross-provider ordered fallback chain with sticky cursor/wrap, per-model context and compaction, Popular providers stay green in place, AgentRouter Responses + client compatibility, clear content-filter errors, faster provider switching | +5 core tests; 125 core; full suite green |
 | 2026-11-18 | Release | `v0.3.12` Fallback model + provider upgrades | workflow run `44148751825` succeeded; installer `115730294` bytes, blockmap, `latest.yml`, CLI `0.3.12`; installer SHA-512 matched |
 | 2026-11-18 | Repo + website | professional README, screenshots, issue/security/support templates, GitHub description/topics/homepage, website Fallback section + SEO/robots/sitemap | website `721f4ed`; website tests 18/18 |
+| 2026-11-18 | Security hardening | project plugins/extensions/MCP trust gate with per-workspace approval; shell newline/`&`/dynamic-syntax permission checks; grep secret-file guard; frameless window IPC/navigation/webview hardening; provider-key origin separation; IPC sender checks; updater no longer installs silently on quit | core 128; control 14; Electron smoke 136 IPC; full suite green |
+| 2026-11-18 | Secret-at-rest + trust UI | owner-only session/snapshot/trail/shell/audit files; secret files skipped in snapshots; 50 MB shell log cap; attachment allowlist cleared on session switch; origin-scoped browser approvals with one-shot unknown origins; HTTPS-only remote MCP; Settings trusted-workspace list with Revoke; inert settings marked coming soon | core 131; Electron smoke 138 IPC; full suite green |
+| 2026-11-18 | Build toolchain | `electron-builder` 25.1.8 → 26.18.0 (dev/build only; runtime dependencies unchanged); audit has no critical issues; `win dir` and NSIS installer builds verified locally | package/lock updated; nsis `VibeCoderAI-v2-0.3.12.exe` built; signing still skipped (no certificate) |
+| 2026-11-18 | CLI parity | `vibe fallback` (show/add/remove/use/set/clear) and `-m group:fallback`; `vibe trust list` and `vibe trust revoke`; help/chat help and README updated | cli-test 16 (2 new); all 131 core green |
+| 2026-11-18 | Sign in with VibeCoder | sidebar account button opens the website `/connect` page (device code, Allow); encrypted app token; free VibeCoder models kept as the "VibeCoder AI" provider (real model names, FREE and image badges, searchable), refreshed at start and every 30 min; Logout revokes the token on the website; existing `authStatus`/`authConnect`/`authDisconnect` IPC made real (no new IPC names). Sign-in/account on the website (Render); chat and model list via the gateway host (Railway, `electron/vibecoder-account.cjs` `DEFAULT_GATEWAY_URL`), because Render's edge firewall blocks some coding-agent request bodies | new `test/vibecoder-account-test.cjs` 8/8; Electron smoke 138 IPC; full suite green; live chat verified through the gateway |
 
 ---
 

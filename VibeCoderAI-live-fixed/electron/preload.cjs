@@ -12,6 +12,12 @@ const api = {
   // backend info
   info: call("info"),
   setMode: call("setMode"),
+  windowTheme: call("windowTheme"),
+  windowMinimize: call("windowMinimize"),
+  windowMaximize: call("windowMaximize"),
+  windowClose: call("windowClose"),
+  trustList: call("trustList"),
+  trustRevoke: call("trustRevoke"),
 
   // usage
   getAllUsage: call("getAllUsage"),

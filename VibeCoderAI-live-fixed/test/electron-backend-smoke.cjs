@@ -310,7 +310,7 @@ async function main() {
   const kiloSaved = kiloCatalog.custom.find((item) => item.id === "kilo2")
   assert.deepEqual(kiloSaved.headers, { "X-Tenant-ID": "team-a" })
   assert.deepEqual(kiloSaved.body, { metadata: { application: "VibeCoderAI" } })
-  const protectedSave = await handlers.get("vibe:providerSave")({}, {
+  const protectedSave = await handlers.get("vibe:providerSave")({ sender: win.webContents }, {
     id: "unsafe-headers",
     name: "Unsafe headers",
     baseURL: "http://127.0.0.1:9/v1",
@@ -320,6 +320,9 @@ async function main() {
   })
   assert.equal(protectedSave.ok, false)
   assert.match(protectedSave.error, /protected credential header/i)
+  const untrustedInfo = await handlers.get("vibe:info")({ sender: {} }, {})
+  assert.equal(untrustedInfo.ok, false, "a foreign renderer must not reach privileged IPC")
+  assert.match(untrustedInfo.error, /Untrusted request/i)
   assert.ok(!JSON.stringify(JSON.parse(fs.readFileSync(path.join(tempHome, "profiles.json"), "utf8"))).includes("should-not-be-stored"), "custom header credentials must never reach profiles.json")
 
   // Compaction controls are backed by the same config the core reads. The UI

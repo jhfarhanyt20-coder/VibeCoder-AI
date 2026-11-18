@@ -15,12 +15,15 @@ const { createVibe } = require("../sdk")
 const { createServer } = require("../cli/server")
 const { convertMessages } = require("./messages.cjs")
 const updater = require("./updater.cjs")
+const { setWindowTheme } = require("./window-theme.cjs")
 const { homeDir } = require("../core/util")
 const profileStore = require("../core/llm/profiles")
 const groupStore = require("../core/llm/groups")
 const secrets = require("../core/store/secrets")
 const providerMeta = require("../core/llm/provider-meta")
+const { createVibecoderAccount, PROFILE_ID: VIBECODER_PROFILE_ID } = require("./vibecoder-account.cjs")
 const mcp = require("../core/mcp")
+const trust = require("../core/harness/trust")
 const plugins = require("../core/plugins")
 const skills = require("../core/skills")
 const catalog = require("../core/extensions/catalog")
@@ -45,6 +48,7 @@ let browserResultRegistered = false
 let appUpdateRegistered = false
 let providerWatcher = null
 let providerWatchTimer = null
+let vibecoderSyncOff = null
 let providerWatcherStarted = false
 let currentDirectory = process.cwd()
 let activeSessionId = null
@@ -116,6 +120,40 @@ function safeResolveDirectory(value) {
   const target = path.resolve(String(value || process.cwd()))
   if (!fs.existsSync(target) || !fs.statSync(target).isDirectory()) throw new Error(`Directory does not exist: ${target}`)
   return target
+}
+
+// Project-scoped extensions/plugins/MCP servers are executable. Nothing from a
+// new workspace is loaded until the user approves the exact files once.
+const declinedTrust = new Set()
+async function ensureProjectTrust(directory) {
+  if (!directory) return true
+  if (trust.isProjectTrusted(directory, home)) return true
+  const signature = trust.projectSignature(directory)
+  if (!signature) return true
+  const key = `${path.resolve(directory)}|${signature}`
+  if (declinedTrust.has(key)) return false
+  const files = trust.projectFiles(directory)
+  const relative = files.map((file) => path.relative(directory, file).replace(/\\/g, "/"))
+  const options = {
+    type: "warning",
+    buttons: ["Trust and load project tools", "Keep disabled"],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+    title: "Trust this project?",
+    message: "This workspace contains executable extensions, plugins or MCP servers.",
+    detail: `${relative.slice(0, 12).join("\n")}${relative.length > 12 ? `\n…and ${relative.length - 12} more` : ""}\n\nThese files can run code with your Windows account. Only trust a project whose files you have reviewed. Global plugins stay enabled either way.`,
+  }
+  const result = win && !win.isDestroyed()
+    ? await dialog.showMessageBox(win, options)
+    : await dialog.showMessageBox(options)
+  if (result.response === 0) {
+    trust.trustProject(directory, home)
+    declinedTrust.delete(key)
+    return true
+  }
+  declinedTrust.add(key)
+  return false
 }
 function slug(value) {
   return String(value || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60)
@@ -265,6 +303,9 @@ function modelRows(profileList = engine.listProfiles()) {
         image: !!(m.image || p.image),
         hasKey,
         isBuiltin,
+        // VibeCoder account models carry a Free flag and capability tags.
+        ...(m.free ? { free: true } : {}),
+        ...(Array.isArray(m.tags) && m.tags.length ? { tags: m.tags.map(String).slice(0, 8) } : {}),
       }
       ;(isBuiltin ? configuredBuiltins : custom).push(row)
     }
@@ -623,6 +664,34 @@ function deleteCustomProfile(id) {
   return { removed: true }
 }
 
+// "Sign in with VibeCoder": device-code sign-in, an encrypted app token and the
+// free models kept as the "VibeCoder AI" provider profile. See vibecoder-account.cjs.
+const vibecoderAccount = createVibecoderAccount({
+  deviceName: `VibeCoder on ${os.hostname()}`.slice(0, 60),
+  openExternal: (url) => shell.openExternal(url),
+  emit: (type, data) => emitUI(type, null, data),
+  keys: {
+    get: () => { try { return profileStore.getKey({ id: VIBECODER_PROFILE_ID }, home) } catch { return "" } },
+    set: (value) => engine.setKey(VIBECODER_PROFILE_ID, value),
+    clear: () => engine.setKey(VIBECODER_PROFILE_ID, ""),
+  },
+  profiles: {
+    exists: () => engine.listProfiles().some((p) => p.id === VIBECODER_PROFILE_ID),
+    upsert: (profile) => {
+      const current = engine.listProfiles().find((p) => p.id === VIBECODER_PROFILE_ID)
+      // Keep the user's own choices (enabled/disabled, chosen model) across refreshes.
+      const keep = current ? { disabled: !!current.disabled, ...(profile.models.some((m) => m.id === current.model) ? { model: current.model } : {}) } : {}
+      engine.upsertProfile({ ...profile, ...keep })
+      scheduleProviderRefresh("vibecoder-models")
+    },
+    remove: () => {
+      if (readJson(customProfilesFile, []).some((p) => p.id === VIBECODER_PROFILE_ID)) deleteCustomProfile(VIBECODER_PROFILE_ID)
+      scheduleProviderRefresh("vibecoder-signed-out")
+    },
+  },
+})
+
+
 function readAttachmentData(file) {
   const full = path.resolve(String(file || ""))
   if (!pickedAttachmentPaths.has(full)) throw new Error("This file was not selected in the attachment picker")
@@ -641,11 +710,17 @@ function readAttachmentData(file) {
 function promptAttachments(input = []) {
   const files = []
   const text = []
+  const addInlineImage = (mime, data) => {
+    if (!/^image\/(png|jpeg|webp|gif|bmp)$/i.test(String(mime || ""))) throw new Error("Unsupported inline image type")
+    const base64 = String(data || "")
+    if (base64.length > 14 * 1024 * 1024) throw new Error("Inline images must be 10 MB or smaller")
+    files.push({ mime, data: base64 })
+  }
   for (const file of Array.isArray(input) ? input : []) {
     if (!file) continue
     const match = /^data:([^;,]+);base64,(.*)$/s.exec(String(file.uri || file.dataUrl || ""))
-    if (match && match[1].startsWith("image/")) files.push({ mime: match[1], data: match[2] })
-    else if ((file.data || file.base64) && String(file.mime || "").startsWith("image/")) files.push({ mime: file.mime, data: file.data || file.base64 })
+    if (match && match[1].startsWith("image/")) addInlineImage(match[1], match[2])
+    else if ((file.data || file.base64) && String(file.mime || "").startsWith("image/")) addInlineImage(file.mime, file.data || file.base64)
     else {
       let filePath = file.path
       if (!filePath && String(file.uri || "").startsWith("file:")) filePath = require("node:url").fileURLToPath(file.uri)
@@ -667,6 +742,31 @@ const handlers = {
     if (id && id.startsWith("group/")) return { mode: "sdk", model: id, home }
     return { mode: "sdk", model: `${id || ""}/${selectedModel?.split("/").slice(1).join("/") || p?.model || ""}`, home }
   },
+  windowTheme: async (a = {}) => {
+    if (!win || win.isDestroyed()) return { applied: false }
+    setWindowTheme(win, a)
+    return { applied: true }
+  },
+  trustList: async () => ({ projects: trust.trustedProjects(home) }),
+  trustRevoke: async (a = {}) => {
+    const directory = safeResolveDirectory(a.directory || a.dir || currentDirectory)
+    return trust.revokeProject(directory, home)
+  },
+  windowMinimize: async () => {
+    if (win && !win.isDestroyed()) win.minimize()
+    return { minimized: true }
+  },
+  windowMaximize: async () => {
+    if (!win || win.isDestroyed()) return { maximized: false }
+    const maximized = !win.isMaximized()
+    if (maximized) win.maximize()
+    else win.unmaximize()
+    return { maximized }
+  },
+  windowClose: async () => {
+    if (win && !win.isDestroyed()) win.close()
+    return { closed: true }
+  },
   setMode: async ({ mode } = {}) => { if (mode && mode !== "sdk") throw new Error("This build runs the embedded Vibe SDK engine only."); return { mode: "sdk" } },
   getAllUsage: async (a = {}) => {
     const id = idOf(a)
@@ -678,16 +778,17 @@ const handlers = {
   listSessions: async (a = {}) => engine.listSessions({ dir: a.all ? undefined : (a.directory || a.dir || currentDirectory) }),
   createSession: async (a = {}) => {
     const directory = safeResolveDirectory(a.directory || a.dir || currentDirectory)
+    await ensureProjectTrust(directory)
     const profile = a.profile || selectedProfileId()
     if (!profile) throw new Error("No provider is configured. Add a provider in Settings → Models first.")
     const s = engine.createSession({ dir: directory, profile, title: a.title })
-    activeSessionId = s.id; currentDirectory = directory; persistUIState()
+    activeSessionId = s.id; currentDirectory = directory; pickedAttachmentPaths.clear(); persistUIState()
     emitUI("session.created", s.id, { session: { id: s.id, title: s.title, directory } })
     return s
   },
-  getMessages: async (a = {}) => { const id = idOf(a); activeSessionId = id; return internalMessagesToUI(requireSession(id)) },
+  getMessages: async (a = {}) => { const id = idOf(a); if (activeSessionId !== id) pickedAttachmentPaths.clear(); activeSessionId = id; return internalMessagesToUI(requireSession(id)) },
   renameSession: async (a = {}) => { const s = engine.renameSession(idOf(a), a.title || a.name || "New session"); emitUI("session.renamed", s.id, { session: { id: s.id, title: s.title } }); return s },
-  deleteSession: async (a = {}) => { const id = idOf(a); engine.removeSession(id); if (activeSessionId === id) activeSessionId = null; emitUI("session.deleted", id, { sessionID: id }); return { deleted: true } },
+  deleteSession: async (a = {}) => { const id = idOf(a); engine.removeSession(id); if (activeSessionId === id) activeSessionId = null; pickedAttachmentPaths.clear(); emitUI("session.deleted", id, { sessionID: id }); return { deleted: true } },
   revertSession: async (a = {}) => engine.revertSession(idOf(a), a.messageID || a.messageId),
   undoSession: async (a = {}) => engine.undoSession(idOf(a), a.messageID || a.messageId),
   listSnapshots: async (a = {}) => engine.listSnapshots(idOf(a)),
@@ -701,6 +802,7 @@ const handlers = {
     const id = idOf(a); requireSession(id)
     if (engine.isBusy(id)) throw new Error("Session is already running.")
     const session = requireSession(id)
+    await ensureProjectTrust(session.dir)
     if (a.pendingID && session.messages.some((message) => message.pendingID === a.pendingID)) {
       emitUI("session.prompts.attached", id, { ids: [a.pendingID] })
       return { attached: true, sessionID: id }
@@ -769,7 +871,7 @@ const handlers = {
     s.rules = permissions.map((p) => ({ tool: String(p.action || "*"), pattern: String(p.resource || "*"), action: ["allow", "ask", "deny"].includes(String(p.effect)) ? String(p.effect) : "ask", exact: false }))
     engine.store.save(s); return { updated: s.rules.length }
   },
-  listPermissionRequests: async () => [...engine.pending.entries()].map(([id, p]) => ({ id, permissionId: id, sessionID: p.session?.parentId || p.session?.id, subagentSessionID: p.session?.parentId ? p.session.id : undefined, action: p.tool, tool: p.tool, resource: p.subject, resources: p.subject ? [p.subject] : [] })),
+  listPermissionRequests: async () => [...engine.pending.entries()].map(([id, p]) => ({ id, permissionId: id, sessionID: p.session?.parentId || p.session?.id, subagentSessionID: p.session?.parentId ? p.session.id : undefined, action: p.tool, tool: p.tool, resource: p.subject, resources: p.subject ? [p.subject] : [], neverPersist: !!p.neverPersist })),
   replyPermission: async (a = {}) => { const id = a.requestID || a.permissionId || a.id; const decision = a.decision === "reject" ? "deny" : a.decision; if (!engine.replyPermission(id, decision)) throw new Error("Permission request is no longer pending."); emitUI("session.permissions", a.sessionID, { resolved: true, requestID: id, decision }); return { replied: true } },
   listForms: async (a = {}) => engine.listForms(a.sessionID || a.sessionId || null),
   replyForm: async (a = {}) => {
@@ -892,6 +994,9 @@ const handlers = {
     if (!model) throw new Error("Add at least one model before saving this provider")
     const headers = providerHeaders(a.headers)
     const extraBody = providerBody(a.body)
+    let parsedBase
+    try { parsedBase = new URL(String(a.baseURL).trim()) } catch { throw new Error("Provider API base URL is not a valid URL") }
+    if (!/^https?:$/.test(parsedBase.protocol)) throw new Error("Provider API base URL must use http or https")
     const profile = { ...(current || {}), id, label: name, name, baseURL: String(a.baseURL).trim(), format: profileFormat(a.apiFormat), model, models, contextLimit: models[0]?.context || Number(a.contextLimit) || 128000, maxOutput: models[0]?.output || Number(a.maxOutput) || 8192, scope: a.scope === "project" ? "project" : "global", disabled: !!a.disabled, noAuth: false, headers, quirks: { ...(current?.quirks || {}), extraBody } }
     const result = engine.upsertProfile(profile)
     if (a.apiKey) engine.setKey(id, String(a.apiKey))
@@ -912,7 +1017,13 @@ const handlers = {
     const format = profileApiFormat(profileFormat(a.apiFormat))
     let key = String(a.apiKey || "")
     let savedHeaders = {}
-    if (a.id) { const p = profileDetails(a.id); if (!key) key = p.noAuth ? "" : profileStore.getKey(p, home); savedHeaders = p.headers || {} }
+    let saved = null
+    if (a.id) { saved = profileDetails(a.id); savedHeaders = saved.headers || {} }
+    const sameEndpoint = saved && String(baseURL).replace(/\/+$/, "") === String(saved.baseURL || "").replace(/\/+$/, "")
+    if (!key && saved) {
+      if (!sameEndpoint) throw new Error("Enter the API key to test a different base URL. The saved key is only sent to its configured endpoint.")
+      key = saved.noAuth ? "" : profileStore.getKey(saved, home)
+    }
     const models = await providerMeta.listRemoteModels({ baseURL, apiKey: key, format, headers: providerHeaders(a.headers || savedHeaders) })
     return { models: models.slice(0, 200), count: models.length }
   },
@@ -920,7 +1031,13 @@ const handlers = {
     const format = profileApiFormat(profileFormat(a.apiFormat))
     let key = String(a.apiKey || "")
     let savedHeaders = {}
-    if (a.id) { const p = profileDetails(a.id); if (!key) key = p.noAuth ? "" : profileStore.getKey(p, home); savedHeaders = p.headers || {} }
+    let saved = null
+    if (a.id) { saved = profileDetails(a.id); savedHeaders = saved.headers || {} }
+    const sameEndpoint = saved && String(a.baseURL || "").replace(/\/+$/, "") === String(saved.baseURL || "").replace(/\/+$/, "")
+    if (!key && saved) {
+      if (!sameEndpoint) throw new Error("Enter the API key to test a different base URL. The saved key is only sent to its configured endpoint.")
+      key = saved.noAuth ? "" : profileStore.getKey(saved, home)
+    }
     const model = await providerMeta.lookupModel({ modelId: a.modelId, baseURL: a.baseURL, apiKey: key, format, headers: providerHeaders(a.headers || savedHeaders) })
     return { ...model, model: model.found ? { id: a.modelId, context: model.context, output: model.output, image: model.image, source: model.source } : undefined }
   },
@@ -957,12 +1074,12 @@ const handlers = {
 
   cwd: async () => currentDirectory,
   getDirectory: async () => ({ directory: currentDirectory, name: path.basename(currentDirectory) }),
-  setDirectory: async (a = {}) => { currentDirectory = safeResolveDirectory(typeof a === "string" ? a : a.directory || a.dir); persistUIState(); return { directory: currentDirectory, name: path.basename(currentDirectory) } },
+  setDirectory: async (a = {}) => { currentDirectory = safeResolveDirectory(typeof a === "string" ? a : a.directory || a.dir); pickedAttachmentPaths.clear(); persistUIState(); return { directory: currentDirectory, name: path.basename(currentDirectory) } },
   gitBranch: async (a = {}) => { const directory = safeResolveDirectory(a.directory || currentDirectory); try { const { stdout } = await execFileAsync("git", ["branch", "--show-current"], { cwd: directory, windowsHide: true, timeout: 5000 }); return { branch: stdout.trim() || null } } catch { return { branch: null } } },
   pickProject: async () => {
     const result = await dialog.showOpenDialog(win, { title: "Choose project folder", properties: ["openDirectory", "createDirectory"] })
     if (result.canceled || !result.filePaths?.[0]) return { canceled: true }
-    const directory = safeResolveDirectory(result.filePaths[0]); currentDirectory = directory; persistUIState()
+    const directory = safeResolveDirectory(result.filePaths[0]); currentDirectory = directory; pickedAttachmentPaths.clear(); persistUIState()
     return { directory, name: path.basename(directory), branch: null }
   },
   pickAttachments: async () => {
@@ -1046,9 +1163,9 @@ const handlers = {
   cliInfo: async () => ({ installed: true, version: require("../package.json").version, path: path.join(__dirname, "..", "cli", "vibe.js"), kind: "vibe" }),
   cliInstallTested: async () => ({ installed: true, message: "The bundled Vibe CLI is available in this project." }),
   cliUpdateCheck: async () => ({ available: false, checked: true, message: "Automatic CLI updates are not configured in this build." }),
-  authStatus: async () => ({ connected: false, email: null, provider: null }),
-  authConnect: async () => { throw new Error("Account login is not configured for this standalone SDK build. Configure a provider in Settings → Models.") },
-  authDisconnect: async () => ({ disconnected: true }),
+  authStatus: async (a = {}) => vibecoderAccount.status({ fresh: !!a.fresh }),
+  authConnect: async () => vibecoderAccount.connect(),
+  authDisconnect: async () => vibecoderAccount.disconnect(),
   upgradeInfo: async () => ({ available: false, message: "In-app upgrades are not configured in this build." }),
   startUpgrade: async () => { throw new Error("In-app upgrades are not configured in this build. Install a verified release manually.") },
   ownerScan: async (a = {}) => ({ found: false, text: String(a.text || ""), message: "Owner verification is not configured in this standalone build." }),
@@ -1085,7 +1202,7 @@ const handlers = {
 }
 
 const preloadNames = [
-  "info","setMode","getAllUsage","clearSessionRules","browserCreateTab","browserCloseTab","browserListTabs","browserCurrent","browserNavigate","browserScreenshot","browserEvaluate","browserSnapshot","browserClick","browserFill","browserPress","browserScroll",
+  "info","setMode","windowTheme","windowMinimize","windowMaximize","windowClose","trustList","trustRevoke","getAllUsage","clearSessionRules","browserCreateTab","browserCloseTab","browserListTabs","browserCurrent","browserNavigate","browserScreenshot","browserEvaluate","browserSnapshot","browserClick","browserFill","browserPress","browserScroll",
   "listSessions","createSession","getMessages","renameSession","deleteSession","revertSession","undoSession","listSnapshots","listStepSnapshots","previewSnapshot","undoStepSession","redoSession","listRedo","getTrail","prompt","queuePrompt","resumeRun","interrupt","compactSession","getCompactionSettings","setCompactionSettings",
   "listShells","shellOutput","shellInput","backgroundSession","backgroundShell","cancelShell","setPermissions","listPermissionRequests","replyPermission","listForms","replyForm","cancelForm",
   "listModels","listAllModels","listModelLimits","setModel","providerCatalog","providerList","providerSave","providerRemove","providerDraftSave","providerDraftLoad","providerDraftRemove","providerDisabled","providerKey","providerModels","providerModel","providerMeta","fallbackGet","fallbackSave","fallbackReset",
@@ -1099,6 +1216,12 @@ function initBackend(targetWin, { port = Number(process.env.VIBE_SERVE_PORT || 4
   if (!registered) {
     registered = true
     for (const name of preloadNames) ipcMain.handle(`vibe:${name}`, async (event, arg) => {
+      // Every privileged call comes from the app's own top-level document.
+      // Webview guests, subframes and future windows are not trusted.
+      const frameOk = !event?.senderFrame || event.senderFrame === event.sender?.mainFrame
+      if (!win || event?.sender !== win.webContents || !frameOk) {
+        return { ok: false, error: name.startsWith("providerDraft") ? "Untrusted provider draft request" : "Untrusted request" }
+      }
       const fn = handlers[name]
       if (!fn) return { ok: false, error: `The operation "${name}" is not implemented in this build.` }
       try {
@@ -1144,6 +1267,8 @@ function initBackend(targetWin, { port = Number(process.env.VIBE_SERVE_PORT || 4
     win.on("blur", () => emitUI("app.focus", null, { focused: false }))
   }
   startProviderWatcher()
+  // Refresh the VibeCoder free models now and every 30 minutes while signed in.
+  if (!vibecoderSyncOff) vibecoderSyncOff = vibecoderAccount.startAutoSync()
   if (!eventOff) eventOff = engine.on(onEngineEvent)
   if (serve && !server) {
     try {

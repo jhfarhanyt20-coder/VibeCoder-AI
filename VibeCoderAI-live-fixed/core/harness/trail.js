@@ -86,7 +86,8 @@ class Trail {
       this._rotate(file)
       fs.mkdirSync(this.root, { recursive: true })
       const record = { ...redact(event), time: event.time || Date.now() }
-      fs.appendFileSync(file, JSON.stringify(record) + "\n", "utf8")
+      fs.appendFileSync(file, JSON.stringify(record) + "\n", { encoding: "utf8", mode: 0o600 })
+      try { fs.chmodSync(file, 0o600) } catch {}
       return true
     } catch {
       return false

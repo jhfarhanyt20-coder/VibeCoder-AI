@@ -46,6 +46,49 @@ Out of scope:
 - issues that require an already-compromised Windows account,
 - provider API keys that were pasted into a public issue or chat.
 
+## Project code trust
+
+Global plugins and extensions in `~/.vibe` are installed by you and load as
+before. Project-scoped executable content is different: `<workspace>/.vibe/extensions/*.js`,
+`<workspace>/.vibe/plugins/*.js` and `<workspace>/.vibe/mcp.json` can run code
+or spawn commands.
+
+VibeCoder AI therefore asks once per workspace before loading them. The desktop
+shows a **Trust and load project tools** dialog; the CLI exposes:
+
+```bash
+vibe trust            # review and approve the current workspace
+vibe trust <folder>   # review another workspace
+vibe trust list       # show approved workspaces and signature status
+vibe trust revoke [folder]
+```
+
+Approval is bound to a SHA-256 signature of the exact executable files in
+`~/.vibe/trust.json`. Editing any of them asks again. Declining keeps only the
+normal chat/tools available; global plugins stay enabled. Never approve a
+workspace you have not reviewed.
+
+## Secret handling on disk
+
+- Session, snapshot, trail, shell-output and command-audit files are written with
+  owner-only permissions (`0600`, plus `chmod` on POSIX): `~/.vibe/sessions`,
+  `~/.vibe/snapshots`, `~/.vibe/trail`, `~/.vibe/shell` and `~/.vibe/audit.log`.
+- Snapshots never store the contents of `.env`-style secret files. Undo reports
+  them as skipped instead of keeping a copy.
+- Shell output logs stop at 50 MB per job, so a runaway command cannot fill the
+  disk. Command lines in the audit log are redacted.
+
+## Browser and connector approvals
+
+- Browser approvals are scoped to the page origin (`click example.com`), not to a
+  blanket action. When the origin is not known yet the approval is one-shot and
+  the **Always allow** button is not offered.
+- `browser.evaluate` is always one-shot because it runs arbitrary page JavaScript.
+- Remote MCP servers must use HTTPS. Plain HTTP is accepted only for loopback
+  development.
+- Settings → General lists every trusted workspace with its signature status and
+  a **Revoke** button; editing the workspace asks again.
+
 ## Project rules
 
 - No secrets are committed to this repository.

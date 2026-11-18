@@ -20,7 +20,7 @@ feed. This repository must stay public for that to work.
 
 ## Before opening an issue
 
-- Confirm the version in **Settings → General** (or `vibe --version`).
+- Confirm the version in **Settings → App Updates → Installed version** (or `vibe --version`).
 - Try **Model settings → provider → Fetch models** to confirm the base URL and
   key.
 - Check whether the same prompt works with another provider. Some gateways

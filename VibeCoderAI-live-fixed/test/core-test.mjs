@@ -72,6 +72,15 @@ async function setup(handler, profileExtra = {}) {
 }
 
 // ---------- tests ----------
+test("shell permission splitter treats newlines, & and pipes as separate statements", () => {
+  const { splitCommand } = require("../core/agent/loop")
+  assert.deepEqual(splitCommand("npm test\necho hacked"), ["npm test", "echo hacked"])
+  assert.deepEqual(splitCommand("npm test\r\necho hacked"), ["npm test", "echo hacked"])
+  assert.deepEqual(splitCommand("cd app & npm test"), ["cd app", "npm test"])
+  assert.deepEqual(splitCommand("npm test 2>&1"), ["npm test 2>&1"])
+  assert.deepEqual(splitCommand('echo "a;b" && npm test'), ['echo "a;b"', "npm test"])
+})
+
 test("SSE parser handles chunk splits and CRLF", async () => {
   const parts = ["data: {\"a\"", ":1}\n\nevent: x\r\ndata: two\r\n\r\n", ": comment\n\ndata: tail\n\n"]
   const got = await collect(parseSSE((async function* () { for (const p of parts) yield Buffer.from(p) })()))
@@ -963,11 +972,92 @@ if(m.method==="initialize")out({id:m.id,result:{protocolVersion:"2024-11-05",cap
 else if(m.method==="tools/list")out({id:m.id,result:{tools:[{name:"ping",description:"never answers",inputSchema:{type:"object",properties:{}}}]}});
 /* tools/call: never answered on purpose */}});`
 
+test("grep cannot read .env secrets without the read permission", async () => {
+  const dir = tmp()
+  fs.writeFileSync(path.join(dir, ".env"), "API_KEY=super-secret-value\n")
+  fs.writeFileSync(path.join(dir, "app.js"), "const API_KEY = 'public-code-value'\n")
+  const grep = require("../core/tools").byName("grep")
+  const denied = await grep.run({ pattern: "API_KEY", path: "." }, { cwd: dir, askPermission: async () => false })
+  assert.doesNotMatch(denied, /super-secret-value/)
+  assert.match(denied, /public-code-value/)
+  const allowed = await grep.run({ pattern: "API_KEY", path: "." }, { cwd: dir, askPermission: async () => true })
+  assert.match(allowed, /super-secret-value/)
+})
+
+test("project plugins and MCP servers stay disabled until the workspace is trusted", () => {
+  const home = tmp()
+  const dir = tmp()
+  fs.mkdirSync(path.join(dir, ".vibe", "plugins"), { recursive: true })
+  fs.writeFileSync(path.join(dir, ".vibe", "plugins", "demo.js"), "module.exports = { name: 'demo', run: () => 'ok' }\n")
+  const plugins = require("../core/plugins")
+  const mcp = require("../core/mcp")
+  const trust = require("../core/harness/trust")
+  assert.equal(plugins.listPlugins(dir, home).some((row) => row.scope === "project"), false)
+  trust.trustProject(dir, home)
+  assert.equal(plugins.listPlugins(dir, home).some((row) => row.scope === "project"), true)
+
+  fs.writeFileSync(path.join(dir, ".vibe", "mcp.json"), JSON.stringify({ demo: { type: "local", command: ["node", "-e", "process.exit(0)"] } }))
+  assert.equal(mcp.listServers(dir, home).some((row) => row.scope === "project"), false, "a changed workspace asks again")
+  trust.trustProject(dir, home)
+  assert.equal(mcp.listServers(dir, home).some((row) => row.scope === "project"), true)
+})
+
+test("trusted workspace list reports changed signatures and revoke removes access", () => {
+  const home = tmp()
+  const dir = tmp()
+  fs.mkdirSync(path.join(dir, ".vibe", "plugins"), { recursive: true })
+  const plugin = path.join(dir, ".vibe", "plugins", "demo.js")
+  fs.writeFileSync(plugin, "module.exports = { name: 'demo' }\n")
+  const trust = require("../core/harness/trust")
+  trust.trustProject(dir, home)
+  const rows = trust.trustedProjects(home)
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].directory, path.resolve(dir))
+  assert.equal(rows[0].current, true)
+  fs.writeFileSync(plugin, "module.exports = { name: 'changed' }\n")
+  assert.equal(trust.trustedProjects(home)[0].current, false)
+  assert.equal(trust.revokeProject(dir, home).removed, true)
+  assert.equal(trust.trustedProjects(home).length, 0)
+  assert.equal(trust.isProjectTrusted(dir, home), false)
+})
+
+test("snapshots never persist the contents of .env or other secret files", () => {
+  const snapshots = require("../core/store/snapshots")
+  const home = tmp(), d = tmp()
+  const env = path.join(d, ".env")
+  fs.writeFileSync(env, "API_KEY=super-secret-value\n")
+  const session = { id: "ses_cccc", turnSeq: 3 }
+  const engine = { home, store: { get: () => session } }
+  snapshots.capture({ session, engine }, env)
+  const storedText = fs.readFileSync(path.join(home, "snapshots", "ses_cccc.json"), "utf8")
+  assert.doesNotMatch(storedText, /super-secret-value/)
+  assert.doesNotMatch(storedText, new RegExp(Buffer.from("API_KEY=super-secret-value").toString("base64")))
+  assert.match(storedText, /"secret":true/)
+})
+
+test("browser permissions are scoped to the page origin and unknown origins are one-shot", async () => {
+  const { createBrowserTools } = require("../core/tools/browser")
+  const tools = createBrowserTools()
+  await tools.openTab.run(
+    { url: "https://example.com/start" },
+    { engine: { browserCreateTab: async () => ({ ok: true, data: { tabID: "tab_1", url: "https://example.com/start" } }) } },
+  )
+  assert.match(tools.click.perm({ tabID: "tab_1" }).subject, /^click example\.com$/)
+  assert.equal(tools.fill.perm({ tabID: "tab_1" }).neverPersist, undefined)
+  // A tab whose host was never seen falls back to the last known origin.
+  assert.equal(tools.click.perm({ tabID: "tab_missing" }).subject, "click example.com")
+  const nav = tools.navigate.perm({ url: "https://docs.example.org/a" })
+  assert.equal(nav.subject, "navigate docs.example.org")
+  assert.equal(nav.neverPersist, undefined)
+  assert.equal(tools.navigate.perm({ url: "not a url" }).neverPersist, true)
+})
+
 test("a hung MCP server does not block the model request, and Stop frees the session", async () => {
-  const { m, vibe, s, dir } = await setup(() => ({ chunks: [...chat.text("answer despite MCP"), ...chat.end(3, 2)] }))
+  const { m, vibe, s, dir, home } = await setup(() => ({ chunks: [...chat.text("answer despite MCP"), ...chat.end(3, 2)] }))
   fs.mkdirSync(path.join(dir, ".vibe"), { recursive: true })
   // a server that starts but never completes the handshake
   fs.writeFileSync(path.join(dir, ".vibe", "mcp.json"), JSON.stringify({ stuck: { type: "local", command: ["node", "-e", "setInterval(()=>{},1000)"] } }))
+  require("../core/harness/trust").trustProject(dir, home)
   const t0 = Date.now()
   const evs = await runEvents(vibe, s.id)
   const took = Date.now() - t0
@@ -985,6 +1075,7 @@ test("a tool call that never returns: Stop frees the session fast and the next m
   fs.writeFileSync(srv, MCP_SERVER)
   fs.mkdirSync(path.join(dir, ".vibe"), { recursive: true })
   fs.writeFileSync(path.join(dir, ".vibe", "mcp.json"), JSON.stringify({ hang: { type: "local", command: ["node", srv] } }))
+  require("../core/harness/trust").trustProject(dir, home)
   const first = []
   const it = vibe.session.prompt(s.id, "call it")
   const drain = (async () => {

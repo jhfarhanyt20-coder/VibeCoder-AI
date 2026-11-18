@@ -6,7 +6,7 @@ const { THEMES, configureTheme, safeText, providerName } = require("./theme")
 const settings = require("./settings")
 const { publicData } = require("../core/control")
 
-const COMMANDS = ["help", "chat", "run", "resume", "serve", "attach", "models", "provider", "profile", "auth", "sessions", "session", "compact", "undo", "redo", "steps", "diff", "usage", "skills", "playbooks", "agents", "recipes", "mcp", "plugins", "extensions", "tools", "doctor", "memory", "config", "access", "permissions", "locks", "forms", "crew", "shells", "shell", "trail", "todos", "browser", "marketplace", "registry", "theme", "init", "completion"]
+const COMMANDS = ["help", "chat", "run", "resume", "serve", "attach", "trust", "models", "provider", "fallback", "profile", "auth", "sessions", "session", "compact", "undo", "redo", "steps", "diff", "usage", "skills", "playbooks", "agents", "recipes", "mcp", "plugins", "extensions", "tools", "doctor", "memory", "config", "access", "permissions", "locks", "forms", "crew", "shells", "shell", "trail", "todos", "browser", "marketplace", "registry", "theme", "init", "completion"]
 const HELP = `vibe - VibeCoder coding agent CLI
 
   vibe / vibe chat             interactive agent, pickers and multiline composer
@@ -16,6 +16,9 @@ const HELP = `vibe - VibeCoder coding agent CLI
   vibe serve [--port 4096]      authenticated local HTTP + SSE host
 
   vibe models / provider       catalog, guided add/remove, key test and models
+  vibe fallback                ordered failover chain (add/remove/use/set/clear)
+  vibe trust [dir]             approve or review project extensions/plugins/MCP
+                               subcommands: list, revoke [dir]
   vibe profile / auth          advanced profile JSON and secure key commands
   vibe sessions / session      list, show, rename, export/import, remove
   vibe skills / playbooks      list/show/install/remove, GitHub import
@@ -37,7 +40,7 @@ const HELP = `vibe - VibeCoder coding agent CLI
 
 Options
   -C, --dir <folder>   -s, --session <id>   -c, --continue
-  -m, --model <profile or provider/model>  -a, --agent <id>
+  -m, --model <profile or provider/model>  (or group:fallback)  -a, --agent <id>
   --attach            --url <loopback URL>  (token from $VIBE_TOKEN)
   --yes               approve prompts, never bypass Guardrails/Locks
   --access full|ask   save the CLI's permission mode across restarts
@@ -117,6 +120,37 @@ async function runCommand(ctx, argv) {
     if (!input || !process.stdin.isTTY) throw new Error(message + " Re-run with --yes to confirm.")
     const answer = await input.read(message + " [y/N] ", { interrupt: true })
     return /^(y|yes)$/i.test(String(answer || "").trim())
+  }
+  if (name === "trust") {
+    const trust = require("../core/harness/trust")
+    const home = ctx.home || require("../core/util").homeDir()
+    if (sub === "list" || sub === "ls") {
+      const rows = trust.trustedProjects(home)
+      show(rows, (list) => {
+        if (!list.length) return log(c.dim("No trusted workspaces yet. Approve one with: vibe trust <dir>"))
+        log(table(list.map((r) => [r.directory, String(r.files), r.current ? "current" : "changed", when(r.approvedAt)]), ["Workspace", "Files", "Signature", "Approved"]))
+      })
+      return true
+    }
+    if (sub === "revoke") {
+      const target = path.resolve(rest[0] || flags.dir || dir)
+      if (!(await confirm(`Revoke project-tool trust for ${target}?`))) return false
+      const result = trust.revokeProject(target, home)
+      log(result.removed ? `Revoked ${target}. The next run asks again.` : `No saved trust for ${target}.`)
+      return true
+    }
+    const target = path.resolve(sub || flags.dir || dir)
+    const files = trust.projectFiles(target)
+    if (!files.length) {
+      log("No project extensions, plugins or MCP servers found; nothing to trust.")
+      return true
+    }
+    log("Executable project files:")
+    for (const file of files) log("  " + path.relative(target, file).replace(/\\/g, "/"))
+    if (!(await confirm(`Trust these files for ${target}?`))) return false
+    const saved = trust.trustProject(target, home)
+    log(`Trusted ${target} (${saved.signature.slice(0, 12)}…).`)
+    return true
   }
   const listMarkdown = async (kind, heading) => {
     if (!sub || sub === "list") {
@@ -234,19 +268,63 @@ async function runCommand(ctx, argv) {
     case "recipes": await listMarkdown("recipes", "Recipe"); break
     case "models": {
       const list = await vibe.profiles.list()
+      const fallback = flags.json ? null : await call("fallback.get", { group: "fallback" }).catch(() => null)
       show(list.map((p) => publicData(p)), () => {
         if (!ctx.inChat) {
           // Keep the original script-friendly profile/format/model columns.
           for (const p of list) log(`${p.hasKey || p.noAuth ? "*" : " "} ${p.id.padEnd(22)} ${String(p.format || "").padEnd(17)} ${p.model}`)
           log(c.dim("\n* = ready (key set). Add a key: vibe auth add <profile>"))
+          if (fallback) log(c.dim(`Fallback model: ${fallback.models.length} model(s) -> vibe fallback`))
           return
         }
         for (const provider of list.filter((p) => !p.derivedFrom && !p.disabled)) {
           log(c.bold(providerName(provider, list)))
           for (const row of modelChoices([provider])) log(`  ${row.ready ? "*" : " "} ${row.model}`)
         }
+        if (fallback) log(c.dim(`\nFallback model (${fallback.models.length}): ${fallback.models.join(" -> ") || "empty"}`))
         log(c.dim("\n* = key configured. Save a key: vibe auth add <profile ID>. /model opens the picker."))
       })
+      break
+    }
+    case "fallback": {
+      const groupID = flags.group || "fallback"
+      if (!sub || sub === "show" || sub === "list") {
+        const group = await call("fallback.get", { group: groupID })
+        show(group, (g) => {
+          log(c.bold(g.name || g.id))
+          if (!g.models.length) {
+            log(c.dim("No models yet. Add one: vibe fallback add <provider/model>"))
+            return
+          }
+          g.models.forEach((key, index) => log(`${String(index + 1).padStart(2)}. ${index === g.cursor ? c.green("*") : " "} ${key}`))
+          log(c.dim("\nUse as the session model: -m group:fallback"))
+          log(c.dim("Next/position: vibe fallback use <n>   Remove: vibe fallback remove <n|key>"))
+        })
+      } else if (sub === "add") {
+        const key = rest[0] || flags.model
+        if (!key) throw new Error("usage: vibe fallback add <provider/model>")
+        const group = await call("fallback.add", { group: groupID, model: key })
+        show(group, (g) => log(`Added ${key}. Chain: ${g.models.join(" -> ")}`))
+      } else if (sub === "remove" || sub === "rm") {
+        const key = rest[0]
+        if (!key) throw new Error("usage: vibe fallback remove <n|provider/model>")
+        const group = await call("fallback.remove", { group: groupID, model: key })
+        show(group, (g) => log(g.models.length ? `Removed. Chain: ${g.models.join(" -> ")}` : "Fallback chain is now empty."))
+      } else if (sub === "use" || sub === "cursor") {
+        const position = Number(rest[0])
+        if (!Number.isInteger(position) || position < 1) throw new Error("usage: vibe fallback use <position>")
+        const group = await call("fallback.cursor", { group: groupID, cursor: position - 1 })
+        show(group, (g) => log(`Next fallback attempt: ${g.models[g.cursor] || "(none)"}`))
+      } else if (sub === "set") {
+        if (!rest.length) throw new Error("usage: vibe fallback set <provider/model> [more...]")
+        const group = await call("fallback.set", { group: groupID, models: rest })
+        show(group, (g) => log(g.models.length ? `Chain: ${g.models.join(" -> ")}` : "Fallback chain is now empty."))
+      } else if (sub === "clear") {
+        const group = await call("fallback.set", { group: groupID, models: [] })
+        show(group, () => log("Fallback chain cleared."))
+      } else {
+        throw new Error("usage: vibe fallback [show|add|remove|use|set|clear]")
+      }
       break
     }
     case "provider":

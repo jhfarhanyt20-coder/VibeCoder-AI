@@ -70,7 +70,7 @@ class SessionStore {
       if (k === "messages") flat.messageCount = Array.isArray(s.messages) ? s.messages.length : 0
       flat[k] = s[k]
     }
-    fs.writeFileSync(tmp, JSON.stringify(flat, null, 1))
+    fs.writeFileSync(tmp, JSON.stringify(flat, null, 1), { mode: 0o600 })
     fs.renameSync(tmp, f)
   }
   /** Header-only read from a small prefix (title/dir/usage never sit behind the

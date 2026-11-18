@@ -20,6 +20,7 @@ const { ExtensionManager } = require("./harness/extensions")
 const { loadLocks, isLocked } = require("./harness/locks")
 const { combineRules, decideWithSource } = require("./harness/guard")
 const recipes = require("./harness/recipes")
+const trust = require("./harness/trust")
 const { Trail, shouldTrail } = require("./harness/trail")
 const { newId, homeDir } = require("./util")
 // Preserve callers that bind individual Engine methods to a lightweight host;
@@ -377,7 +378,7 @@ class Engine {
    * rules are matched against engine rules + inherited rules + own rules, while
    * a new "always" approval is still stored on `session` (the run that asked).
    */
-  _ask(session, signal, emit, inherits = null, agentRules = []) {
+  _ask(session, signal, emit, inherits = null, agentRules = [], parentAgentRules = []) {
     return (perm) => {
       const tool = String(perm?.tool ?? "")
       // V-10: asking the user a question is itself the interaction; a
@@ -401,9 +402,19 @@ class Engine {
         project: this.rules,
         inherited: inherits?.rules || [],
         session: session.rules || [],
+        parentAgent: Array.isArray(parentAgentRules) ? parentAgentRules : [],
         agent: Array.isArray(agentRules) ? agentRules : [],
+        // Parent deny rules sit after the child agent so a helper cannot
+        // re-enable a tool the parent agent is forbidden to use.
+        ...(normalizeRules(parentAgentRules).some((rule) => rule.action === "deny")
+          ? { parentAgentDeny: normalizeRules(parentAgentRules).filter((rule) => rule.action === "deny") }
+          : {}),
       })
-      const { action, source } = decideWithSource(layers, tool, subject)
+      const decision = decideWithSource(layers, tool, subject)
+      // Dynamic shell syntax must not ride an allow-list prefix. Keep an
+      // explicit user denial, but downgrade an automatic allow to a prompt.
+      const action = perm?.forceAsk === true && decision.action === "allow" ? "ask" : decision.action
+      const source = decision.source
       // Durable audit: which layer decided, without leaking the subject value.
       this.trail.append(session && session.id, {
         type: "permission.decision",
@@ -908,6 +919,7 @@ class Engine {
       recipeId: recipe.id,
       recipeAgent: recipe.agent || "",
       recipeModel: recipe.model || "",
+      recipeScope: recipe.scope || "",
     } : opts
     const profile = targetProfile(this, session.profile)
     const apiKey = targetKey(this, profile)
@@ -1170,8 +1182,14 @@ class Engine {
     // V-07: resolve the session's agent definition (prompt, steps, permissions,
     // optional model override). A missing definition falls back to the default.
     const requestedAgent = opts.recipeAgent || session.agent || ""
-    const agent = requestedAgent ? this.getAgent(requestedAgent, session.dir) : null
+    let agent = requestedAgent ? this.getAgent(requestedAgent, session.dir) : null
     if (requestedAgent && !agent) emit({ type: "notice", text: `Agent "${requestedAgent}" is unavailable; using the default agent.` })
+    // A project recipe is repository data. Do not let it silently select an
+    // agent with wider rules until the workspace's executable content is trusted.
+    if (agent && opts.recipeAgent && opts.recipeScope === "project" && !trust.isProjectTrusted(session.dir, this.home)) {
+      emit({ type: "notice", text: "Project recipe agent was ignored until this workspace is trusted." })
+      agent = null
+    }
     let runProfile = profile
     let runApiKey = apiKey
     const modelTarget = opts.recipeModel || agent?.model || ""

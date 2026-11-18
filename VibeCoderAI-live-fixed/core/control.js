@@ -9,6 +9,7 @@ const path = require("node:path")
 const crypto = require("node:crypto")
 const { spawnSync } = require("node:child_process")
 const profiles = require("./llm/profiles")
+const groups = require("./llm/groups")
 const skills = require("./skills")
 const agents = require("./agents")
 const recipes = require("./harness/recipes")
@@ -146,6 +147,16 @@ function createControl(engine) {
   }
   const resolveProfile = (wanted) => {
     const list = engine.listProfiles()
+    const groupMatch = /^group[:/](.+)$/.exec(String(wanted || "")) || (String(wanted || "") === "fallback" ? ["fallback", "fallback"] : null)
+    if (groupMatch) {
+      const group = groups.getGroup(groupMatch[1], home)
+      if (!group.models.length) throw new Error(`Fallback group "${group.id}" has no models. Add one with: vibe fallback add <provider/model>`)
+      for (const key of group.models) {
+        if (/^group[:/]/.test(key)) throw new Error("A fallback group cannot contain another fallback group.")
+        try { engine._profileTarget(key) } catch { /* unusable entries are skipped at run time */ }
+      }
+      return `group:${group.id}`
+    }
     const exact = list.find((p) => p.id === wanted)
     if (exact) {
       if (exact.disabled) throw new Error(`Provider "${wanted}" is disabled.`)
@@ -434,6 +445,42 @@ function createControl(engine) {
     "profiles.models": async (a) => {
       const p = profiles.getProfile(a.id, home)
       return require("./llm/provider-meta").listRemoteModels({ baseURL: p.baseURL, apiKey: p.noAuth ? "" : profiles.getKey(p, home), format: p.format === "anthropic" ? "anthropic" : p.format === "openai-responses" ? "responses" : "chat", headers: p.headers || {} })
+    },
+    "fallback.list": () => groups.listGroups(home),
+    "fallback.get": (a = {}) => groups.getGroup(a.group || a.id || "fallback", home),
+    "fallback.set": (a = {}) => {
+      const id = a.group || a.id || "fallback"
+      const input = Array.isArray(a.models) ? a.models : String(a.models || "").split(",")
+      const models = [...new Set(input.map((key) => String(key || "").trim()).filter(Boolean))]
+      for (const key of models) {
+        if (/^group[:/]/.test(key)) throw new Error("A fallback group cannot contain another fallback group.")
+        try { engine._profileTarget(key) } catch { throw new Error(`Unknown model "${key}". Run: vibe models`) }
+      }
+      return groups.saveGroup({ ...groups.getGroup(id, home), id, models }, home)
+    },
+    "fallback.add": (a = {}) => {
+      const key = String(a.model || a.key || "").trim()
+      if (!key) throw new Error("Choose a model with: vibe fallback add <provider/model>")
+      if (/^group[:/]/.test(key)) throw new Error("A fallback group cannot contain another fallback group.")
+      try { engine._profileTarget(key) } catch { throw new Error(`Unknown model "${key}". Run: vibe models`) }
+      const group = groups.getGroup(a.group || a.id || "fallback", home)
+      const models = group.models.includes(key) ? group.models : [...group.models, key]
+      return groups.saveGroup({ ...group, models }, home)
+    },
+    "fallback.remove": (a = {}) => {
+      const group = groups.getGroup(a.group || a.id || "fallback", home)
+      const wanted = String(a.model || a.key || "").trim()
+      if (!wanted) throw new Error("Choose a model key or its position.")
+      const index = Number.isInteger(Number(wanted)) && Number(wanted) > 0 ? Number(wanted) - 1 : group.models.indexOf(wanted)
+      if (index < 0 || index >= group.models.length) throw new Error(`"${wanted}" is not in the fallback chain.`)
+      const models = group.models.filter((_, i) => i !== index)
+      return groups.saveGroup({ ...group, models, cursor: Math.min(group.cursor, Math.max(0, models.length - 1)) }, home)
+    },
+    "fallback.cursor": (a = {}) => {
+      const group = groups.getGroup(a.group || a.id || "fallback", home)
+      const cursor = Number(a.cursor)
+      if (!Number.isInteger(cursor) || cursor < 0 || cursor >= Math.max(1, group.models.length)) throw new Error("Choose a position inside the fallback chain.")
+      return groups.setCursor(group.id, cursor, home)
     },
     "usage.get": (a) => {
       if (a.sessionId) return usageOf(engine.getSession(a.sessionId))

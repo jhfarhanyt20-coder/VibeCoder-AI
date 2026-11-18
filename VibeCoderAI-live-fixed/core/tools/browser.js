@@ -12,6 +12,33 @@ function clip(text, max = MAX_TEXT) {
   return text.slice(0, half) + `\n\n... [${text.length - max} chars truncated] ...\n\n` + text.slice(-half)
 }
 
+// Browser actions are approved per origin, not blanket per action. A rule saved
+// for "click github.com" must not also allow clicks on a bank tab. The host is
+// learned from explicit URLs and from successful navigations; when it is not
+// known yet the approval stays one-shot (neverPersist).
+const tabHosts = new Map()
+let activeHost = ""
+
+function noteHost(tabID, url) {
+  try {
+    const host = new URL(String(url || "")).host
+    if (!host) return
+    if (tabID) tabHosts.set(String(tabID), host)
+    activeHost = host
+  } catch {}
+}
+
+function hostFor(args = {}) {
+  return (args && args.tabID && tabHosts.get(String(args.tabID))) || activeHost
+}
+
+function actionPerm(action, args = {}) {
+  const host = hostFor(args)
+  const perm = { tool: "browser", subject: host ? `${action} ${host}` : action }
+  if (!host) perm.neverPersist = true
+  return perm
+}
+
 function createBrowserTools() {
   return {
     current: {
@@ -55,11 +82,18 @@ function createBrowserTools() {
       name: "browser.tabs.open",
       description: "Open a new tab in the visible in-app browser dock at the URL. The user can watch the agent control this page.",
       parameters: { type: "object", properties: { url: { type: "string" } }, required: [] },
-      perm: () => ({ tool: "browser", subject: "navigate" }),
+      perm: (a = {}) => {
+        let host = ""
+        try { host = new URL(String(a.url || "")).host } catch {}
+        const perm = { tool: "browser", subject: host ? `navigate ${host}` : "navigate" }
+        if (!host) perm.neverPersist = true
+        return perm
+      },
       paths: () => [],
       async run(a, c) {
         const res = await (c.engine || c.vibe)?.browserCreateTab?.({ url: a.url || "about:blank" })
         if (!res?.ok) return `Failed: ${res?.error || "No browser available. Browser tools only work inside the Electron app (npm run app)."}`
+        noteHost(res.data.tabID, res.data.url || a.url)
         return `Opened active browser tab: ${res.data.tabID}\nTitle: ${res.data.title || "(loading)"}\nURL: ${res.data.url || a.url || "about:blank"}`
       },
     },
@@ -79,12 +113,19 @@ function createBrowserTools() {
       name: "browser.navigate",
       description: "Navigate the selected visible in-app browser tab to a URL.",
       parameters: { type: "object", properties: { tabID: { type: "string", description: "Optional; defaults to the active visible browser tab." }, url: { type: "string" } }, required: ["url"] },
-      perm: () => ({ tool: "browser", subject: "navigate" }),
+      perm: (a = {}) => {
+        let host = ""
+        try { host = new URL(String(a.url || "")).host } catch {}
+        const perm = { tool: "browser", subject: host ? `navigate ${host}` : "navigate" }
+        if (!host) perm.neverPersist = true
+        return perm
+      },
       paths: () => [],
       async run(a, c) {
         const api = c.engine || c.vibe
         const res = await api?.browserNavigate?.({ tabID: a.tabID, url: a.url })
         if (!res?.ok) throw new Error(res?.error || "Failed to navigate")
+        noteHost(a.tabID, res.data?.url || a.url)
         // V-09: wait for the body instead of guessing with a sleep. The old 1 s
         // pause stays as a fallback only when readiness cannot be confirmed.
         const waited = await api?.browserWait?.({ tabID: a.tabID, selector: "body", timeoutMs: 5000 })
@@ -174,7 +215,7 @@ function createBrowserTools() {
       name: "browser.click",
       description: "Click an element in the visible in-app browser using a ref from the latest snapshot. Pass the snapshot's Generation to catch stale refs.",
       parameters: { type: "object", properties: { tabID: { type: "string", description: "Optional; defaults to the active visible browser tab." }, ref: { type: "string" }, generation: { type: "integer", description: "The Generation from the latest browser.snapshot; omit to allow any." } }, required: ["ref"] },
-      perm: () => ({ tool: "browser", subject: "click" }),
+      perm: (a = {}) => actionPerm("click", a),
       paths: () => [],
       async run(a, c) {
         const res = await (c.engine || c.vibe)?.browserClick?.({ tabID: a.tabID, ref: a.ref, generation: a.generation })
@@ -186,7 +227,7 @@ function createBrowserTools() {
       name: "browser.fill",
       description: "Fill an input in the visible in-app browser using a ref from the latest snapshot. Pass the snapshot's Generation to catch stale refs.",
       parameters: { type: "object", properties: { tabID: { type: "string", description: "Optional; defaults to the active visible browser tab." }, ref: { type: "string" }, text: { type: "string" }, generation: { type: "integer", description: "The Generation from the latest browser.snapshot; omit to allow any." } }, required: ["ref", "text"] },
-      perm: () => ({ tool: "browser", subject: "fill" }),
+      perm: (a = {}) => actionPerm("fill", a),
       paths: () => [],
       async run(a, c) {
         const res = await (c.engine || c.vibe)?.browserFill?.({ tabID: a.tabID, ref: a.ref, text: a.text, generation: a.generation })
@@ -198,7 +239,7 @@ function createBrowserTools() {
       name: "browser.press",
       description: "Press a keyboard key in the selected visible in-app browser tab.",
       parameters: { type: "object", properties: { tabID: { type: "string", description: "Optional; defaults to the active visible browser tab." }, key: { type: "string" } }, required: ["key"] },
-      perm: () => ({ tool: "browser", subject: "press" }),
+      perm: (a = {}) => actionPerm("press", a),
       paths: () => [],
       async run(a, c) {
         const res = await (c.engine || c.vibe)?.browserPress?.({ tabID: a.tabID, key: a.key })
@@ -210,7 +251,7 @@ function createBrowserTools() {
       name: "browser.scroll",
       description: "Scroll the selected visible in-app browser tab.",
       parameters: { type: "object", properties: { tabID: { type: "string", description: "Optional; defaults to the active visible browser tab." }, deltaY: { type: "integer" } }, required: ["deltaY"] },
-      perm: () => ({ tool: "browser", subject: "scroll" }),
+      perm: (a = {}) => actionPerm("scroll", a),
       paths: () => [],
       async run(a, c) {
         const res = await (c.engine || c.vibe)?.browserScroll?.({ tabID: a.tabID, deltaY: a.deltaY })

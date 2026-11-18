@@ -15,6 +15,7 @@ const skillStore = require("../skills")
 const playbookStore = require("../harness/playbooks")
 const forms = require("../forms")
 const { applyEdit, fileGuard } = require("./editkit")
+const { isSecretFile, redactText } = require("../harness/guard")
 const snapshots = require("../store/snapshots")
 const { diagnose, inspect: inspectDiagnostics, format: formatDiagnostics } = require("./diagnostics")
 
@@ -146,7 +147,13 @@ const bash = {
     },
     required: ["command"],
   },
-  perm: (a) => ({ tool: "bash", subject: a.command }),
+  perm: (a) => {
+    const command = String(a.command || "")
+    // Dynamic command substitution can hide a second command after an
+    // allow-listed prefix. Ask even when a loose allow rule matches.
+    const dynamic = /\$\(|`|\$\{|(?:^|[\s;|])iex(?:\s|$)|Invoke-Expression/i.test(command)
+    return { tool: "bash", subject: command, ...(dynamic ? { forceAsk: true } : {}) }
+  },
   paths: () => [],
   run(a, c) {
     const background = a.background === true
@@ -249,7 +256,7 @@ const bash = {
           try {
             if (fs.existsSync(f) && fs.statSync(f).size > 256 * 1024) fs.writeFileSync(f, "")
           } catch {}
-          fs.appendFileSync(f, `[${new Date().toISOString()}] ${c.cwd} :: ${String(a.command).replace(/\s+/g, " ").slice(0, 300)} :: exit ${code}${note ? " (killed)" : ""}\n`)
+          fs.appendFileSync(f, `[${new Date().toISOString()}] ${c.cwd} :: ${redactText(String(a.command).replace(/\s+/g, " ").slice(0, 300))} :: exit ${code}${note ? " (killed)" : ""}\n`, { encoding: "utf8", mode: 0o600 })
         } catch {}
         const statusLine =
           info.status === "completed" ? "" : info.exit != null && info.exit !== 0 ? `\n[exited with code ${info.exit}]` : ""
@@ -425,6 +432,13 @@ const grep = {
     for (const f of walk(root)) {
       const rel = toPosix(path.relative(root, f))
       if (inc && !inc.test(rel) && !inc.test(path.basename(f))) continue
+      // `read` asks before opening .env/key files; grep must not be a free
+      // content dump of the same secrets.
+      if (isSecretFile(f)) {
+        let allowed = false
+        try { allowed = typeof c.askPermission === "function" ? await c.askPermission({ tool: "read", subject: f }) : false } catch {}
+        if (!allowed) continue
+      }
       let buf
       try {
         if (fs.statSync(f).size > 1024 * 1024) continue

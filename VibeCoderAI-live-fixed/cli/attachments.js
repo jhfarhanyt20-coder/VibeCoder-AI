@@ -2,6 +2,8 @@
 const fs = require("node:fs")
 const path = require("node:path")
 const { safeText } = require("./theme")
+const { isInside } = require("../core/tools/fsutil")
+const { isSecretFile } = require("../core/harness/guard")
 const MIME = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp" }
 const TEXT_LIMIT = 200 * 1024
 const TOTAL_LIMIT = 10 * 1024 * 1024
@@ -12,6 +14,12 @@ function expandFileMentions(text, dir) {
   const next = String(text || "").replace(/(^|\s)@(?:"([^"]+)"|'([^']+)'|([^\s]+))/g, (match, lead, double, single, plain) => {
     const relative = double || single || plain
     const file = path.resolve(dir, relative)
+    // @mentions must not bypass the read tool's workspace jail or its .env
+    // guard. Explicit tool reads still ask normally.
+    if (!isInside(path.resolve(dir), file) || isSecretFile(file)) {
+      missing.push(relative + " (outside the workspace or a secret file)")
+      return match
+    }
     if (seen.has(file)) return match
     let stat
     try { stat = fs.statSync(file) } catch { missing.push(relative); return match }

@@ -14,6 +14,7 @@ const path = require("path")
 const { homeDir } = require("../util")
 const { McpClient } = require("./client")
 const oauth = require("../harness/connectors/oauth")
+const trust = require("../harness/trust")
 
 const globalFile = (home) => path.join(home || homeDir(), "mcp.json")
 const projectFile = (dir) => path.join(dir || "", ".vibe", "mcp.json")
@@ -54,12 +55,14 @@ function listServers(directory, home) {
   const g = readJson(globalFile(home), {})
   for (const [name, e] of Object.entries(g)) rows.push({ name, scope: "global", file: globalFile(home), ...sanitize(e) })
   if (directory) {
-    const p = readJson(projectFile(directory), {})
-    for (const [name, e] of Object.entries(p)) {
-      const i = rows.findIndex((r) => r.name === name)
-      const row = { name, scope: "project", file: projectFile(directory), ...sanitize(e) }
-      if (i >= 0) rows[i] = row
-      else rows.push(row)
+    if (trust.isProjectTrusted(directory, home)) {
+      const p = readJson(projectFile(directory), {})
+      for (const [name, e] of Object.entries(p)) {
+        const i = rows.findIndex((r) => r.name === name)
+        const row = { name, scope: "project", file: projectFile(directory), ...sanitize(e) }
+        if (i >= 0) rows[i] = row
+        else rows.push(row)
+      }
     }
   }
   return rows
@@ -70,7 +73,14 @@ function addServer({ name, type, url, command, env, headers, oauth, global, dire
   if (!id) throw new Error("Server name is required")
   const entry = sanitize({ type, url, command, env, headers, oauth })
   if (entry.type === "local" && !entry.command) throw new Error("A local MCP server needs a command")
-  if (entry.type === "remote" && !/^https?:\/\//i.test(entry.url || "")) throw new Error("A remote MCP server needs an http(s) URL")
+  if (entry.type === "remote") {
+    let parsed
+    try { parsed = new URL(entry.url || "") } catch { throw new Error("A remote MCP server needs a valid http(s) URL") }
+    const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname)
+    if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback)) {
+      throw new Error("Remote MCP servers must use HTTPS; plain HTTP is allowed only for loopback development.")
+    }
+  }
   const file = global || !directory ? globalFile(home) : projectFile(directory)
   const cfg = readJson(file, {})
   if (cfg[id] && !global && readJson(globalFile(home), {})[id]) entry.scopeNote = "overrides global"

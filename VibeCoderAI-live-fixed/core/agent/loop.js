@@ -220,6 +220,15 @@ function splitCommand(cmd) {
       i += 2
       continue
     }
+    // Newlines and PowerShell's statement/call separators are real command
+    // boundaries. Treating them as one segment let `npm test\n<evil>` match
+    // the `*npm test*` allow rule and run the second command unasked.
+    if (ch === "\n" || ch === "\r" || (ch === "&" && s[i - 1] !== ">" && s[i - 1] !== "<" && s[i + 1] !== ">")) {
+      if (cur.trim()) out.push(cur.trim())
+      cur = ""
+      i++
+      continue
+    }
     if (ch === ";" || ch === "|") {
       if (cur.trim()) out.push(cur.trim())
       cur = ""

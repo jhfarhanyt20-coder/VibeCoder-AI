@@ -1,17 +1,17 @@
-# vibe-core: VibeCoder AI engine (zero dependencies)
+# vibe-core: VibeCoder AI engine
 
-Own CLI + own SDK + own agent loop. No OpenCode, no third-party packages. Node >= 20.
+Own CLI + own SDK + own agent loop. Node >= 20. The desktop app adds `electron-updater` for in-app updates; the core engine has no runtime dependencies.
 
 ```
 core/llm/       openai-chat.js  openai-responses.js  anthropic.js  sse.js  http.js  profiles.js
 core/agent/     loop.js  compaction.js  prompt.js
-core/tools/     read write edit multiedit apply_patch list bash grep glob todowrite webfetch ... (+ editkit, diagnostics)
+core/tools/     index.js  editkit.js  diagnostics.js  browser.js  fsutil.js
 core/perm/      rules.js          allow / ask / deny rules (+ workspace guard)
 core/store/     sessions.js       JSON sessions in ~/.vibe/sessions
 core/store/     snapshots.js      per-turn file snapshots for /undo (~/.vibe/snapshots)
 core/engine.js  ties it together
 sdk/index.js    createVibe() in-process, connect() to `vibe serve`
-cli/vibe.js     run / chat / serve / models / auth / compact ...
+cli/vibe.js     run / chat / serve / models / fallback / trust / auth / compact ...
 test/           automated core, skills, and Electron backend regression tests:  npm test
 ```
 
@@ -22,6 +22,9 @@ node cli/vibe.js auth add groq-gpt-oss-120b        # or: set GROQ_API_KEY
 node cli/vibe.js run -m groq-gpt-oss-120b "explain this project"
 node cli/vibe.js chat -m anthropic
 node cli/vibe.js profile add my-llm openai-chat https://host/v1 model-name 128000
+node cli/vibe.js fallback add openai/gpt-4.1         # ordered failover chain
+node cli/vibe.js run -m group:fallback "explain this project"
+node cli/vibe.js trust list                          # trusted project workspaces
 node cli/vibe.js serve --port 4096                 # prints a token; SDK remote mode uses it
 ```
 
@@ -43,14 +46,14 @@ A profile is one JSON object (`~/.vibe/profiles.json`, overrides the built-ins b
 `quirks`: `reasoningField`, `reasoningEffort`, `maxTokensParam`, `extraBody`.
 Built-ins are TEMPLATES: check the model id / context size against your provider's docs (xai-grok especially).
 
-## Auto-compaction (OpenCode-style)
+## Auto-compaction
 - When the context is near its budget, on provider overflow, or on `/compact`, the agent builds a structured checkpoint summary of the older conversation and retains a recent tail.
 - Old tool outputs are pruned on a candidate copy; if summary generation fails, the original history is preserved. A deterministic fallback summary is used when the LLM does not produce a valid checkpoint.
 - The desktop UI displays the actual checkpoint Markdown, summary source (LLM/fallback), reason, and estimated before/after token counts. If the resulting request still exceeds the budget, it shows an explicit warning and the agent blocks the next model request rather than blindly retrying.
 - Set `contextLimit` and `maxOutput` correctly in each profile. Token counts are estimates, so provider-side context limits can still differ.
 
 ## Provider settings and live refresh
-Custom provider profiles are stored in `~/.vibe/profiles.json`; API keys are stored separately in `~/.vibe/auth.json` (not in the OpenCode config file and not in the repository). The desktop main process watches those files (including atomic replacements) and emits a secret-free refresh event. The ChatComposer and Model settings now fetch one authoritative provider catalog snapshot, sort configured custom providers first, omit unconfigured built-in defaults, and drop stale rows/selections after a provider/model is removed or disabled. External profile edits are picked up while the app is running; use the refresh control if a platform/filesystem watcher is unavailable.
+Custom provider profiles are stored in `~/.vibe/profiles.json`; API keys are stored separately in `~/.vibe/auth.json` (not in a provider config file and not in the repository). The desktop main process watches those files (including atomic replacements) and emits a secret-free refresh event. The ChatComposer and Model settings now fetch one authoritative provider catalog snapshot, sort configured custom providers first, omit unconfigured built-in defaults, and drop stale rows/selections after a provider/model is removed or disabled. External profile edits are picked up while the app is running; use the refresh control if a platform/filesystem watcher is unavailable.
 
 ## SDK
 ```js
@@ -64,18 +67,17 @@ for await (const ev of vibe.session.prompt(s.id, "fix the failing test")) {
 Events: text.delta, reasoning.delta, tool.start, tool.end, permission.ask, todo.update, usage,
 compaction.start, compaction.end, error, done.
 
-## Extensions (marketplace + engine, all zero-dependency)
+## Extensions (marketplace + engine)
 - **MCP servers** (`core/mcp`): local (stdio JSON-RPC) + remote (Streamable HTTP). Their tools run in the
   engine as `mcp__<server>__<tool>`. Config: `~/.vibe/mcp.json` (global) / `<workspace>/.vibe/mcp.json`.
-- **Plugins** (`core/plugins`): CommonJS files exporting a tool / array / `{tools}` from
-  `~/.vibe/plugins/*.js` or `<workspace>/.vibe/plugins/*.js`; installable from the marketplace (file/content/npm).
-- **Skills** (`core/skills`): Agent Skills / OpenCode-compatible directory-based `SKILL.md` and legacy flat Markdown. Global roots include `~/.config/opencode/skills`, `~/.agents/skills`, `~/.claude/skills`, `~/.codex/skills`, and `~/.vibe/skills`; project roots include `.opencode/skills`, `.agents/skills`, `.claude/skills`, `.codex/skills`, and `.vibe/skills`. The system prompt exposes a bounded ID/description catalogue and the agent's `skill` tool loads relevant full instructions on demand. Supporting files can be read with the regular `read` tool. Skill instructions are untrusted project data and do not bypass user/system rules or permissions.
+- **Extensions** (`core/harness/extensions.js`): CommonJS files exporting a tool / array / `{tools}` from global `~/.vibe` folders or project `.vibe` folders. Project-scoped executable files (extensions, plugins, MCP config) require a one-time workspace approval; use the desktop prompt or `vibe trust`, review them with `vibe trust list`, and revoke with `vibe trust revoke [dir]`.
+- **Skills** (`core/skills`): Agent Skills / compatible directory-based `SKILL.md` and legacy flat Markdown. Global roots include `~/.config/opencode/skills`, `~/.agents/skills`, `~/.claude/skills`, `~/.codex/skills`, and `~/.vibe/skills`; project roots include `.opencode/skills`, `.agents/skills`, `.claude/skills`, `.codex/skills`, and `.vibe/skills`. The system prompt exposes a bounded ID/description catalogue and the agent's `skill` tool loads relevant full instructions on demand. Supporting files can be read with the regular `read` tool. Skill instructions are untrusted project data and do not bypass user/system rules or permissions.
 - **GitHub skill imports**: Marketplace → Skills supports public `owner/repo`, GitHub repository/folder URLs, and direct `SKILL.md` URLs. Imports are size/path bounded, staged per skill, and rolled back as a batch if any selected skill fails. Supporting text/code files are preserved but never executed during import. Project skills install under `.opencode/skills/<id>/SKILL.md`; global skills under `~/.config/opencode/skills/<id>/SKILL.md`.
 - **Marketplace** (`core/extensions/catalog`): shipped built-in catalog + user registries -
   any HTTPS URL serving `{ mcp:[], plugins:[], skills:[] }` JSON (cached, works offline from cache).
 
 ## Not done yet (honest list)
-OAuth/device login, provider-specific thinking-block replay for Anthropic extended thinking.
+Hosted VibeCoderAI API device login, provider-specific thinking-block replay for Anthropic extended thinking. Connector OAuth (Authorization Code + PKCE) is implemented; only the hosted account flow is not shipped.
 (bash is exercised on Windows PowerShell daily; MCP client + plugins + skills + per-tool diff previews are done.)
 
 ## In-app browser agent control

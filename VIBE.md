@@ -1,11 +1,15 @@
 # VibeCoder AI — Project Rules (read this first)
 
 Last updated: 2026-11-18
-Current release: **0.3.12** (tag `v0.3.12`, commit `a8aad17`)
-Release assets verified: `VibeCoderAI-v2-0.3.12.exe`,
-`VibeCoderAI-v2-0.3.12.exe.blockmap`, `latest.yml` (`version: 0.3.12`) and
-`VibeCoder-CLI-0.3.12.tgz`.
-Published installer SHA-512 matched `latest.yml`; release workflow run `44148751825` succeeded.
+Current release: **0.3.13** (tag `v0.3.13`, commit `5c44343`) — Sign in with VibeCoder
+Release assets verified: `VibeCoderAI-v2-0.3.13.exe` (121849477 bytes),
+`latest.yml` (`version: 0.3.13`) and `VibeCoder-CLI-0.3.13.tgz`.
+Published installer SHA-512 matched `latest.yml`; release workflow run `44342239212` succeeded.
+Known gap: no `.exe.blockmap` was published for 0.3.13 (after the electron-builder 26
+upgrade), so updates to 0.3.13 download the full installer instead of a differential
+patch. Restore the blockmap in the next release (check `nsis.differentialPackage`).
+VibeCoder account: sign-in/account on the website (Render); AI requests through the
+gateway host (Railway, `electron/vibecoder-account.cjs` `DEFAULT_GATEWAY_URL`).
 Repository: https://github.com/jhfarhanyt20-coder/VibeCoder-AI — **PUBLIC**
 Application directory: `VibeCoderAI-live-fixed/`
 Website: https://vibecoderai.onrender.com (private source repository

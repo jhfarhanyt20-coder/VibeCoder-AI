@@ -19,6 +19,79 @@ const { isSecretFile, redactText } = require("../harness/guard")
 const snapshots = require("../store/snapshots")
 const { diagnose, inspect: inspectDiagnostics, format: formatDiagnostics } = require("./diagnostics")
 
+/** Up to `max` existing files whose names look like `abs` (same folder first, then a short walk). */
+function similarPaths(abs, cwd, max = 4) {
+  const want = path.basename(abs).toLowerCase()
+  const stem = want.replace(/\.[^.]+$/, "")
+  const score = (name) => {
+    const n = name.toLowerCase()
+    if (n === want) return 0
+    if (n.replace(/\.[^.]+$/, "") === stem) return 1
+    if (n.includes(stem) || stem.includes(n.replace(/\.[^.]+$/, ""))) return 2
+    return 9
+  }
+  const hits = []
+  try {
+    let dir = path.dirname(abs)
+    while (!fs.existsSync(dir) && dir !== path.dirname(dir)) dir = path.dirname(dir)
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const s = score(e.name)
+      if (s < 9) hits.push({ p: path.join(dir, e.name) + (e.isDirectory() ? path.sep : ""), s })
+    }
+  } catch {}
+  if (hits.length < max && cwd) {
+    try {
+      let seen = 0
+      for (const f of walk(cwd)) {
+        if (++seen > 4000) break
+        const s = score(path.basename(f))
+        if (s < 3 && !hits.some((h) => h.p === f)) hits.push({ p: f, s: s + 0.5 })
+        if (hits.length >= max * 3) break
+      }
+    } catch {}
+  }
+  return hits.sort((a, b) => a.s - b.s).slice(0, max).map((h) => (cwd ? toPosix(path.relative(cwd, h.p)) || h.p : h.p))
+}
+
+/** A clear "what happened / nothing changed / what next" message for a path problem. */
+function missingPathMessage(error, abs, cwd, verb) {
+  const code = error && error.code
+  if (code === "ENOENT" || code === "ENOTDIR") {
+    const similar = similarPaths(abs, cwd)
+    const next = verb === "edit" ? "Use write to create it, or glob to find the right path." : "Use glob or list to find the right path."
+    return `File not found: ${abs}. Nothing was ${verb === "read" ? "read" : "changed"}.${similar.length ? ` Similar: ${similar.join(", ")}.` : ""} ${next}`
+  }
+  if (code === "EACCES" || code === "EPERM") return `No permission to ${verb} ${abs} (${code}). Nothing was ${verb === "read" ? "read" : "changed"}. It may be open in another program or protected; ask the user.`
+  if (code === "EBUSY") return `${abs} is locked by another program (EBUSY). Nothing was changed. Close it or try again shortly.`
+  return String((error && error.message) || error)
+}
+
+/**
+ * After a failed command on Windows PowerShell 5.1: one short line per
+ * bash-only habit that appears in the command, so the next try works.
+ */
+function shellHint(command, output) {
+  if (process.platform !== "win32") return ""
+  const cmd = String(command)
+  const tips = []
+  if (/\|\|/.test(cmd)) tips.push('use "a; if (-not $?) { b }" instead of "||"')
+  if (/(^|[;&|]\s*)export\s+\w+=/.test(cmd) || /(^|[;&|]\s*)[A-Z_][A-Z0-9_]*=\S+\s+\w/.test(cmd)) tips.push('set variables with $env:NAME = "value"; (not export or NAME=value cmd)')
+  if (/\/dev\/null/.test(cmd)) tips.push("use $null instead of /dev/null")
+  if (/<<\s*['"]?\w+/.test(cmd)) tips.push("here-docs (<<EOF) do not exist; write the text to a file with the write tool first")
+  if (/(^|[\s;|&(])head\s+-n?\s*\d|(^|[\s;|&(])head\b/.test(cmd)) tips.push("use Select-Object -First N instead of head")
+  if (/(^|[\s;|&(])tail\b/.test(cmd)) tips.push("use Select-Object -Last N (or Get-Content -Tail N) instead of tail")
+  if (/(^|[\s;|&(])grep\b/.test(cmd)) tips.push("use Select-String (or the grep tool) instead of grep")
+  if (/(^|[\s;|&(])touch\b/.test(cmd)) tips.push("create files with the write tool or New-Item -ItemType File")
+  if (/(^|[\s;|&(])which\b/.test(cmd)) tips.push("use (Get-Command name).Source instead of which")
+  if (/(^|[\s;|&(])(sed|awk)\b/.test(cmd)) tips.push("edit files with the edit tool instead of sed/awk")
+  if (/(^|[\s;|&(])rm\s+-rf?\b/.test(cmd)) tips.push("use Remove-Item -Recurse -Force path instead of rm -rf")
+  if (/(^|[\s;|&(])mkdir\s+-p\b/.test(cmd)) tips.push("use New-Item -ItemType Directory -Force path instead of mkdir -p")
+  if (!tips.length && /is not recognized as (the name of )?a cmdlet|is not recognized as an internal or external command/i.test(String(output))) {
+    tips.push("that program is not installed or not on PATH; check with (Get-Command name) or use another tool")
+  }
+  return tips.length ? `\nHint (Windows PowerShell 5.1): ${tips.join("; ")}.` : ""
+}
+
 const MAX_OUT = 30000
 const clip = (s, n = MAX_OUT) => (s.length <= n ? s : s.slice(0, n / 2) + `\n\n... [${s.length - n} chars truncated] ...\n\n` + s.slice(-n / 2))
 
@@ -38,7 +111,8 @@ const read = {
   paths: (a, c) => [resolvePath(c.cwd, a.path)],
   async run(a, c) {
     const abs = resolvePath(c.cwd, a.path)
-    const st = fs.statSync(abs)
+    let st
+    try { st = fs.statSync(abs) } catch (e) { throw new Error(missingPathMessage(e, abs, c.cwd, "read")) }
     if (st.isDirectory())
       return fs
         .readdirSync(abs, { withFileTypes: true })
@@ -49,13 +123,24 @@ const read = {
     const buf = fs.readFileSync(abs)
     if (looksBinary(buf)) throw new Error("Binary file, cannot display")
     const lines = buf.toString("utf8").split(/\r?\n/)
-    const start = Math.max(1, a.offset || 1)
-    const limit = a.limit || 2000
-    const slice = lines.slice(start - 1, start - 1 + limit)
+    const start = Math.max(1, Math.trunc(Number(a.offset)) || 1)
+    const limit = Math.max(1, Math.trunc(Number(a.limit)) || 2000)
     fileGuard.noteRead(c, abs)
-    const body = slice.map((l, i) => `${start + i}\t${l.length > 2000 ? l.slice(0, 2000) + "..." : l}`).join("\n")
-    const more = start - 1 + limit < lines.length ? `\n\n[${lines.length - (start - 1 + limit)} more lines, use offset=${start + limit}]` : ""
-    return body + more
+    if (start > lines.length) return `offset ${start} is past the end of the file (${lines.length} lines). Nothing more to read.`
+    // Stay well under the result size cap, so nothing is cut from the middle;
+    // the model gets an exact offset to continue from instead.
+    const out = []
+    let chars = 0
+    let i = start - 1
+    for (; i < Math.min(lines.length, start - 1 + limit); i++) {
+      const l = lines[i]
+      const row = `${i + 1}\t${l.length > 2000 ? l.slice(0, 2000) + "… [line cut at 2000 chars]" : l}`
+      if (chars + row.length > 50000 && out.length) break
+      out.push(row)
+      chars += row.length + 1
+    }
+    const more = i < lines.length ? `\n\n[Showing lines ${start}-${i} of ${lines.length}. ${lines.length - i} more lines: use offset=${i + 1}]` : ""
+    return out.join("\n") + more
   },
 }
 
@@ -77,6 +162,10 @@ const write = {
     try {
       before = fs.readFileSync(abs, "utf8")
     } catch {}
+    // A JSON object sent as content (package.json, tsconfig…) is written as JSON text.
+    if (a.content != null && typeof a.content === "object") a.content = JSON.stringify(a.content, null, 2) + "\n"
+    else if (typeof a.content !== "string") a.content = String(a.content == null ? "" : a.content)
+    try { if (fs.statSync(abs).isDirectory()) throw new Error(`${abs} is a folder, not a file. Nothing was written. Give a file path inside it.`) } catch (e) { if (e.code !== "ENOENT") throw e }
     fs.writeFileSync(abs, a.content, "utf8")
     fileGuard.afterWrite(c, abs)
     if (c.stats) Object.assign(c.stats, diffStats(before, a.content), { file: abs })
@@ -101,7 +190,8 @@ const edit = {
   paths: (a, c) => [resolvePath(c.cwd, a.path)],
   async run(a, c) {
     const abs = resolvePath(c.cwd, a.path)
-    if (a.oldString === a.newString) throw new Error("oldString and newString are identical")
+    if (a.oldString === a.newString) throw new Error("oldString and newString are identical; nothing to change.")
+    if (!fs.existsSync(abs)) throw new Error(missingPathMessage({ code: "ENOENT" }, abs, c.cwd, "edit"))
     fileGuard.beforeModify(c, abs)
     const src = fs.readFileSync(abs, "utf8")
     const r = applyEdit(src, a.oldString, a.newString, a.replaceAll === true)
@@ -259,8 +349,18 @@ const bash = {
           fs.appendFileSync(f, `[${new Date().toISOString()}] ${c.cwd} :: ${redactText(String(a.command).replace(/\s+/g, " ").slice(0, 300))} :: exit ${code}${note ? " (killed)" : ""}\n`, { encoding: "utf8", mode: 0o600 })
         } catch {}
         const statusLine =
-          info.status === "completed" ? "" : info.exit != null && info.exit !== 0 ? `\n[exited with code ${info.exit}]` : ""
-        finish(clip(jobs.output(h.id) || "") + note + statusLine + (info.status === "completed" ? "" : ""))
+          info.status === "completed" ? "" : info.exit != null && info.exit !== 0 ? `\n[command failed: exit code ${info.exit}]` : note ? "" : info.signal ? `\n[process ended by signal ${info.signal}]` : "\n[the command did not finish normally]"
+        let text = jobs.output(h.id) || ""
+        // jobs keeps the last 30k chars: say so, and where the full log is.
+        let head = ""
+        try {
+          const logFile = info.file || h.file
+          const size = logFile && fs.existsSync(logFile) ? fs.statSync(logFile).size : Number(info.size) || 0
+          if (size > 30000 && text.length >= 29000) head = `[earlier output omitted; full log: ${logFile}. Use grep or read on that file to see it.]\n`
+        } catch {}
+        const empty = !text.trim() && !note && info.status === "completed" ? "(no output; the command succeeded with exit code 0)" : ""
+        const hint = info.status !== "completed" && !note ? shellHint(String(a.command || ""), text) : ""
+        finish(head + clip(text) + empty + note + statusLine + hint)
       })
 
       // The job was moved to the background (explicitly or by timeout).
@@ -426,10 +526,21 @@ const grep = {
   paths: (a, c) => [resolvePath(c.cwd, a.path)],
   async run(a, c) {
     const root = resolvePath(c.cwd, a.path)
-    const re = new RegExp(a.pattern, a.ignoreCase ? "i" : "")
-    const inc = a.include ? globToRegExp(a.include) : null
+    let rootStat
+    try { rootStat = fs.statSync(root) } catch (e) { throw new Error(missingPathMessage(e, root, c.cwd, "read").replace("File not found", "Path not found").replace("Nothing was read", "Nothing was searched")) }
+    let re
+    let literalNote = ""
+    try { re = new RegExp(a.pattern, a.ignoreCase ? "i" : "") } catch {
+      // Code such as "foo(" or "a[0]" is not a valid regex: search it as plain text.
+      re = new RegExp(String(a.pattern).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), a.ignoreCase ? "i" : "")
+      literalNote = "(The pattern was not a valid regular expression, so it was searched as plain text.)\n"
+    }
+    const inc = a.include ? globToRegExp(String(a.include).replace(/^\.\//, "")) : null
     const hits = []
-    for (const f of walk(root)) {
+    let searched = 0
+    const files = rootStat.isFile() ? [root] : walk(root)
+    for (const f of files) {
+      searched++
       const rel = toPosix(path.relative(root, f))
       if (inc && !inc.test(rel) && !inc.test(path.basename(f))) continue
       // `read` asks before opening .env/key files; grep must not be a free
@@ -451,11 +562,12 @@ const grep = {
       for (let i = 0; i < lines.length; i++) {
         if (re.test(lines[i])) {
           hits.push(`${toPosix(f)}:${i + 1}:${lines[i].slice(0, 300)}`)
-          if (hits.length >= 200) return hits.join("\n") + "\n[stopped at 200 matches]"
+          if (hits.length >= 200) return literalNote + hits.join("\n") + "\n[stopped at 200 matches: narrow the search with include or path]"
         }
       }
     }
-    return hits.length ? hits.join("\n") : "No matches"
+    if (hits.length) return literalNote + hits.join("\n")
+    return `${literalNote}No matches for /${a.pattern}/${a.ignoreCase ? "i" : ""} in ${searched} file${searched === 1 ? "" : "s"} under ${root}${a.include ? ` (include: ${a.include})` : ""}. Skipped: node_modules, .git, build folders, files over 1 MB and binary files. Try ${a.ignoreCase ? "" : "ignoreCase: true, "}a shorter pattern, or another path.`
   },
 }
 
@@ -471,15 +583,29 @@ const glob = {
   paths: (a, c) => [resolvePath(c.cwd, a.path)],
   async run(a, c) {
     const root = resolvePath(c.cwd, a.path)
-    const re = globToRegExp(a.pattern)
+    if (!fs.existsSync(root)) throw new Error(missingPathMessage({ code: "ENOENT" }, root, c.cwd, "read").replace("File not found", "Folder not found").replace("Nothing was read", "Nothing was searched"))
+    // "./src/*.js" and absolute patterns are made relative to the search folder.
+    let pattern = toPosix(String(a.pattern)).replace(/^\.\//, "")
+    if (path.isAbsolute(String(a.pattern))) {
+      const rel = toPosix(path.relative(root, String(a.pattern)))
+      if (!rel.startsWith("..")) pattern = rel
+    }
+    const re = globToRegExp(pattern)
+    const baseOnly = !pattern.includes("/") // "*.js" also finds files in subfolders, as most tools do
     const found = []
+    let searched = 0
     for (const f of walk(root)) {
+      searched++
       const rel = toPosix(path.relative(root, f))
-      if (re.test(rel)) found.push({ f, m: fs.statSync(f).mtimeMs })
+      if (re.test(rel) || (baseOnly && re.test(path.basename(f)))) {
+        let m = 0
+        try { m = fs.statSync(f).mtimeMs } catch {}
+        found.push({ f, m })
+      }
     }
     found.sort((x, y) => y.m - x.m)
     const list = found.slice(0, 200).map((x) => toPosix(x.f))
-    return list.length ? list.join("\n") + (found.length > 200 ? `\n[${found.length - 200} more]` : "") : "No files matched"
+    return list.length ? list.join("\n") + (found.length > 200 ? `\n[${found.length - 200} more: use a narrower pattern]` : "") : `No files matched "${a.pattern}" under ${root} (${searched} files searched; node_modules, .git and build folders are skipped). Try a broader pattern such as "**/*${path.extname(pattern) || ".js"}", or list the folder.`
   },
 }
 
@@ -519,6 +645,15 @@ const todowrite = {
    Based on OpenCode's webfetch implementation. */
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024 // 5MB limit
 const DEFAULT_TIMEOUT_MS = 30000
+
+/** "example.com/page" -> "https://example.com/page" (models often omit the scheme). */
+function webUrl(raw) {
+  const s = String(raw == null ? "" : raw).trim()
+  if (/^[a-z][a-z0-9+.-]*:/i.test(s)) return s
+  if (/^\/\//.test(s)) return `https:${s}`
+  if (/^[\w-]+(\.[\w-]+)+(:\d+)?(\/|$|\?|#)/.test(s)) return `https://${s}`
+  return s
+}
 
 const FETCH_HEADERS = {
   "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
@@ -708,13 +843,14 @@ const webfetch = {
   perm: (a) => {
     let host = ""
     try {
-      host = new URL(a.url).host
+      host = new URL(webUrl(a.url)).host
     } catch {}
     return { tool: "webfetch", subject: host }
   },
   paths: () => [],
   async run(a, c) {
-    const u = new URL(a.url)
+    let u
+    try { u = new URL(webUrl(a.url)) } catch { throw new Error(`"${a.url}" is not a valid web address. Give a full URL such as https://example.com/page. Nothing was fetched.`) }
     if (!/^https?:$/.test(u.protocol)) throw new Error("Only http/https URLs are allowed")
     const format = a.format || "markdown"
     const timeout = Math.min(a.timeout || DEFAULT_TIMEOUT_MS, 120000)
@@ -736,7 +872,14 @@ const webfetch = {
       let cur = u
       let res
       for (let hop = 0; ; hop++) {
-        res = await fetch(cur, { signal: ctl.signal, headers: FETCH_HEADERS, redirect: "manual" })
+        try {
+          res = await fetch(cur, { signal: ctl.signal, headers: FETCH_HEADERS, redirect: "manual" })
+        } catch (e) {
+          if (ctl.signal.aborted) throw new Error(`${cur.host} did not answer within ${Math.round(timeout / 1000)} s. Nothing was fetched; try again or raise timeout.`)
+          const code = (e && e.cause && (e.cause.code || e.cause.name)) || ""
+          const why = code === "ENOTFOUND" ? "the address does not exist (DNS lookup failed)" : code === "ECONNREFUSED" ? "the server refused the connection" : /CERT|SSL|TLS/i.test(code) ? "its HTTPS certificate is not valid" : code === "ECONNRESET" ? "the connection was reset" : (e && e.message) || "network error"
+          throw new Error(`Could not reach ${cur.host}: ${why}${code ? ` (${code})` : ""}. Nothing was fetched; check the URL or try another source.`)
+        }
         const loc = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null
         if (!loc) break
         if (hop >= 5) throw new Error("Too many redirects")
@@ -1082,8 +1225,9 @@ const multiedit = {
   perm: (a, c) => ({ tool: "edit", subject: resolvePath(c.cwd, a.path) }),
   paths: (a, c) => [resolvePath(c.cwd, a.path)],
   async run(a, c) {
-    if (!Array.isArray(a.edits) || !a.edits.length) throw new Error("edits must be a non-empty array")
+    if (!Array.isArray(a.edits) || !a.edits.length) throw new Error('"edits" must be a non-empty JSON array of {"oldString": "...", "newString": "..."} objects. Nothing was changed.')
     const abs = resolvePath(c.cwd, a.path)
+    if (!fs.existsSync(abs)) throw new Error(missingPathMessage({ code: "ENOENT" }, abs, c.cwd, "edit"))
     fileGuard.beforeModify(c, abs)
     const src = fs.readFileSync(abs, "utf8")
     let cur = src
@@ -1109,7 +1253,13 @@ const multiedit = {
 function parsePatch(text) {
   const lines = String(text || "").replace(/\r\n/g, "\n").split("\n")
   let i = lines.findIndex((l) => l.trim() === "*** Begin Patch")
-  if (i < 0) throw new Error("Invalid patch: it must start with '*** Begin Patch' and end with '*** End Patch'")
+  if (i < 0) {
+    // A git/unified diff ("--- a/x", "+++ b/x", "@@ -1,3 +1,4 @@") is a different format.
+    if (lines.some((l) => /^(---|\+\+\+) /.test(l)) || lines.some((l) => /^@@ -\d/.test(l))) {
+      throw new Error("This looks like a git/unified diff, which apply_patch does not read. Nothing was changed. Use the '*** Begin Patch' … '*** End Patch' envelope, or make the change with edit / multiedit.")
+    }
+    throw new Error("Invalid patch: it must start with '*** Begin Patch' and end with '*** End Patch'. Nothing was changed.")
+  }
   i++
   const ops = []
   let ended = false

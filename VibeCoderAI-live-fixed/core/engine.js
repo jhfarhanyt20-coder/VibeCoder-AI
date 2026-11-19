@@ -68,6 +68,21 @@ class Engine {
     this.crewMaxParallel = Math.max(1, Math.min(16, Math.floor(Number(opts.crewMaxParallel) || 4)))
     this.subagents = new SubAgentManager(this, { maxParallel: this.crewMaxParallel })
     this.subagentsEnabled = opts.subagentsEnabled !== false // on by default
+    // Computer Use (Windows): off unless the host turns it on (the desktop app
+    // does, from Settings → Computer Use). The executor starts on first use.
+    this.computerUse = { enabled: opts.computerUse === true, askRisky: true }
+    this.computer = null
+    this.computerHooks = null
+    // Connectors: signed-in accounts the agent can work with (shared by app and CLI).
+    this.connectors = {}
+    try {
+      const { createGitHub } = require("./connectors/github")
+      this.connectors.github = createGitHub({ home: this.home, onChange: (status) => { try { this._emit(null, { type: "connector.changed", connector: status }) } catch {} } })
+    } catch {}
+    try {
+      const { createFacebook } = require("./connectors/facebook")
+      this.connectors.facebook = createFacebook({ home: this.home, onChange: (status) => { try { this._emit(null, { type: "connector.changed", connector: status }) } catch {} } })
+    } catch {}
     // V-07 convenience API: engine.agents.list(dir) / engine.agents.get(id, dir)
     this.agents = {
       list: (dir, listOpts) => this.listAgents(dir, listOpts),
@@ -167,6 +182,16 @@ class Engine {
     } catch {}
     const ex = [...this.mcp.toolObjects(), ...this.mcp.resourceToolObjects(), ...pl]
     if (this.subagentsEnabled) ex.push(this.subagentTool())
+    // Computer Use: screen/mouse/keyboard tools are offered to the model only
+    // while the setting is on (the tools also refuse when it is off).
+    if (this.computerUse && this.computerUse.enabled === true && process.platform === "win32") {
+      try { ex.push(...require("./tools/computer").ALL) } catch {}
+    }
+    // The agent's own product guide (answers questions about VibeCoder itself).
+    try { ex.push(...require("./tools/vibehelp").ALL) } catch {}
+    // Connector tools appear only while that account is signed in.
+    try { if (this.connectors && this.connectors.github && this.connectors.github.connected()) ex.push(...require("./tools/github").ALL) } catch {}
+    try { if (this.connectors && this.connectors.facebook && this.connectors.facebook.connected()) ex.push(...require("./tools/facebook").ALL) } catch {}
     return ex
   }
 
@@ -187,6 +212,14 @@ class Engine {
     // failure must never affect the run, so Trail.append() swallows errors.
     if (shouldTrail(full)) this.trail.append(sessionId, full)
     try { this.extensions.event(full) } catch {}
+    // Computer Use ends with the task: let go of keys/buttons, forget where the
+    // mouse was left, and tell the host (badge off, app window back).
+    if (full.type === "done" && this.computer) {
+      if (typeof this.computer.reset === "function") this.computer.reset()
+      else this.computer.lastCursor = null
+      this.computer.releaseAll().catch(() => {})
+      try { if (this.computerHooks && typeof this.computerHooks.end === "function") this.computerHooks.end({ sessionId, reason: full.reason }) } catch {}
+    }
     return full
   }
 
@@ -386,6 +419,9 @@ class Engine {
       if (tool === "question") return true
       const subject = perm?.subject == null ? "" : perm.subject
       const neverPersist = !!perm?.neverPersist
+      // A critical prompt (risky Computer Use action) is never auto-approved by
+      // the desktop's Full Access mode: the user must click it.
+      const critical = perm?.critical === true
       // Hard locks are checked before every other rule. They are not a prompt
       // and cannot be lifted by a saved "always allow" approval.
       const locks = loadLocks({ home: this.home, dir: session && session.dir })
@@ -425,14 +461,14 @@ class Engine {
       })
       if (action === "allow") return true
       if (action === "deny") return false
-      if (this.permissionMode === "allow") return true
+      if (this.permissionMode === "allow" && !critical) return true
       if (this.permissionMode === "deny") return false
       if (signal.aborted) return false // the run was stopped: never wait for an answer nobody can give
       const permissionId = newId("perm")
       return new Promise((resolve) => {
-        this.pending.set(permissionId, { resolve, session, inherits, tool, subject, neverPersist })
+        this.pending.set(permissionId, { resolve, session, inherits, tool, subject, neverPersist, ...(critical ? { critical: true } : {}) })
         signal.addEventListener("abort", () => this.replyPermission(permissionId, "deny"), { once: true })
-        emit({ type: "permission.ask", permissionId, tool, subject })
+        emit({ type: "permission.ask", permissionId, tool, subject, ...(critical ? { critical: true } : {}) })
       })
     }
   }

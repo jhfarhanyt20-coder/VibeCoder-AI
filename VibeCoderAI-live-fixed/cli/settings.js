@@ -6,7 +6,7 @@ const { readJson, writeJson } = require("../core/control")
 const { redactText } = require("../core/harness/guard")
 const { THEMES, safeText } = require("./theme")
 
-const DEFAULTS = { theme: "obsidian", reasoning: false, verbose: false, history: true, model: null, agent: "build", thinking: null, access: "ask" }
+const DEFAULTS = { theme: "obsidian", reasoning: false, verbose: false, history: true, model: null, agent: "build", thinking: null, access: "ask", computerUse: true }
 const settingsFile = (home = homeDir()) => path.join(home, "cli.json")
 const historyFile = (home = homeDir()) => path.join(home, "cli_history")
 
@@ -17,7 +17,7 @@ function loadSettings(home) {
   return {
     ...DEFAULTS,
     theme: Object.prototype.hasOwnProperty.call(THEMES, raw.theme) ? raw.theme : DEFAULTS.theme,
-    ...Object.fromEntries(["reasoning", "verbose", "history"].filter((key) => typeof raw[key] === "boolean").map((key) => [key, raw[key]])),
+    ...Object.fromEntries(["reasoning", "verbose", "history", "computerUse"].filter((key) => typeof raw[key] === "boolean").map((key) => [key, raw[key]])),
     model: typeof raw.model === "string" ? raw.model : null,
     agent: typeof raw.agent === "string" ? raw.agent : DEFAULTS.agent,
     thinking: ["none", "low", "medium", "high"].includes(raw.thinking) ? raw.thinking : null,
@@ -31,7 +31,7 @@ function saveSettings(patch, home) {
   for (const [key, value] of Object.entries(patch)) {
     if (!(key in DEFAULTS)) throw new Error(`Unknown CLI setting "${key}".`)
     if (key === "theme" && !Object.prototype.hasOwnProperty.call(THEMES, value)) throw new Error("Unknown terminal theme.")
-    if (["reasoning", "verbose", "history"].includes(key) && typeof value !== "boolean") throw new Error(`${key} needs true or false.`)
+    if (["reasoning", "verbose", "history", "computerUse"].includes(key) && typeof value !== "boolean") throw new Error(`${key} needs true or false.`)
     if (["model", "agent"].includes(key) && value !== null && typeof value !== "string") throw new Error(`${key} needs a string or null.`)
     if (key === "thinking" && value !== null && !["none", "low", "medium", "high"].includes(value)) throw new Error("Thinking must be none, low, medium, high or null.")
     if (key === "access" && !["ask", "full"].includes(value)) throw new Error("Access must be ask or full.")

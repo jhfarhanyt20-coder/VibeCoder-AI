@@ -18,6 +18,16 @@ const DEFAULT_RULES = [
   // grant permission for commands, edits, secrets, or other tool actions.
   { tool: "skill", pattern: "*", action: "allow" },
   { tool: "playbook", pattern: "*", action: "allow" },
+  // Computer Use is offered only while the user keeps it on in Settings. Its
+  // ordinary actions run without a prompt; risky ones (send, delete, install,
+  // pay...) always ask through a critical, never-saved prompt.
+  { tool: "computer", pattern: "*", action: "allow" },
+  // Connectors (GitHub…): reading never asks; changes follow the permission mode;
+  // hard-to-undo actions always ask through a critical prompt in the tool.
+  { tool: "github", pattern: "read**", action: "allow" },
+  { tool: "facebook", pattern: "read**", action: "allow" },
+  // Reading VibeCoder's own product guide is always free.
+  { tool: "vibecoder_help", pattern: "*", action: "allow" },
   // the agent's own scratch folder (./.vibe-scratch): creating, editing and
   // cleaning up files inside it never asks - it is the agent's private workspace
   { tool: "*", pattern: "**/.vibe-scratch/**", action: "allow" },

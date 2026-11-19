@@ -11,7 +11,7 @@ const { stopSessionWork } = require("./run")
 const { homeDir } = require("../core/util")
 const { redactText } = require("../core/harness/guard")
 
-const LOCAL_COMMANDS = ["help", "model", "models", "fallback", "agent", "new", "sessions", "use", "rename", "delete", "compact", "undo", "redo", "steps", "step", "diff", "history", "export", "usage", "skills", "skill", "playbooks", "agents", "recipes", "recipe", "memory", "mcp", "plugins", "extensions", "tools", "doctor", "config", "theme", "access", "provider", "permissions", "locks", "forms", "crew", "shells", "shell", "trail", "todos", "browser", "marketplace", "registry", "auth", "profile", "reasoning", "thinking", "verbose", "yes", "dir", "clear", "exit", "quit"]
+const LOCAL_COMMANDS = ["help", "model", "models", "fallback", "agent", "new", "sessions", "use", "rename", "delete", "compact", "undo", "redo", "steps", "step", "diff", "history", "export", "usage", "skills", "skill", "playbooks", "agents", "recipes", "recipe", "memory", "mcp", "plugins", "extensions", "tools", "doctor", "config", "theme", "access", "computer", "connectors", "provider", "permissions", "locks", "forms", "crew", "shells", "shell", "trail", "todos", "browser", "marketplace", "registry", "auth", "profile", "reasoning", "thinking", "verbose", "yes", "dir", "clear", "exit", "quit"]
 const HELP = `VibeCoder chat
 
   /model [id]       pick/switch model    /agent [id]     pick/switch persona
@@ -33,6 +33,8 @@ const HELP = `VibeCoder chat
   /thinking [level] reasoning effort     /verbose        detailed tool output
   /access [full|ask] saved approval mode  /doctor         setup diagnostics
   /yes              toggle saved Full Access (hard Locks still apply)
+  /computer [on|off] Computer Use: screen, mouse and keyboard (Ctrl+Alt+Esc stops)
+  /connectors       GitHub/Facebook sign-in (/connectors facebook connect)
   /dir              working folder       /clear          clear terminal only
   /exit             leave chat
 

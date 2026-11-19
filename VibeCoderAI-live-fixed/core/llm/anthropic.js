@@ -19,7 +19,7 @@ function toWire(messages) {
         content.push({ type: "tool_result", tool_use_id: p.id, content: String(p.output), is_error: !!p.isError })
         const shot = p.screenshot
         if (shot?.modelVisible !== false && shot?.data) {
-          content.push({ type: "text", text: `Browser screenshot${shot.title ? ` — ${shot.title}` : ""}${shot.url ? ` (${shot.url})` : ""}. Inspect the visual state of this page.` })
+          content.push({ type: "text", text: (shot.caption ? `${shot.caption}${shot.title ? ` — ${shot.title}` : ""}. Inspect what is on the screen.` : `Browser screenshot${shot.title ? ` — ${shot.title}` : ""}${shot.url ? ` (${shot.url})` : ""}. Inspect the visual state of this page.`) })
           content.push({ type: "image", source: { type: "base64", media_type: shot.mime || "image/png", data: shot.data } })
         }
       }

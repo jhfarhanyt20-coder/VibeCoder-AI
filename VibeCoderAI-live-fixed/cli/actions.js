@@ -6,7 +6,7 @@ const { THEMES, configureTheme, safeText, providerName } = require("./theme")
 const settings = require("./settings")
 const { publicData } = require("../core/control")
 
-const COMMANDS = ["help", "chat", "run", "resume", "serve", "attach", "trust", "models", "provider", "fallback", "profile", "auth", "sessions", "session", "compact", "undo", "redo", "steps", "diff", "usage", "skills", "playbooks", "agents", "recipes", "mcp", "plugins", "extensions", "tools", "doctor", "memory", "config", "access", "permissions", "locks", "forms", "crew", "shells", "shell", "trail", "todos", "browser", "marketplace", "registry", "theme", "init", "completion"]
+const COMMANDS = ["help", "chat", "run", "resume", "serve", "attach", "trust", "models", "provider", "fallback", "profile", "auth", "sessions", "session", "compact", "undo", "redo", "steps", "diff", "usage", "skills", "playbooks", "agents", "recipes", "mcp", "plugins", "extensions", "tools", "doctor", "memory", "config", "access", "computer", "connectors", "permissions", "locks", "forms", "crew", "shells", "shell", "trail", "todos", "browser", "marketplace", "registry", "theme", "init", "completion"]
 const HELP = `vibe - VibeCoder coding agent CLI
 
   vibe / vibe chat             interactive agent, pickers and multiline composer
@@ -35,6 +35,8 @@ const HELP = `vibe - VibeCoder coding agent CLI
   vibe compact / config       context summaries and settings
   vibe usage                  tokens, reasoning, cache and cost
   vibe theme [name]            terminal colors
+  vibe computer [on|off]      Computer Use: screen, mouse, keyboard (default on)
+  vibe connectors [github|facebook connect|status|disconnect]  sign in for the agent
   vibe doctor                 paths, keys, counts and host diagnostics
   vibe init / completion      safe scaffolding and shell completions
 
@@ -466,6 +468,55 @@ async function runCommand(ctx, argv) {
         show({ access: sub, saved: true }, () => log(sub === "full" ? "Full Access saved. Permission requests auto-approved; hard Locks and agent denies still apply." : "Ask before changes saved."))
       }
       break
+    case "connectors": {
+      // Same accounts as Connectors in the app (~/.vibe/connectors.json).
+      const { createGitHub } = require("../core/connectors/github")
+      const { createFacebook } = require("../core/connectors/facebook")
+      const live = (ctx.vibe && ctx.vibe.engine && ctx.vibe.engine.connectors) || {}
+      const all = { github: live.github || createGitHub({ home: ctx.home }), facebook: live.facebook || createFacebook({ home: ctx.home }) }
+      const which = sub || "list"
+      const action = rest[0] || "status"
+      const line = (st) => `${st.name}: ${st.connected ? `connected as ${st.account && st.account.login}` : st.comingSoon ? "coming soon" : "not connected"}`
+      if (which === "list" || which === "status") { const rows = Object.values(all).map((x) => x.status()); show(rows, () => { for (const st of rows) log(line(st)); log(c.dim("Sign in: vibe connectors github connect")) }); break }
+      if (!all[which]) throw new Error(`Unknown connector "${which}". Available: github, facebook.`)
+      const github = all[which] // the chosen connector (name kept from the first version)
+      const label = which === "github" ? "GitHub" : "Facebook"
+      if (action === "status") { const st = github.status(); show(st, () => log(line(st))); break }
+      if (["disconnect", "logout", "remove"].includes(action)) { show(github.disconnect(), () => log(`${label} disconnected. The saved sign-in was removed from this computer.`)); break }
+      if (action !== "connect" && action !== "login") throw new Error(`Use vibe connectors ${which} connect | status | disconnect.`)
+      let st = await github.connect()
+      if (st.connected) { show(st, () => log(line(st))); break }
+      if (st.pending.userCode) log(`Open ${st.pending.verificationUri} and enter the code:
+
+    ${st.pending.userCode}
+`)
+      else log(`A browser tab opens for ${label}. Sign in there and allow VibeCoder.
+If it did not open: ${st.pending.verificationUri}
+`)
+      try { if (process.platform === "win32") require("node:child_process").spawn("explorer.exe", [st.pending.verificationUri], { detached: true, stdio: "ignore" }).unref() } catch {}
+      log(c.dim(`Waiting for you to finish on ${label}… (Ctrl+C to cancel)`))
+      while (st.pending && !st.connected) {
+        await new Promise((r) => setTimeout(r, st.pending.mode === "web" ? 2000 : 5000))
+        st = await github.poll()
+      }
+      if (!st.connected) throw new Error(st.error || `${label} sign-in did not finish.`)
+      show(st, () => log(`Connected to ${label} as ${st.account && st.account.login}. The agent can now work with this account.`))
+      break
+    }
+    case "computer": {
+      // Same switch as Settings → Computer Use in the app (on by default, Windows only).
+      if (!sub || sub === "status") {
+        const on = settings.loadSettings(ctx.home).computerUse !== false
+        show({ computerUse: on, supported: process.platform === "win32" }, () => log(process.platform !== "win32" ? "Computer Use works on Windows only." : on ? "Computer Use is on: the agent can see the screen and use the mouse and keyboard. Press Ctrl+Alt+Esc to stop it at any time." : "Computer Use is off. Turn it on with vibe computer on."))
+      } else {
+        if (!["on", "off"].includes(sub)) throw new Error("Use vibe computer on, vibe computer off or vibe computer status.")
+        settings.saveSettings({ computerUse: sub === "on" }, ctx.home)
+        const engine = ctx.vibe && ctx.vibe.engine
+        if (engine) engine.computerUse = { ...(engine.computerUse || {}), enabled: sub === "on" && process.platform === "win32", askRisky: true }
+        show({ computerUse: sub === "on", saved: true }, () => log(sub === "on" ? "Computer Use turned on." : "Computer Use turned off. The agent will not use the mouse, keyboard or screen."))
+      }
+      break
+    }
     case "mcp": {
       if (!sub || sub === "list") show(await call("mcp.list"), (rows) => {
         log(table(rows.map((r) => [r.name, r.scope, r.type, clip(r.url || publicData((r.command || []).join(" ")), 76)]), ["Name", "Scope", "Type", "Target"]))

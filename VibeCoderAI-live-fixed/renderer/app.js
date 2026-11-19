@@ -1418,8 +1418,10 @@ function applySidebarHidden(hidden, moveFocus = false) {
   const toggle = $("btn-sidebar-toggle")
   if (toggle) {
     toggle.setAttribute("aria-expanded", hidden ? "false" : "true")
-    toggle.title = hidden ? "Show sidebar" : "Hide sidebar"
-    toggle.dataset.tip = toggle.title
+    // One tooltip only: the styled data-tip (a native title would show a second one).
+    toggle.dataset.tip = hidden ? "Show sidebar" : "Hide sidebar"
+    toggle.setAttribute("aria-label", toggle.dataset.tip)
+    toggle.removeAttribute("title")
   }
   try {
     localStorage.setItem(SIDEBAR_HIDDEN_KEY, hidden ? "1" : "0")
@@ -1980,28 +1982,49 @@ function timelineCategory(name) {
 }
 function timelineGroup() {
   const wrap = document.createElement("div")
-  wrap.className = "used-group timeline-group collapsed"
+  // Steps stay visible: the agent's work reads as a list of actions. Each row's
+  // details (output, diff) still open on click; long runs show the latest steps.
+  wrap.className = "used-group timeline-group steps-visible"
   const head = document.createElement("button")
   head.type = "button"
   head.className = "used-head"
   head.innerHTML = '<span class="used-n"></span><span class="used-names"></span><span class="used-chev">▾</span>'
   const list = document.createElement("div")
   list.className = "used-list"
+  const more = document.createElement("button")
+  more.type = "button"
+  more.className = "steps-more"
+  more.hidden = true
+  more.onclick = () => {
+    wrap.classList.remove("trimmed")
+    wrap.dataset.showAll = "1"
+    more.hidden = true
+  }
+  list.before(more)
   head.onclick = () => {
     wrap.classList.toggle("collapsed")
     wrap.dataset.manualExpansion = "1"
     head.setAttribute("aria-expanded", String(!wrap.classList.contains("collapsed")))
   }
-  wrap.append(head, list)
+  wrap.append(head, more, list)
   return wrap
 }
 function updateTimelineGroup(group) {
   const rows = [...group.querySelector(".used-list").children]
   const tools = rows.filter((row) => row.dataset.timelineTool)
   const labels = [...new Set((tools.length ? tools : rows).map((row) => row.dataset.timelineTool || TIMELINE_CATEGORIES[row.dataset.timelineItem]))]
-  group.querySelector(".used-n").textContent = `Used ${tools.length || rows.length}`
-  group.querySelector(".used-names").textContent = labels.join(", ")
-  if (!group.dataset.manualExpansion) group.classList.toggle("collapsed", rows.every((row) => timelinePreferences[row.dataset.timelineItem].collapse))
+  group.querySelector(".used-n").textContent = `${tools.length || rows.length} step${(tools.length || rows.length) === 1 ? "" : "s"}`
+  group.querySelector(".used-names").textContent = labels.join(" · ")
+  const failed = rows.filter((row) => row.classList?.contains("failed")).length
+  group.classList.toggle("has-failed", failed > 0)
+  // "Working" only for the latest group of a run that is still going.
+  group.classList.toggle("is-running", typeof state !== "undefined" && !!state.running && group === $("messages").lastElementChild && rows.some((row) => row.classList?.contains("act") && !row.classList.contains("done") && !row.classList.contains("failed")))
+  // Long runs: show the latest 6 steps and a "show earlier" row.
+  const hiddenCount = rows.length - 6
+  const more = group.querySelector(".steps-more")
+  const trim = hiddenCount > 2 && !group.dataset.showAll
+  group.classList.toggle("trimmed", trim)
+  if (more) { more.hidden = !trim; more.textContent = `Show ${hiddenCount} earlier step${hiddenCount === 1 ? "" : "s"}` }
   group.querySelector(".used-head").setAttribute("aria-expanded", String(!group.classList.contains("collapsed")))
 }
 function appendTimeline(el, category) {
@@ -2059,6 +2082,34 @@ function initTimelineSettings() {
 initTimelineSettings()
 
 /* ---------- thought rows (opencode style "Thought 4s") ---------- */
+/** A finished thought reads "Thought for 12s"; a live one counts the seconds. */
+function finishThought(el, secs) {
+  if (!el) return
+  if (el._thinkTimer) { clearInterval(el._thinkTimer); el._thinkTimer = null }
+  el.classList.remove("live")
+  const label = el.querySelector(".th-label")
+  if (label) label.textContent = secs ? `Thought for ${secs}s` : "Thought"
+  const dur = el.querySelector(".th-dur")
+  if (dur) dur.textContent = ""
+}
+function startThoughtTimer(el, since) {
+  if (!el) return
+  el.classList.add("live")
+  const label = el.querySelector(".th-label")
+  if (label) label.textContent = "Thinking"
+  const tick = () => {
+    const d = el.querySelector(".th-dur")
+    if (d) d.textContent = `${Math.max(0, Math.round((Date.now() - since) / 1000))}s`
+  }
+  tick()
+  el._thinkTimer = setInterval(tick, 1000)
+}
+/** Keep the newest thinking text in view (the box scrolls on its own). */
+function followThought(body) {
+  if (!body) return
+  if (body.scrollHeight - body.scrollTop - body.clientHeight < 60 || body.dataset.follow !== "0") body.scrollTop = body.scrollHeight
+}
+
 function addThought(text = "", dur = 0, open = false) {
   const el = document.createElement("div")
   el.className = "thought" + ((open || !timelinePreferences.thinking.collapse) ? " open" : "")
@@ -2069,7 +2120,8 @@ function addThought(text = "", dur = 0, open = false) {
       <span class="th-chev">▸</span>
     </div>
     <div class="th-body"></div>`
-  if (dur) el.querySelector(".th-dur").textContent = `${dur}s`
+  if (dur) finishThought(el, dur)
+  else if (!open) el.querySelector(".th-label").textContent = "Thought"
   el.querySelector(".th-body").textContent = text
   el.querySelector(".thought-head").onclick = () => el.classList.toggle("open")
   appendTimeline(el, "thinking")
@@ -3152,6 +3204,7 @@ function scheduleRetry(reason) {
 /* ---------- running / stop state ---------- */
 function setRunning(on) {
   state.running = !!on
+  if (!state.running) for (const g of document.querySelectorAll(".timeline-group.is-running")) g.classList.remove("is-running")
   if (!state.running) state.pulse = null
   const btn = $("btn-send")
   btn.classList.toggle("stop", state.running)
@@ -3406,6 +3459,12 @@ vibe.onEvent(async (event) => {
     return
   }
   // VibeCoder account: signed in / out, code expired, or models refreshed.
+  // Computer Use: the on-screen badge shows activity; here only the stop is reported.
+  if (type === "computer.active") return
+  if (type === "computer.stopped") {
+    showError("Computer Use stopped", "You pressed Ctrl+Alt+Esc, so the agent stopped controlling the computer.", { key: "computer-use" })
+    return
+  }
   if (type === "auth.changed" || type === "auth.models") {
     refreshAuthUI().catch(() => {})
     return
@@ -3741,7 +3800,7 @@ vibe.onEvent(async (event) => {
     typingFlush()
     if (reasoningEl) {
       const secs = state.reasonStart ? Math.max(1, Math.round((Date.now() - state.reasonStart) / 1000)) : 0
-      if (secs) reasoningEl.querySelector(".th-dur").textContent = `${secs}s`
+      finishThought(reasoningEl, secs)
       reasoningEl.classList.remove("open")
       reasoningEl = null
       state.reasonStart = null
@@ -4050,17 +4109,22 @@ vibe.onEvent(async (event) => {
     }
     state.reasonStart = Date.now()
     reasoningEl = addThought("", 0, true) // keep thinking visible while it streams
+    startThoughtTimer(reasoningEl, state.reasonStart)
+    // Follow new text unless the user scrolls up inside the box to read.
+    const body = reasoningEl.querySelector(".th-body")
+    body.addEventListener("scroll", () => { body.dataset.follow = body.scrollHeight - body.scrollTop - body.clientHeight < 60 ? "1" : "0" })
   }
   if (type === "session.reasoning.delta" && reasoningEl) {
     const b = reasoningEl.querySelector(".th-body")
     b.textContent = (b.textContent || "") + (data.delta ?? "")
+    followThought(b)
     scrollChat()
   }
   if (type === "session.reasoning.ended" && reasoningEl) {
     const secs = state.reasonStart
       ? Math.max(1, Math.round((Date.now() - state.reasonStart) / 1000))
       : 0
-    if (secs) reasoningEl.querySelector(".th-dur").textContent = `${secs}s`
+    finishThought(reasoningEl, secs)
     reasoningEl.classList.toggle("open", !timelinePreferences.thinking.collapse)
     reasoningEl = null
     state.reasonStart = null
@@ -5922,27 +5986,32 @@ function renderModelList(filter = "") {
       if (state.selectedModel === key) b.classList.add("selected")
       // VibeCoder account models have opaque ids (vibecoder/free-3): show their real name.
       b.textContent = m.id === "fallback" && m.isGroup ? (m.name || "Fallback model") : (m.providerID === "vibecoder" && m.name ? m.name : m.id)
+      // One clean line: the name, then small tags pushed to the right.
+      const tagsEl = document.createElement("span")
+      tagsEl.className = "mr-tags"
+      b.appendChild(tagsEl)
       if (m.providerID === "vibecoder") b.title = Array.isArray(m.tags) && m.tags.length ? `${m.name} — ${m.tags.join(", ")}` : (m.name || m.id)
       if (m.isGroup) {
         const badge = document.createElement("span")
         badge.className = "mr-badge"
-        badge.textContent = `${(m.groupModels || []).length} MODEL${(m.groupModels || []).length === 1 ? "" : "S"}`
+        badge.textContent = `${(m.groupModels || []).length} model${(m.groupModels || []).length === 1 ? "" : "s"}`
         badge.title = "Automatic failover: 429, server error or timeout moves to the next model"
-        b.appendChild(badge)
+        tagsEl.appendChild(badge)
         b.title = (m.groupModels || []).map((model, index) => `${index + 1}. ${model}`).join("\n")
       }
       if (m.free || key.toLowerCase().includes("free")) {
         const badge = document.createElement("span")
-        badge.className = "mr-badge"
-        badge.textContent = "FREE"
-        b.appendChild(badge)
+        badge.className = "mr-badge free"
+        badge.textContent = "Free"
+        tagsEl.appendChild(badge)
       }
       if (m.image) {
         // the model can see images: attaching a picture will actually reach it
         const badge = document.createElement("span")
-        badge.className = "mr-badge"
-        badge.textContent = "👁 IMAGES"
-        b.appendChild(badge)
+        badge.className = "mr-badge vision"
+        badge.textContent = "Vision"
+        badge.title = "Can see images"
+        tagsEl.appendChild(badge)
       }
       b.onclick = async () => {
         const previous = state.selectedModel
@@ -6243,10 +6312,14 @@ async function showBranchChip() {
   if (!dir || !vibe.gitBranch) return
   let branch = null
   try {
-    const res = await vibe.gitBranch(dir)
-    if (res && res.ok && res.data) branch = res.data
+    // The main process answers { branch: "main" } (null outside a git repo);
+    // older builds answered the plain name. Show only a real branch name.
+    const res = await vibe.gitBranch({ directory: dir })
+    const data = res && typeof res === "object" && "ok" in res ? (res.ok ? res.data : null) : res
+    const name = typeof data === "string" ? data : data && typeof data.branch === "string" ? data.branch : ""
+    if (/^[^\s\0]{1,200}$/.test(name.trim())) branch = name.trim()
   } catch {}
-  if (!branch) return
+  if (!branch) { hideBranchChip(); return }
   $("chip-branch-label").textContent = branch
   $("chip-branch").hidden = false
 }
@@ -6933,7 +7006,13 @@ async function saveProvider() {
     $("pf-apikey").value = ""
     hideError("providers")
     hideError("providers-key")
-    if (res.data?.warning) showError("Saved, but this format may not work", String(res.data.warning), { key: "providers", tone: "warning" })
+    if (res.data?.warning) {
+      const text = String(res.data.warning)
+      // An address the app simply corrected is good news, not a problem.
+      const onlyFixedUrl = text.split("\n").every((line) => /^base URL ".*" -> ".*"$/.test(line.trim()) || /is the console\/dashboard/.test(line))
+      if (onlyFixedUrl) showError("Saved — API address corrected", `${text.replace(/^base URL "(.*)" -> "(.*)"$/gm, "Changed $1 to the API address $2")}. Nothing else to do.`, { key: "providers", tone: "success" })
+      else showError("Saved, but this format may not work", text, { key: "providers", tone: "warning" })
+    }
     providerState.selectedId = res.data?.id || d.id
     providerState.draft = {
       ...d,
@@ -7884,6 +7963,37 @@ $("btn-memory-open")?.addEventListener("click", async () => {
   const res = await vibe.openMemoryFile()
   if (res && res.ok === false) alert(res.error || "Could not open the file")
 })
+/* ---------- Settings → Computer Use (one switch, on by default) ---------- */
+function applyComputerUseUi(enabled, supported = true) {
+  const t = $("toggle-computer-use")
+  if (!t) return
+  t.classList.toggle("on", !!enabled)
+  t.setAttribute("aria-checked", enabled ? "true" : "false")
+  if (!supported) {
+    t.classList.add("disabled")
+    const d = $("computer-use-desc")
+    if (d) d.textContent = "Computer Use works on Windows."
+  }
+}
+async function loadComputerUse() {
+  if (typeof vibe.computerUseGet !== "function") return
+  const r = await vibe.computerUseGet()
+  if (r && r.ok !== false) applyComputerUseUi(r.data?.enabled ?? r.enabled, r.data?.supported ?? r.supported ?? true)
+}
+async function toggleComputerUse() {
+  const t = $("toggle-computer-use")
+  if (!t || t.classList.contains("disabled") || typeof vibe.computerUseSet !== "function") return
+  const next = !t.classList.contains("on")
+  applyComputerUseUi(next)
+  const r = await vibe.computerUseSet({ enabled: next })
+  if (r && r.ok === false) { applyComputerUseUi(!next); showError("Could not change Computer Use", r.error || "", { key: "computer-use" }) }
+}
+$("toggle-computer-use")?.addEventListener("click", () => { void toggleComputerUse() })
+$("toggle-computer-use")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void toggleComputerUse() }
+})
+void loadComputerUse().catch(() => {})
+
 $("toggle-memory")?.addEventListener("click", () => {
   setMemoryEnabled(!memoryEnabled())
 })
@@ -8483,6 +8593,46 @@ const TOOL_META = {
   subagent: { icon: "🤖", label: "Agent" },
   skill: { icon: "🧩", label: "Skill" },
   todowrite: { icon: "📋", label: "Todo" },
+  // Computer Use: each step reads like what a person would do.
+  computer_screenshot: { icon: "📸", label: "Screenshot" },
+  computer_ui: { icon: "🔎", label: "Read screen" },
+  computer_windows: { icon: "🪟", label: "Windows" },
+  computer_focus: { icon: "🪟", label: "Switch window" },
+  computer_launch: { icon: "🚀", label: "Open app" },
+  computer_click: { icon: "🖱", label: "Click" },
+  computer_type: { icon: "⌨", label: "Type" },
+  computer_key: { icon: "⌨", label: "Press key" },
+  computer_scroll: { icon: "🖱", label: "Scroll" },
+  computer_drag: { icon: "🖱", label: "Drag" },
+  computer_wait: { icon: "⏳", label: "Wait" },
+  vibecoder_help: { icon: "?", label: "VibeCoder guide" },
+  // GitHub connector
+  github_repos: { icon: "⎇", label: "GitHub repos" },
+  github_files: { icon: "⎇", label: "GitHub file" },
+  github_search_code: { icon: "⎇", label: "GitHub search" },
+  github_issues: { icon: "⎇", label: "GitHub issues" },
+  github_issue: { icon: "⎇", label: "GitHub issue" },
+  github_create_issue: { icon: "⎇", label: "New issue" },
+  github_comment: { icon: "⎇", label: "GitHub comment" },
+  github_create_branch: { icon: "⎇", label: "New branch" },
+  github_write_file: { icon: "⎇", label: "Commit file" },
+  github_create_pr: { icon: "⎇", label: "Open PR" },
+  github_merge_pr: { icon: "⎇", label: "Merge PR" },
+  github_api: { icon: "⎇", label: "GitHub API" },
+  // Facebook connector
+  facebook_pages: { icon: "f", label: "Facebook Pages" },
+  facebook_page_posts: { icon: "f", label: "Page posts" },
+  facebook_create_post: { icon: "f", label: "Facebook post" },
+  facebook_comments: { icon: "f", label: "Comments" },
+  facebook_reply_comment: { icon: "f", label: "Reply to comment" },
+  facebook_messages: { icon: "f", label: "Messenger" },
+  facebook_send_message: { icon: "f", label: "Send message" },
+  facebook_insights: { icon: "f", label: "Insights" },
+  facebook_ad_accounts: { icon: "f", label: "Ad accounts" },
+  facebook_ads: { icon: "f", label: "Ads" },
+  facebook_create_campaign: { icon: "f", label: "New campaign" },
+  facebook_set_status: { icon: "f", label: "Ad status" },
+  facebook_api: { icon: "f", label: "Facebook API" },
 }
 
 const actEls = new Map() // key -> element
@@ -8501,6 +8651,12 @@ function relPath(p) {
 }
 
 function toolSubtitle(name, input = {}) {
+  if (/^facebook_/.test(String(name))) {
+    return [input.page && `page ${input.page}`, input.ad_account, input.id, input.name, input.status, input.message && String(input.message).slice(0, 60), input.method && input.path ? `${input.method} ${input.path}` : ""].filter(Boolean).join(" · ").slice(0, 160)
+  }
+  if (/^github_/.test(String(name))) {
+    return [input.repo, input.number != null ? `#${input.number}` : "", input.path, input.branch || input.head, input.title, input.query, input.method && input.path ? "" : ""].filter(Boolean).join(" · ").slice(0, 160)
+  }
   switch (name) {
     case "read":
       return [relPath(input.filePath ?? input.path ?? ""), input.offset != null ? `offset=${input.offset}` : "", input.limit != null ? `limit=${input.limit}` : ""].filter(Boolean).join(" ")
@@ -8525,6 +8681,32 @@ function toolSubtitle(name, input = {}) {
       return input.query ?? input.url ?? ""
     case "todowrite":
       return planSummary(input) || nextTodoText(input)
+    // Computer Use: a short, human description of each step.
+    case "computer_click":
+    case "computer_scroll": {
+      const where = input.element != null ? `item ${input.element}` : input.x != null ? `at ${Math.round(input.x)}, ${Math.round(input.y)}` : ""
+      const how = input.double ? "double click" : input.button === "right" ? "right click" : ""
+      const scroll = name === "computer_scroll" && input.amount != null ? `${input.amount > 0 ? "up" : "down"} ${Math.abs(input.amount)}` : ""
+      return [scroll, how, where].filter(Boolean).join(" · ")
+    }
+    case "computer_type": {
+      const text = String(input.text ?? "")
+      return `“${text.length > 60 ? text.slice(0, 60) + "…" : text}”${input.enter ? " + Enter" : ""}`
+    }
+    case "computer_key":
+      return input.keys ?? ""
+    case "computer_launch":
+      return input.program ?? ""
+    case "computer_focus":
+      return input.title ?? (input.window ? `window ${input.window}` : "")
+    case "computer_drag":
+      return input.from_element != null || input.to_element != null ? `item ${input.from_element ?? "?"} → item ${input.to_element ?? "?"}` : ""
+    case "computer_wait":
+      return input.for_window ? `for “${input.for_window}”` : input.seconds != null ? `${input.seconds} s` : ""
+    case "computer_screenshot":
+    case "computer_ui":
+    case "computer_windows":
+      return ""
     default:
       return input.description ?? input.query ?? input.prompt ?? ""
   }
@@ -8543,7 +8725,8 @@ function addAct(key, icon, title, kind = "", subtitle = "") {
     </div>
     <pre class="act-body"></pre>
     <pre class="act-out"></pre>`
-  el.querySelector(".act-ic").textContent = icon
+  const ic = el.querySelector(".act-ic")
+  if (!(icon && typeof icon === "object" && icon.vc && window.VcIcons && window.VcIcons.set(ic, icon.vc))) ic.textContent = icon && typeof icon === "object" ? icon.text || "" : icon
   el.querySelector(".act-title").textContent = title
   el.querySelector(".act-sub").textContent = subtitle
   el.querySelector(".act-head").onclick = () => el.classList.toggle("open")
@@ -8555,7 +8738,7 @@ function addAct(key, icon, title, kind = "", subtitle = "") {
 
 function toolAct(key, name, input = {}) {
   const meta = TOOL_META[name] ?? { icon: "🔧", label: name }
-  const el = addAct(key, meta.icon, toolRowLabel(name), "tool", toolSubtitle(name, input))
+  const el = addAct(key, window.VcIcons ? { vc: window.VcIcons.toolIcon(name), text: meta.icon } : meta.icon, toolRowLabel(name), "tool", toolSubtitle(name, input))
   const category = timelineCategory(name)
   el.dataset.timelineTool = toolRowLabel(name)
   if (!el.dataset.timelineItem) {
@@ -8578,6 +8761,8 @@ function actDone(key, ok = true) {
   if (!el) return
   el.classList.add(ok ? "done" : "failed")
   el.querySelector(".act-state").textContent = ok ? "✓" : "✕"
+  const group = el.closest(".timeline-group")
+  if (group) updateTimelineGroup(group)
 }
 
 function actAppend(key, text) {
@@ -8678,8 +8863,9 @@ async function refreshPermissionRequests() {
     permEls.set(p.id, el)
     scrollChat()
 
-    // Full Access mode -> auto approve everything
-    if (pillState.access === "full") {
+    // Full Access mode -> auto approve everything, except risky Computer Use
+    // actions (send, delete, install, pay...), which always need a click.
+    if (pillState.access === "full" && !p.critical) {
       await vibe.replyPermission({ sessionID: p.sessionID, requestID: p.id, decision: "always" })
       el.querySelector(".perm-title").textContent = "✅ Auto-approved (Full Access)"
       el.querySelector(".perm-actions").remove()
@@ -9505,7 +9691,7 @@ ocDisconnect.onclick = async () => {
 
 // Toggles
 settingsContent.querySelectorAll(".toggle").forEach((t) => {
-  if (t.id === "toggle-notify" || t.id === "toggle-autocontinue" || t.id === "toggle-memory") {
+  if (t.id === "toggle-notify" || t.id === "toggle-autocontinue" || t.id === "toggle-memory" || t.id === "toggle-computer-use") {
     return // handled below (persisted)
   }
   t.onclick = () => t.classList.toggle("on")
@@ -9804,7 +9990,7 @@ function renderAttachments() {
     const canSee = selectedModelImageSupport()
     hint.textContent =
       canSee === false
-        ? "⚠ this model is not marked vision-capable — pick one with 👁 IMAGES"
+        ? "⚠ this model is not marked vision-capable — pick one marked Vision"
         : "image — the model can see this"
     tray.appendChild(hint)
   }

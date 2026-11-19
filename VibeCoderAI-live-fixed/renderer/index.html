@@ -9,9 +9,16 @@
   <link rel="stylesheet" href="theme.css" />
   <link rel="stylesheet" href="skin.css" />
   <link rel="stylesheet" href="obsidian.css" />
+  <link rel="stylesheet" href="polish.css" />
 </head>
 <body>
   <div class="window-drag" id="window-drag">
+    <div class="title-left">
+      <button class="title-btn" id="btn-titlebar-sidebar" type="button" aria-label="Hide sidebar" aria-controls="app-sidebar" data-tip="Hide sidebar">
+        <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M6.4 2.5v11"/></svg>
+      </button>
+      <span class="title-brand"><span class="title-logo" aria-hidden="true">V</span>VibeCoder</span>
+    </div>
     <div class="win-controls">
       <button class="win-btn" id="win-min" type="button" title="Minimize" aria-label="Minimize">–</button>
       <button class="win-btn" id="win-max" type="button" title="Maximize" aria-label="Maximize">□</button>
@@ -39,7 +46,13 @@
           <span class="kbd">＋</span>
         </button>
 
-        <button class="side-item" id="btn-marketplace" title="Install MCP servers, plugins and skills">
+        <button class="side-item" id="btn-connectors" type="button">
+          <span class="ic">⧉</span>
+          <span class="lbl">Connectors</span>
+        </button>
+
+        <!-- Marketplace now lives inside Connectors; the button stays for compatibility. -->
+        <button class="side-item" id="btn-marketplace" title="Install MCP servers, plugins and skills" hidden>
           <span class="ic">🛍</span>
           <span class="lbl">Marketplace</span>
         </button>
@@ -136,6 +149,13 @@
           <path d="M28 26 H51 L60 64 L69 26 H92 L68 104 H52 Z" fill="url(#heroLogoFill)"/>
         </svg>
         <h1 class="hero-title" id="hero-title">Start a new task</h1>
+        <p class="hero-sub" id="hero-sub">Describe what you want. VibeCoder plans it, writes the code, runs it and checks the result.</p>
+        <div class="hero-chips" id="hero-chips" role="group" aria-label="Example tasks">
+          <button class="hero-chip" type="button" data-vc-icon="blocks" data-prompt="Build a small app for me: ">Build an app</button>
+          <button class="hero-chip" type="button" data-vc-icon="search" data-prompt="Find and fix the bug where ">Fix a bug</button>
+          <button class="hero-chip" type="button" data-vc-icon="file" data-prompt="Explain how this project works and where the main parts are.">Explain this project</button>
+          <button class="hero-chip" type="button" data-vc-icon="monitor" data-prompt="Open the app, test it yourself like a user and report what works and what breaks: ">Test it on screen</button>
+        </div>
       </div>
 
       <div class="chat-scroll" id="messages"></div>
@@ -360,6 +380,7 @@
           <div class="nav-group">Agent capabilities</div>
           <button class="nav-item" data-page="memory"><span class="ic">🧩</span> Memory</button>
           <button class="nav-item" data-page="subagents"><span class="ic">👥</span> Subagents</button>
+          <button class="nav-item" data-page="connectors"><span class="ic">⧉</span> Connectors</button>
           <button class="nav-item" data-page="marketplace"><span class="ic">🛍</span> Marketplace</button>
           <button class="nav-item" data-page="plugins"><span class="ic">🧱</span> Plugins</button>
           <button class="nav-item" data-page="mcp"><span class="ic">⚡</span> MCP Servers</button>
@@ -843,9 +864,59 @@
           <div class="s-card">
             <div class="s-row">
               <div class="s-col">
-                <div class="s-name">Allow desktop control</div>
-                <div class="s-desc">The agent can drive the computer with the Playwright browser (Settings > Browser Use). Desktop control itself is not part of this app.</div>
+                <div class="s-name">Computer Use</div>
+                <div class="s-desc" id="computer-use-desc">Let the agent see your screen and use the mouse and keyboard to do tasks for you — for example, open and test an app it built. Press Ctrl+Alt+Esc anytime to stop it.</div>
               </div>
+              <div class="toggle on" id="toggle-computer-use" role="switch" aria-checked="true" tabindex="0"></div>
+            </div>
+          </div>
+        </div>
+        <div class="s-page" data-page="connectors" hidden>
+          <h1 class="s-title">Connectors</h1>
+          <p class="cn-lead">Sign in to the services you use. The agent can then read and work with them for you. Reading is automatic; changes follow your permission mode, and anything hard to undo always asks you first.</p>
+          <div class="cn-grid" id="connectors-grid">
+            <div class="cn-card" id="cn-github" data-connector="github">
+              <div class="cn-head">
+                <span class="cn-logo" data-vc-icon="branch" aria-hidden="true"></span>
+                <div class="cn-titles"><div class="cn-name">GitHub</div><div class="cn-sub" id="cn-github-sub">Repositories, issues, pull requests and code</div></div>
+                <span class="cn-badge" id="cn-github-badge" hidden>Connected</span>
+              </div>
+              <div class="cn-code" id="cn-github-code" hidden>
+                <div class="cn-code-label">Enter this code on GitHub, then press Authorize:</div>
+                <div class="cn-code-row"><span class="cn-code-value" id="cn-github-code-value"></span><button class="save-btn" type="button" id="cn-github-copy">Copy code</button><button class="save-btn" type="button" id="cn-github-open">Open GitHub</button></div>
+                <div class="cn-code-wait">Waiting for you to authorize on github.com…</div>
+              </div>
+              <div class="cn-error" id="cn-github-error" hidden></div>
+              <div class="cn-actions">
+                <button class="save-btn primary" type="button" id="cn-github-connect">Sign in with GitHub</button>
+                <button class="save-btn" type="button" id="cn-github-cancel" hidden>Cancel</button>
+                <button class="save-btn" type="button" id="cn-github-disconnect" hidden>Disconnect</button>
+              </div>
+            </div>
+            <div class="cn-card" id="cn-facebook" data-connector="facebook">
+              <div class="cn-head">
+                <span class="cn-logo" data-vc-icon="users" aria-hidden="true"></span>
+                <div class="cn-titles"><div class="cn-name">Facebook</div><div class="cn-sub" id="cn-facebook-sub">Pages, posts, Messenger, Business and ads</div></div>
+                <span class="cn-badge" id="cn-facebook-badge" hidden>Connected</span>
+              </div>
+              <div class="cn-code" id="cn-facebook-code" hidden>
+                <div class="cn-code-label">A browser tab opened. Sign in to Facebook there and allow VibeCoder — that's all.</div>
+                <div class="cn-code-row"><span class="cn-code-value" id="cn-facebook-code-value"></span><button class="save-btn" type="button" id="cn-facebook-copy" hidden>Copy code</button><button class="save-btn" type="button" id="cn-facebook-open">Open the page again</button></div>
+                <div class="cn-code-wait">Waiting for you to finish on facebook.com…</div>
+              </div>
+              <div class="cn-error" id="cn-facebook-error" hidden></div>
+              <div class="cn-actions">
+                <button class="save-btn primary" type="button" id="cn-facebook-connect">Sign in with Facebook</button>
+                <button class="save-btn" type="button" id="cn-facebook-cancel" hidden>Cancel</button>
+                <button class="save-btn" type="button" id="cn-facebook-disconnect" hidden>Disconnect</button>
+              </div>
+            </div>
+            <div class="cn-card" id="cn-marketplace">
+              <div class="cn-head">
+                <span class="cn-logo" data-vc-icon="bag" aria-hidden="true"></span>
+                <div class="cn-titles"><div class="cn-name">Marketplace</div><div class="cn-sub">MCP servers, plugins and skills</div></div>
+              </div>
+              <div class="cn-actions"><button class="save-btn" type="button" id="cn-open-marketplace">Browse Marketplace</button></div>
             </div>
           </div>
         </div>
@@ -1299,6 +1370,8 @@
     <script src="vendor/purify.min.js"></script>
     <script src="markdown.js"></script>
     <script src="usage.js"></script>
+    <script src="icons.js"></script>
+    <script src="connectors.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

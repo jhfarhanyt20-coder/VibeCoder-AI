@@ -2017,7 +2017,8 @@ test("browser agent tools delegate through the runLoop engine context and contro
 
 test("engine exposes subagent + browser + todo APIs", async () => {
   const { createVibe } = require("../sdk")
-  const vibe = createVibe({ permission: "allow" })
+  // A private home: this test saves a "mock" provider and must never touch the user's real ~/.vibe.
+  const vibe = createVibe({ home: fs.mkdtempSync(path.join(os.tmpdir(), "vibe-apis-home-")), permission: "allow" })
   const e = vibe.engine
   assert.equal(typeof e.subagentResult, "function")
   assert.equal(typeof e.subagentStatus, "function")

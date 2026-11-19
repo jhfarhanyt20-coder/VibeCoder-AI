@@ -51,10 +51,11 @@ const mixed = [
   { timelineItem: "edits", timelineTool: "Edit" },
 ]
 let result = summary(mixed)
-assert.equal(result.values[".used-n"], "Used 4", "count tool calls, not thinking or duplicate labels")
-assert.equal(result.values[".used-names"], "Edit, Shell, Read", "deduplicate labels in first-use order")
-assert.equal(result.collapsed, true)
-assert.equal(result.values["aria-expanded"], "false")
+// Steps stay visible (user-approved design): the group header counts steps and
+// never auto-collapses; category "collapse" only closes each row's details.
+assert.equal(result.values[".used-n"], "4 steps", "count tool calls, not thinking or duplicate labels")
+assert.equal(result.values[".used-names"], "Edit · Shell · Read", "deduplicate labels in first-use order")
+assert.equal(summary(mixed, false, false).collapsed, false, "steps are not hidden automatically")
 result = summary(mixed, true, false)
 assert.equal(result.collapsed, false, "new activity must not collapse a manually opened group")
 vm.runInContext("timelinePreferences.shell.collapse = false", context)
@@ -72,3 +73,34 @@ assert(source.includes("box.right - frame.left + 10"))
 assert(css.includes(".main:not(.empty) #composer"))
 assert(!css.includes("bottom: 150px;"))
 console.log("PASS unified timeline: mixed tool/thinking summary, unique tool labels and counts, manual expansion, saved off settings, category isolation controls, live/history wiring and jump gutter")
+
+// Thinking: live seconds counter, "Thought for Ns" when done, and the box follows new text.
+{
+  const thStart = source.indexOf("function finishThought(")
+  const thEnd = source.indexOf("function addThought(", thStart)
+  assert(thStart > 0 && thEnd > thStart, "thinking helpers exist")
+  const timers = []
+  const ctx2 = vm.createContext({ setInterval: (fn) => { timers.push(fn); return timers.length }, clearInterval: () => {}, Date })
+  vm.runInContext(source.slice(thStart, thEnd), ctx2)
+  const node = () => ({ textContent: "" })
+  const parts = { ".th-label": node(), ".th-dur": node() }
+  const classes = new Set()
+  const el = { querySelector: (s) => parts[s], classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c) } }
+  ctx2.el = el
+  vm.runInContext("startThoughtTimer(el, Date.now() - 3000)", ctx2)
+  assert.equal(parts[".th-label"].textContent, "Thinking")
+  assert.equal(parts[".th-dur"].textContent, "3s", "live counter")
+  assert(classes.has("live"))
+  vm.runInContext("finishThought(el, 7)", ctx2)
+  assert.equal(parts[".th-label"].textContent, "Thought for 7s")
+  assert.equal(parts[".th-dur"].textContent, "")
+  assert(!classes.has("live"))
+  const body = { scrollHeight: 900, scrollTop: 100, clientHeight: 320, dataset: {} }
+  ctx2.body = body
+  vm.runInContext("followThought(body)", ctx2)
+  assert.equal(body.scrollTop, 900, "follows the newest thinking text")
+  body.scrollTop = 0; body.dataset.follow = "0"; body.scrollHeight = 1400
+  vm.runInContext("followThought(body)", ctx2)
+  assert.equal(body.scrollTop, 0, "does not jump while the user reads above")
+  console.log("PASS thinking: live counter, 'Thought for Ns' label and auto-follow")
+}

@@ -38,7 +38,8 @@ function buildArchive({ root = path.resolve(__dirname, ".."), output } = {}) {
       if (entry.isSymbolicLink() || entry.name.startsWith(".") || ["node_modules", "release", "dist", "test"].includes(entry.name)) continue
       const name = path.posix.join(relative, entry.name)
       if (entry.isDirectory()) collect(name)
-      else if (entry.isFile() && /\.(?:js|cjs|mjs|json)$/.test(entry.name) && !/^(?:auth|profiles|config|registries|memories)\.json$/.test(entry.name)) files.set(name, fs.readFileSync(path.join(root, name)))
+      // Code and data, plus the Computer Use helper script and the agent's product guide.
+      else if (entry.isFile() && (/\.(?:js|cjs|mjs|json)$/.test(entry.name) || /^core\/(?:computer\/[^/]+\.ps1|knowledge\/[^/]+\.md)$/.test(name)) && !/^(?:auth|profiles|config|registries|memories)\.json$/.test(entry.name)) files.set(name, fs.readFileSync(path.join(root, name)))
     }
   }
   for (const dir of ["core", "sdk", "cli"]) collect(dir)

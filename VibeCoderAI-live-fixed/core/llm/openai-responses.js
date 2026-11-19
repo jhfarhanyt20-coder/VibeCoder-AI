@@ -1,7 +1,7 @@
 "use strict"
 /** Adapter: OpenAI Responses API format (POST /responses). */
 const { parseSSE } = require("./sse")
-const { postStreamAdaptive, parseRawBody, COMPAT_CLIENT_HEADERS, prefersCompatClient, rememberCompatClient } = require("./http")
+const { postStreamAdaptive, parseRawBody, COMPAT_CLIENT_HEADERS, prefersCompatClient, rememberCompatClient, authHeaders } = require("./http")
 const { newId } = require("../util")
 const { openAIUsage } = require("./usage")
 
@@ -17,11 +17,11 @@ function toWire(messages) {
     } else {
       for (const p of m.parts) {
         if (p.type !== "tool_result") continue
-        input.push({ type: "function_call_output", call_id: p.id, output: String(p.output) })
+        input.push({ type: "function_call_output", call_id: p.id, output: p.isError && !/^(error|stopped|paused|interrupted)/i.test(String(p.output)) ? `Error: ${String(p.output)}` : String(p.output) })
         const shot = p.screenshot
         if (shot?.modelVisible !== false && shot?.data) {
           input.push({ role: "user", content: [
-            { type: "input_text", text: `Browser screenshot${shot.title ? ` — ${shot.title}` : ""}${shot.url ? ` (${shot.url})` : ""}. Inspect the visual state of this page.` },
+            { type: "input_text", text: (shot.caption ? `${shot.caption}${shot.title ? ` — ${shot.title}` : ""}. Inspect what is on the screen.` : `Browser screenshot${shot.title ? ` — ${shot.title}` : ""}${shot.url ? ` (${shot.url})` : ""}. Inspect the visual state of this page.`) },
             { type: "input_image", image_url: `data:${shot.mime || "image/png"};base64,${shot.data}` },
           ] })
         }
@@ -53,8 +53,7 @@ async function* stream({ profile, apiKey, system, messages, tools, signal }) {
   if (tools && tools.length) body.tools = tools.map((t) => ({ type: "function", name: t.name, description: t.description, parameters: t.parameters }))
   if (q.reasoningEffort) body.reasoning = { effort: q.reasoningEffort, summary: "auto" }
 
-  const headers = { ...(profile.headers || {}) }
-  if (apiKey) headers.authorization = `Bearer ${apiKey}`
+  const headers = { ...authHeaders(profile.baseURL, apiKey), ...(profile.headers || {}) }
   const adapt = (err, b) => {
     const t = err.body
     if (b.reasoning && /reasoning/i.test(t) && /unsupported|unknown|not support|unrecognized|invalid/i.test(t)) return delete b.reasoning

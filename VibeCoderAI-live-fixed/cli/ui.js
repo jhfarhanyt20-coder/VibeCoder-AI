@@ -1,4 +1,22 @@
 "use strict"
+// Short, readable step lines for Computer Use (same wording as the app).
+function computerBrief(name, a) {
+  const where = a.element != null && a.element !== "" ? `element ${a.element}` : (a.x != null && a.y != null ? `at ${a.x}, ${a.y}` : "")
+  switch (String(name)) {
+    case "computer_screenshot": return "looking at the screen"
+    case "computer_ui": return "reading the window controls"
+    case "computer_windows": return "listing open windows"
+    case "computer_focus": return `switching to window ${a.window || a.title || ""}`.trim()
+    case "computer_launch": return `opening ${a.program || ""}`.trim()
+    case "computer_click": return `${a.double ? "double-click" : a.button === "right" ? "right-click" : "click"} ${where}`.trim()
+    case "computer_type": return `typing "${String(a.text || "").slice(0, 60)}"${a.enter ? " + Enter" : ""}`
+    case "computer_key": return `pressing ${a.keys || ""}`.trim()
+    case "computer_scroll": return `scrolling ${where}`.trim()
+    case "computer_drag": return "dragging"
+    case "computer_wait": return a.for_window ? `waiting for "${a.for_window}"` : `waiting ${a.seconds || 1}s`
+    default: return ""
+  }
+}
 /**
  * Terminal output for the VibeCoder CLI.
  *
@@ -44,7 +62,14 @@ function when(ts) {
 /** "y / a / n" permission prompt. Resolves "once" | "always" | "deny". */
 async function askPermission(rl, ev, state, log = console.log, signal) {
   const subject = clip(ev.subject, 220)
-  if (state.yes) return "once"
+  // A risky Computer Use action is never auto-approved by --yes / Full Access.
+  if (state.yes && !ev.critical) return "once"
+  // A risky action with no terminal to ask: leave it for another client (the
+  // desktop app's card when attached) instead of denying it here.
+  if (ev.critical && (!rl || !process.stdin.isTTY)) {
+    log(c.dim(`(waiting for approval in the VibeCoder app: ${subject})`))
+    return null
+  }
   if (!rl || !process.stdin.isTTY) {
     log(c.dim(`(no terminal to ask, denied: ${ev.tool}) use --yes to allow`))
     return "deny"
@@ -217,7 +242,9 @@ function createRenderer(opts = {}) {
       // Machine mode still has to keep the run moving: nobody can answer a
       // prompt that is printed as JSON, so answer with the configured mode.
       if (ev.type === "permission.ask") {
-        await opts.vibe?.permission?.reply?.(ev.permissionId, state.yes ? "once" : "deny")
+        // A risky Computer Use action waits for a person (e.g. the desktop app's
+        // card when attached); --yes never approves it.
+        if (!ev.critical) await opts.vibe?.permission?.reply?.(ev.permissionId, state.yes ? "once" : "deny")
       }
       if (ev.type === "question.ask" && ev.form) {
         await opts.vibe?.forms?.cancel?.(ev.form.id, "No terminal is attached (JSON mode).")
@@ -268,7 +295,7 @@ function createRenderer(opts = {}) {
         }
         break
       case "tool.start": {
-        const brief = ev.args && (ev.args.command || ev.args.path || ev.args.pattern || ev.args.url || ev.args.task || ev.args.id || "")
+        const brief = /^computer_/.test(String(ev.name)) ? computerBrief(ev.name, ev.args || {}) : ev.args && ([ev.args.repo, ev.args.number != null ? `#${ev.args.number}` : "", ev.args.page ? `page ${ev.args.page}` : "", ev.args.ad_account].filter(Boolean).join(" ") || ev.args.command || ev.args.path || ev.args.pattern || ev.args.url || ev.args.task || ev.args.id || ev.args.query || "")
         if (!state.quiet) line(c.magenta("→ ") + c.bold(String(ev.name)) + (brief ? " " + c.dim(clip(brief, 120)) : ""))
         state.textSinceTool = false
         break
@@ -326,7 +353,7 @@ function createRenderer(opts = {}) {
         state.waiting = pending
         const decision = await askPermission(rl, ev, state, log, pending.controller.signal)
         state.waiting = null
-        if (!pending.external) await opts.vibe?.permission?.reply?.(ev.permissionId, decision)
+        if (!pending.external && decision) await opts.vibe?.permission?.reply?.(ev.permissionId, decision)
         if (decision === "deny") note("  denied")
         break
       }

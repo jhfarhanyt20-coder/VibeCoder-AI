@@ -106,7 +106,7 @@ async function main(argv = process.argv.slice(2)) {
     connection = flags.url ? { url: loopbackUrl(flags.url), token: flags.token || process.env.VIBE_TOKEN } : await findHost()
     if (!connection.token) throw new Error("A local host token is required. Use vibe attach or set VIBE_TOKEN for --url.")
     vibe = connect(connection)
-  } else vibe = createVibe({ permission: "ask" })
+  } else vibe = createVibe({ permission: "ask", computerUse: stored.computerUse !== false && process.platform === "win32" })
   const info = await vibe.control.call("info", { directory: dir })
   const home = info.home || homeDir()
   if (command === "serve") {

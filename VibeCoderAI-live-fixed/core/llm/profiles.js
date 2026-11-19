@@ -167,7 +167,7 @@ function setKey(id, key, home) {
 function getKey(profile, home) {
   if (profile.noAuth) return ""
   if (profile.apiKeyEnv && process.env[profile.apiKeyEnv]) {
-    const key = String(process.env[profile.apiKeyEnv]).trim()
+    const key = String(process.env[profile.apiKeyEnv]).trim().replace(/^bearer\s+/i, "")
     if (!/^[\x20-\x7E]*$/.test(key)) throw new Error(`The API key in ${profile.apiKeyEnv} contains non-ASCII characters; correct that environment variable.`)
     return key
   }
@@ -179,7 +179,7 @@ function getKey(profile, home) {
     // bug). Fail with a clear instruction instead of a ByteString header crash.
     if (!/^[\x20-\x7E]*$/.test(key))
       throw new Error(`The saved API key for "${profile.id}" is corrupted (it contains invalid characters). Open Settings → Model settings and re-enter the key.`)
-    return key.trim()
+    return key.trim().replace(/^bearer\s+/i, "")
   }
   // Never borrow credentials from another profile just because the host matches.
   throw new Error(`No API key for "${profile.id}". Run: vibe auth add ${profile.id}` + (profile.apiKeyEnv ? ` (or set ${profile.apiKeyEnv})` : ""))

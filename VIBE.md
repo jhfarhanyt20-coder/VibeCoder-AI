@@ -135,6 +135,14 @@ plus `pre-redesign-2026-11-07.zip` and `MANIFEST.txt` (SHA-256 of every file).
 The folder is gitignored. Restoring a file from the backup must reproduce the
 pre-redesign look and wiring exactly.
 
+## 3a. App and CLI parity
+
+- Whatever the desktop app's agent can do, the CLI agent (`cli/`) must also be
+  able to do. Update both in the same change: engine option, saved setting,
+  `vibe <command>` plus `/command`, terminal rendering, and tests. Pieces that
+  rely on Electron (badges, global hotkeys) need a fallback that works without
+  Electron. Not everyone runs the app.
+
 ## 4. Naming and clean-room rules
 
 - New product code, UI text and documentation use only VibeCoder / VibeCore

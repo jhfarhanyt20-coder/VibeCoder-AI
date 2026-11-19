@@ -10,7 +10,7 @@ const path = require("node:path")
 const os = require("node:os")
 const { execFile } = require("node:child_process")
 const { promisify } = require("node:util")
-const { app, BrowserWindow, ipcMain, dialog, clipboard, shell, Notification } = require("electron")
+const { app, BrowserWindow, ipcMain, dialog, clipboard, shell, Notification, globalShortcut, screen } = require("electron")
 const { createVibe } = require("../sdk")
 const { createServer } = require("../cli/server")
 const { convertMessages } = require("./messages.cjs")
@@ -49,6 +49,9 @@ let appUpdateRegistered = false
 let providerWatcher = null
 let providerWatchTimer = null
 let vibecoderSyncOff = null
+// Settings → Computer Use. On by default; a saved "off" is kept.
+let computerUseEnabled = process.platform === "win32"
+let computerKillRegistered = false
 let providerWatcherStarted = false
 let currentDirectory = process.cwd()
 let activeSessionId = null
@@ -204,7 +207,7 @@ function requireSession(id) {
   if (!id) throw new Error("No active session. Create or open a session first.")
   return engine.getSession(id)
 }
-function persistUIState() { writeJson(uiStateFile, { directory: currentDirectory, selectedModel, activeAgent, [updater.PREF_KEY]: updater.serializePrefs() }) }
+function persistUIState() { writeJson(uiStateFile, { directory: currentDirectory, selectedModel, activeAgent, computerUse: { enabled: computerUseEnabled }, [updater.PREF_KEY]: updater.serializePrefs() }) }
 function send(channel, payload) {
   try { if (win && !win.isDestroyed() && win.webContents && !win.webContents.isDestroyed()) win.webContents.send(channel, payload) } catch {}
 }
@@ -512,6 +515,7 @@ function onEngineEvent(ev) {
   }
   switch (ev.type) {
     case "prompts.attached": emitUI("session.prompts.attached", sid, { ids: ev.ids }); break
+    case "connector.changed": emitUI("connector.changed", null, { connector: ev.connector }); break
     case "text.delta": {
       if (!sid) break
       const state = runState.get(sid) || { assistantMessageID: `asst_${Date.now().toString(36)}`, ordinal: 0, text: "", reasoningStarted: false, failed: null }
@@ -692,6 +696,94 @@ const vibecoderAccount = createVibecoderAccount({
 })
 
 
+// ---- Computer Use (desktop host side) ----
+// The engine's computer_* tools call these hooks: while the agent controls the
+// computer the app window steps aside (so it is not in the way of screenshots
+// and clicks), a small always-on-top badge says so, and Ctrl+Alt+Esc stops it.
+let computerOverlay = null
+let computerActiveSession = null
+let computerMinimizedApp = false
+const COMPUTER_BADGE_HTML = `<!doctype html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;background:transparent;overflow:hidden;font:600 13px "Segoe UI",system-ui,sans-serif;-webkit-user-select:none;user-select:none}
+.pill{display:flex;align-items:center;gap:9px;height:34px;margin:2px;padding:0 16px;border-radius:17px;background:rgba(18,20,26,.92);color:#f3f4f8;box-shadow:0 4px 16px rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.12)}
+.dot{width:9px;height:9px;border-radius:50%;background:#ff4f7b;box-shadow:0 0 0 0 rgba(255,79,123,.7);animation:p 1.4s infinite}
+@keyframes p{70%{box-shadow:0 0 0 8px rgba(255,79,123,0)}100%{box-shadow:0 0 0 0 rgba(255,79,123,0)}}
+kbd{font:600 12px "Segoe UI",sans-serif;background:rgba(255,255,255,.14);padding:2px 6px;border-radius:5px}
+</style></head><body><div class="pill"><span class="dot"></span><span>VibeCoder is using your computer</span><span>·</span><span>Press <kbd>Ctrl+Alt+Esc</kbd> to stop</span></div></body></html>`
+
+function showComputerBadge() {
+  try {
+    if (!computerOverlay || computerOverlay.isDestroyed()) {
+      computerOverlay = new BrowserWindow({
+        width: 470, height: 40, frame: false, transparent: true, resizable: false, movable: false,
+        focusable: false, skipTaskbar: true, alwaysOnTop: true, show: false, hasShadow: false, fullscreenable: false,
+        webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, javascript: false },
+      })
+      computerOverlay.setAlwaysOnTop(true, "screen-saver")
+      computerOverlay.setIgnoreMouseEvents(true) // clicks pass through to the app below
+      computerOverlay.setContentProtection(true) // kept out of the agent's screenshots
+      computerOverlay.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(COMPUTER_BADGE_HTML))
+    }
+    const area = screen.getPrimaryDisplay().workArea
+    computerOverlay.setBounds({ x: Math.round(area.x + (area.width - 470) / 2), y: area.y + 6, width: 470, height: 40 })
+    computerOverlay.showInactive()
+  } catch {}
+}
+function hideComputerBadge() { try { if (computerOverlay && !computerOverlay.isDestroyed()) computerOverlay.hide() } catch {} }
+function ownWindowHandle() {
+  try { const h = win.getNativeWindowHandle(); return h.length >= 8 ? h.readBigUInt64LE(0).toString() : String(h.readUInt32LE(0)) } catch { return "" }
+}
+
+const computerHooks = {
+  async begin({ session }) {
+    const sid = session && (session.parentId || session.id)
+    if (computerActiveSession) return
+    computerActiveSession = sid || "active"
+    if (engine.computer) engine.computer.stopped = false
+    showComputerBadge()
+    if (win && !win.isDestroyed() && win.isVisible() && !win.isMinimized()) {
+      win.minimize()
+      computerMinimizedApp = true
+      await new Promise((r) => setTimeout(r, 400))
+    }
+    emitUI("computer.active", sid, { active: true })
+  },
+  end({ sessionId } = {}) {
+    if (!computerActiveSession) return
+    if (sessionId && computerActiveSession !== "active" && sessionId !== computerActiveSession) {
+      const s = engine.store?.get?.(sessionId)
+      if (!s || s.parentId !== computerActiveSession) return // a helper finished; the main task still runs
+    }
+    computerActiveSession = null
+    hideComputerBadge()
+    if (computerMinimizedApp && win && !win.isDestroyed()) { win.restore(); computerMinimizedApp = false }
+    emitUI("computer.active", sessionId || null, { active: false })
+  },
+  isOwnWindow(fg) {
+    if (!fg) return false
+    const own = ownWindowHandle()
+    return (own && String(fg.hwnd) === own) || Number(fg.pid) === process.pid
+  },
+}
+engine.computerHooks = computerHooks
+
+/** Ctrl+Alt+Esc: stop the agent's computer control at once. */
+function computerKillSwitch() {
+  if (!computerActiveSession) return
+  const sid = computerActiveSession
+  if (engine.computer) { engine.computer.stopped = true; engine.computer.releaseAll().catch(() => {}) }
+  for (const id of [...engine.runs.keys()]) { try { engine.interrupt(id) } catch {} }
+  computerHooks.end({})
+  emitUI("computer.stopped", sid === "active" ? null : sid, { reason: "kill-switch" })
+}
+
+function applyComputerUse(enabled) {
+  computerUseEnabled = !!enabled && process.platform === "win32"
+  engine.computerUse = { ...(engine.computerUse || {}), enabled: computerUseEnabled, askRisky: true }
+  // Turning it off mid-task stops the next computer action immediately.
+  if (!computerUseEnabled && computerActiveSession) computerKillSwitch()
+}
+
 function readAttachmentData(file) {
   const full = path.resolve(String(file || ""))
   if (!pickedAttachmentPaths.has(full)) throw new Error("This file was not selected in the attachment picker")
@@ -871,7 +963,7 @@ const handlers = {
     s.rules = permissions.map((p) => ({ tool: String(p.action || "*"), pattern: String(p.resource || "*"), action: ["allow", "ask", "deny"].includes(String(p.effect)) ? String(p.effect) : "ask", exact: false }))
     engine.store.save(s); return { updated: s.rules.length }
   },
-  listPermissionRequests: async () => [...engine.pending.entries()].map(([id, p]) => ({ id, permissionId: id, sessionID: p.session?.parentId || p.session?.id, subagentSessionID: p.session?.parentId ? p.session.id : undefined, action: p.tool, tool: p.tool, resource: p.subject, resources: p.subject ? [p.subject] : [], neverPersist: !!p.neverPersist })),
+  listPermissionRequests: async () => [...engine.pending.entries()].map(([id, p]) => ({ id, permissionId: id, sessionID: p.session?.parentId || p.session?.id, subagentSessionID: p.session?.parentId ? p.session.id : undefined, action: p.tool, tool: p.tool, resource: p.subject, resources: p.subject ? [p.subject] : [], neverPersist: !!p.neverPersist, ...(p.critical ? { critical: true } : {}) })),
   replyPermission: async (a = {}) => { const id = a.requestID || a.permissionId || a.id; const decision = a.decision === "reject" ? "deny" : a.decision; if (!engine.replyPermission(id, decision)) throw new Error("Permission request is no longer pending."); emitUI("session.permissions", a.sessionID, { resolved: true, requestID: id, decision }); return { replied: true } },
   listForms: async (a = {}) => engine.listForms(a.sessionID || a.sessionId || null),
   replyForm: async (a = {}) => {
@@ -1075,7 +1167,28 @@ const handlers = {
   cwd: async () => currentDirectory,
   getDirectory: async () => ({ directory: currentDirectory, name: path.basename(currentDirectory) }),
   setDirectory: async (a = {}) => { currentDirectory = safeResolveDirectory(typeof a === "string" ? a : a.directory || a.dir); pickedAttachmentPaths.clear(); persistUIState(); return { directory: currentDirectory, name: path.basename(currentDirectory) } },
-  gitBranch: async (a = {}) => { const directory = safeResolveDirectory(a.directory || currentDirectory); try { const { stdout } = await execFileAsync("git", ["branch", "--show-current"], { cwd: directory, windowsHide: true, timeout: 5000 }); return { branch: stdout.trim() || null } } catch { return { branch: null } } },
+  gitBranch: async (a = {}) => {
+    const directory = safeResolveDirectory((a && typeof a === "object" ? a.directory : a) || currentDirectory)
+    try { const { stdout } = await execFileAsync("git", ["branch", "--show-current"], { cwd: directory, windowsHide: true, timeout: 5000 }); if (stdout.trim()) return { branch: stdout.trim() } } catch {}
+    // git is not on PATH (or failed): read .git/HEAD of this folder or a parent directly.
+    try {
+      let dir = directory
+      for (let i = 0; i < 40 && dir; i++) {
+        const dotGit = path.join(dir, ".git")
+        if (fs.existsSync(dotGit)) {
+          let gitDir = dotGit
+          if (fs.statSync(dotGit).isFile()) { const m = /^gitdir:\s*(.+)$/m.exec(fs.readFileSync(dotGit, "utf8")); if (m) gitDir = path.resolve(dir, m[1].trim()) }
+          const head = fs.readFileSync(path.join(gitDir, "HEAD"), "utf8").trim()
+          const ref = /^ref:\s*refs\/heads\/(.+)$/.exec(head)
+          return { branch: ref ? ref[1] : null }
+        }
+        const up = path.dirname(dir)
+        if (up === dir) break
+        dir = up
+      }
+    } catch {}
+    return { branch: null }
+  },
   pickProject: async () => {
     const result = await dialog.showOpenDialog(win, { title: "Choose project folder", properties: ["openDirectory", "createDirectory"] })
     if (result.canceled || !result.filePaths?.[0]) return { canceled: true }
@@ -1107,6 +1220,20 @@ const handlers = {
   },
   subagentResume: async (a = {}) => engine.resumeSubagent(a.id || a.subagentID, a.text || a.prompt || "Continue and report the result.", { maxSteps: a.maxSteps }),
   subagentStop: async (a = {}) => ({ stopped: await engine.stopSubagent(a.id || a.subagentID) }),
+  computerUseGet: async () => ({ enabled: computerUseEnabled, supported: process.platform === "win32", killSwitch: "Ctrl+Alt+Esc", logFile: path.join(home, "computer-actions.log") }),
+  computerUseSet: async (a = {}) => { applyComputerUse(!!a.enabled); persistUIState(); return { enabled: computerUseEnabled, supported: process.platform === "win32" } },
+  // Connectors (GitHub…): sign in through the browser; the engine keeps the account.
+  connectorsList: async () => Object.values(engine.connectors || {}).map((c) => c.status()),
+  connectorConnect: async (a = {}) => {
+    const c = (engine.connectors || {})[String(a.id || "")]
+    if (!c) throw new Error("Unknown connector")
+    const st = await c.connect()
+    // GitHub's own page (code sign-in) or the VibeCoder website (one-click sign-in).
+    if (st.pending && /^https:\/\/(github\.com|vibecoderai\.onrender\.com)\//.test(st.pending.verificationUri)) { try { await shell.openExternal(st.pending.verificationUri) } catch {} }
+    return st
+  },
+  connectorCancel: async (a = {}) => { const c = (engine.connectors || {})[String(a.id || "")]; if (!c) throw new Error("Unknown connector"); return c.cancel() },
+  connectorDisconnect: async (a = {}) => { const c = (engine.connectors || {})[String(a.id || "")]; if (!c) throw new Error("Unknown connector"); return c.disconnect() },
   subagentToggle: async (a = {}) => { if (a.enabled !== undefined) subagentsEnabled = !!a.enabled; engine.subagentsEnabled = subagentsEnabled; return { enabled: subagentsEnabled } },
   pluginList: async (a = {}) => plugins.listPlugins(a.directory || currentDirectory),
   pluginAdd: async (a = {}) => plugins.installPlugin({ ...a, directory: a.directory || currentDirectory }),
@@ -1206,7 +1333,7 @@ const preloadNames = [
   "listSessions","createSession","getMessages","renameSession","deleteSession","revertSession","undoSession","listSnapshots","listStepSnapshots","previewSnapshot","undoStepSession","redoSession","listRedo","getTrail","prompt","queuePrompt","resumeRun","interrupt","compactSession","getCompactionSettings","setCompactionSettings",
   "listShells","shellOutput","shellInput","backgroundSession","backgroundShell","cancelShell","setPermissions","listPermissionRequests","replyPermission","listForms","replyForm","cancelForm",
   "listModels","listAllModels","listModelLimits","setModel","providerCatalog","providerList","providerSave","providerRemove","providerDraftSave","providerDraftLoad","providerDraftRemove","providerDisabled","providerKey","providerModels","providerModel","providerMeta","fallbackGet","fallbackSave","fallbackReset",
-  "cwd","setDirectory","getDirectory","gitBranch","pickProject","pickAttachments","readAttachment","ensureAgent","switchAgent","listAgents","setAgentDisabled","mcpList","mcpAdd","mcpRemove","subagentCreate","subagentList","subagentStatus","subagentResult","subagentDetails","subagentResume","subagentStop","subagentToggle",
+  "cwd","setDirectory","getDirectory","gitBranch","pickProject","pickAttachments","readAttachment","ensureAgent","switchAgent","listAgents","setAgentDisabled","mcpList","mcpAdd","mcpRemove","subagentCreate","subagentList","subagentStatus","subagentResult","subagentDetails","subagentResume","subagentStop","subagentToggle","computerUseGet","computerUseSet","connectorsList","connectorConnect","connectorCancel","connectorDisconnect",
   "pluginList","pluginAdd","pluginRemove","builtins","installBuiltinPlugin","removeBuiltinPlugin","marketplace","installSkill","removeSkill","installCustomSkill","removeCustomSkill","importGitHubSkills","registryAdd","registryRemove","memoryPath","memoryList","memoryAdd","memoryRemove","openMemoryFile","todoList","todoSave","cliInfo","cliInstallTested","cliUpdateCheck","authStatus","authConnect","authDisconnect","upgradeInfo","startUpgrade","ownerScan","ownerVerify","notify","openExternal","restartEvents","logError","openErrorLog","appUpdateStatus","appUpdateSetPrefs"
 ]
 
@@ -1267,6 +1394,10 @@ function initBackend(targetWin, { port = Number(process.env.VIBE_SERVE_PORT || 4
     win.on("blur", () => emitUI("app.focus", null, { focused: false }))
   }
   startProviderWatcher()
+  // Computer Use kill switch: a global shortcut, active whenever the app runs.
+  if (!computerKillRegistered && process.platform === "win32") {
+    try { computerKillRegistered = globalShortcut.register("Control+Alt+Escape", computerKillSwitch) } catch {}
+  }
   // Refresh the VibeCoder free models now and every 30 minutes while signed in.
   if (!vibecoderSyncOff) vibecoderSyncOff = vibecoderAccount.startAutoSync()
   if (!eventOff) eventOff = engine.on(onEngineEvent)
@@ -1290,6 +1421,10 @@ function initBackend(targetWin, { port = Number(process.env.VIBE_SERVE_PORT || 4
 }
 function shutdownBackend() {
   backendClosing = true
+  try { if (computerKillRegistered) globalShortcut.unregister("Control+Alt+Escape") } catch {}
+  computerKillRegistered = false
+  try { if (engine.computer) { engine.computer.releaseAll().catch(() => {}); setTimeout(() => engine.computer && engine.computer.stop(), 300) } } catch {}
+  try { if (computerOverlay && !computerOverlay.isDestroyed()) computerOverlay.destroy() } catch {}
   stopProviderWatcher()
   try { eventOff?.() } catch {}
   eventOff = null
@@ -1309,5 +1444,7 @@ if (typeof persisted.activeAgent === "string") { activeAgent = persisted.activeA
 // Restore the desktop auto-update preferences (persisted under VIBE_HOME, never
 // inside the install directory).
 if (persisted[updater.PREF_KEY]) updater.deserializePrefs(persisted[updater.PREF_KEY])
+// Computer Use: ON unless the user turned it off (a missing key means ON).
+applyComputerUse(persisted.computerUse && persisted.computerUse.enabled === false ? false : true)
 
 module.exports = { initBackend, shutdownBackend, getServer: () => server, getToken: () => serverToken, app, engine, vibe }

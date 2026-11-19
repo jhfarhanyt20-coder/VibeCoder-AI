@@ -201,8 +201,11 @@ function applyEdit(src, oldString, newString, replaceAll = false) {
     const cands = fn(src, oldString)
     if (!cands.length) continue
     tried = name
-    if (cands.length > 1 && !replaceAll)
-      throw new Error(`oldString matches ${cands.length} places${name === "exact" ? "" : ` (after ${name} matching)`}; add more surrounding context to make it unique, or set replaceAll`)
+    if (cands.length > 1 && !replaceAll) {
+      const lineOf = (pos) => src.slice(0, pos).split("\n").length
+      const where = cands.slice(0, 8).map((c) => lineOf(c.start)).join(", ")
+      throw new Error(`oldString matches ${cands.length} places${name === "exact" ? "" : ` (after ${name} matching)`} (lines ${where}${cands.length > 8 ? ", …" : ""}); nothing was changed. Include one or two neighbouring lines so it matches only once, or set replaceAll: true to change all of them.`)
+    }
     const picked = replaceAll ? cands : [cands[0]]
     let out = src
     for (const c of [...picked].sort((a, b) => b.start - a.start)) {
@@ -215,7 +218,42 @@ function applyEdit(src, oldString, newString, replaceAll = false) {
     }
     return { out, count: picked.length, strategy: tried }
   }
-  throw new Error("oldString not found in file. Read the file again and copy the text exactly (the match tolerates only small whitespace/indentation differences).")
+  // Models often paste read's "12<TAB>" line-number prefixes into oldString.
+  const numbered = String(oldString).split(/\r?\n/)
+  if (numbered.some((l) => l.trim()) && numbered.every((l) => /^\s*\d+\t/.test(l) || !l.trim())) {
+    const unnumber = (s) => String(s).split(/\r?\n/).map((l) => l.replace(/^\s*\d+\t/, "")).join("\n")
+    const r = applyEdit(src, unnumber(oldString), unnumber(newString), replaceAll)
+    return { ...r, strategy: `${r.strategy}, line-number prefixes removed` }
+  }
+  throw new Error(notFoundMessage(src, oldString))
+}
+
+/** "Not found" plus the closest block of the file, numbered, so the model can copy it exactly. */
+function notFoundMessage(src, oldString) {
+  const base = "oldString was not found in the file; nothing was changed."
+  try {
+    const lines = src.split(/\r?\n/)
+    if (lines.length > 20000) throw new Error("large")
+    const want = String(oldString).replace(/\r\n/g, "\n").split("\n")
+    while (want.length > 1 && !want[want.length - 1].trim()) want.pop()
+    const n = Math.max(1, Math.min(want.length, 40))
+    const firstWanted = (want.find((l) => l.trim()) || "").trim()
+    let best = { score: 0, at: -1 }
+    for (let i = 0; i < lines.length; i++) {
+      if (firstWanted && dice(lines[i].trim(), firstWanted) < 0.35) continue // cheap pre-filter
+      let sum = 0
+      for (let k = 0; k < n; k++) sum += dice((lines[i + k] || "").trim(), (want[k] || "").trim())
+      const score = sum / n
+      if (score > best.score) best = { score, at: i }
+    }
+    if (best.at < 0 || best.score < 0.45) return `${base} Nothing similar exists in this file: check you have the right file, read it again and copy the text exactly.`
+    const from = best.at + 1
+    const to = Math.min(lines.length, best.at + n)
+    const shown = lines.slice(best.at, best.at + n).map((l, k) => `${from + k}\t${l.length > 300 ? l.slice(0, 300) + "…" : l}`).join("\n")
+    return `${base} Closest match (lines ${from}-${to}, ${Math.round(best.score * 100)}% similar):\n${shown}\nCopy those lines exactly as oldString (without the line-number prefix), or read offset=${Math.max(1, from - 5)} limit=${n + 10} first.`
+  } catch {
+    return `${base} Read the file again and copy the text exactly (small whitespace/indentation differences are tolerated).`
+  }
 }
 
 // ---------------------------------------------------------------- read guard

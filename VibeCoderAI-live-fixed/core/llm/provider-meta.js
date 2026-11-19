@@ -15,7 +15,7 @@
 const fs = require("fs")
 const path = require("path")
 const { homeDir } = require("../util")
-const { PRODUCT_HEADERS, COMPAT_CLIENT_HEADERS } = require("./http")
+const { PRODUCT_HEADERS, COMPAT_CLIENT_HEADERS, authHeaders } = require("./http")
 
 /* UI ("chat"|"responses"|"anthropic") <-> engine ("openai-chat"|...) format names */
 const TO_UI = { chat: "chat", responses: "responses", anthropic: "anthropic", "openai-chat": "chat", "openai-responses": "responses" }
@@ -86,7 +86,9 @@ function repairBaseUrl(raw, format) {
       changed,
       format: chosenFormat,
       engineFormat: TO_ENGINE[chosenFormat],
-      hint: `${host} is the console/dashboard - the API base is ${hit[0]} (${chosenFormat} format)`,
+      // Some services (OpenRouter) use the same host for the dashboard and the
+      // API: a URL that is already the API base needs no warning.
+      hint: changed ? `${host} is the console/dashboard - the API base is ${hit[0]} (${chosenFormat} format)` : "",
     }
   }
   // the real API hosts: complete / clean the path the adapters expect
@@ -139,12 +141,12 @@ function repairProfile(profile) {
 /* ---------- provider's own model list ---------- */
 const COMPAT_ANTHROPIC_HEADERS = { "user-agent": "claude-cli/2.0.60 (external, cli)", "x-app": "cli" }
 
-function listHeaders(format, apiKey) {
+function listHeaders(format, apiKey, baseURL) {
   const h = { ...PRODUCT_HEADERS }
   if (format === "anthropic") {
     h["x-api-key"] = apiKey || ""
     h["anthropic-version"] = "2023-06-01"
-  } else if (apiKey) h.authorization = `Bearer ${apiKey}`
+  } else Object.assign(h, authHeaders(baseURL, apiKey)) // Bearer, Azure api-key, OpenRouter attribution
   return h
 }
 
@@ -162,7 +164,7 @@ async function listRemoteModels({ baseURL, apiKey, format = "chat", headers: cus
     headers = { ...listHeaders("anthropic", apiKey), ...customHeaders }
   } else {
     url = base + "/models"
-    headers = { ...listHeaders(format, apiKey), ...customHeaders }
+    headers = { ...listHeaders(format, apiKey, base), ...customHeaders }
   }
   const get = (h) => fetch(url, { headers: h, signal: AbortSignal.timeout(15000) }).catch((e) => {
     throw new Error(`Could not reach ${url} (${e.name === "TimeoutError" ? "timeout" : e.message})`)

@@ -5,7 +5,7 @@
  * Canonical -> wire, and wire SSE -> canonical events.
  */
 const { parseSSE } = require("./sse")
-const { postStreamAdaptive, parseRawBody, streamError, COMPAT_CLIENT_HEADERS, prefersCompatClient, rememberCompatClient } = require("./http")
+const { postStreamAdaptive, parseRawBody, streamError, COMPAT_CLIENT_HEADERS, prefersCompatClient, rememberCompatClient, authHeaders } = require("./http")
 const { newId } = require("../util")
 const { openAIUsage } = require("./usage")
 
@@ -28,11 +28,12 @@ function toWire(system, messages) {
     } else {
       for (const p of m.parts) {
         if (p.type !== "tool_result") continue
-        out.push({ role: "tool", tool_call_id: p.id, content: String(p.output) })
+        // OpenAI formats have no error flag: mark failures in the text so the model notices.
+        out.push({ role: "tool", tool_call_id: p.id, content: p.isError && !/^(error|stopped|paused|interrupted)/i.test(String(p.output)) ? `Error: ${String(p.output)}` : String(p.output) })
         const shot = p.screenshot
         if (shot?.modelVisible !== false && shot?.data) {
           out.push({ role: "user", content: [
-            { type: "text", text: `Browser screenshot${shot.title ? ` — ${shot.title}` : ""}${shot.url ? ` (${shot.url})` : ""}. Inspect the visual state of this page.` },
+            { type: "text", text: (shot.caption ? `${shot.caption}${shot.title ? ` — ${shot.title}` : ""}. Inspect what is on the screen.` : `Browser screenshot${shot.title ? ` — ${shot.title}` : ""}${shot.url ? ` (${shot.url})` : ""}. Inspect the visual state of this page.`) },
             { type: "image_url", image_url: { url: `data:${shot.mime || "image/png"};base64,${shot.data}` } },
           ] })
         }
@@ -74,8 +75,8 @@ async function* stream({ profile, apiKey, system, messages, tools, signal }) {
     body.tools = tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }))
   if (q.reasoningEffort) body.reasoning_effort = q.reasoningEffort
 
-  const headers = { ...(profile.headers || {}) }
-  if (apiKey) headers.authorization = `Bearer ${apiKey}`
+  // Auth + identification the provider expects (Bearer, Azure api-key, OpenRouter attribution); profile headers win.
+  const headers = { ...authHeaders(profile.baseURL, apiKey), ...(profile.headers || {}) }
   // providers that reject an optional parameter: drop / swap it and retry
   const adapt = (err, b) => {
     const t = err.body

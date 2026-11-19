@@ -15,6 +15,30 @@ const PRODUCT_HEADERS = {
   "x-vibecoder-client": `VibeCoderAI/${VIBE_VERSION}`,
 }
 
+/**
+ * The auth and identification headers each kind of provider expects.
+ *   - Standard OpenAI-compatible APIs: Authorization: Bearer <key>.
+ *   - Azure OpenAI / Azure AI: the key goes in `api-key` (a Bearer value there is
+ *     treated as an Entra token and rejected).
+ *   - OpenRouter: HTTP-Referer + X-Title name the app (its documented attribution headers).
+ * Profile headers are applied by the caller afterwards, so a user can still override anything.
+ */
+function authHeaders(baseURL, apiKey) {
+  let host = ""
+  try { host = new URL(String(baseURL || "")).hostname.toLowerCase() } catch {}
+  const h = {}
+  const azure = /\.openai\.azure\.com$|\.cognitiveservices\.azure\.com$|\.services\.ai\.azure\.com$/.test(host)
+  if (apiKey) {
+    if (azure) h["api-key"] = apiKey
+    else h.authorization = `Bearer ${apiKey}`
+  }
+  if (host === "openrouter.ai") {
+    h["http-referer"] = "https://vibecoderai.onrender.com"
+    h["x-title"] = "VibeCoder AI"
+  }
+  return h
+}
+
 // Some gateways (AgentRouter, new-api routers) reject an unknown client before
 // looking at the request. Only after a 401/403 "unauthorized client" do the
 // OpenAI-format adapters retry once with a client string those gateways
@@ -185,4 +209,4 @@ function parseRawBody(text) {
   return j
 }
 
-module.exports = { ApiError, NonApiResponseError, postStream, postStreamAdaptive, parseRawBody, streamError, PRODUCT_HEADERS, COMPAT_CLIENT_HEADERS, prefersCompatClient, rememberCompatClient, VIBE_VERSION }
+module.exports = { ApiError, NonApiResponseError, postStream, postStreamAdaptive, parseRawBody, streamError, PRODUCT_HEADERS, authHeaders, COMPAT_CLIENT_HEADERS, prefersCompatClient, rememberCompatClient, VIBE_VERSION }

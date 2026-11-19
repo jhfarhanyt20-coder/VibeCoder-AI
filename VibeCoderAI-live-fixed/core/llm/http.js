@@ -57,8 +57,14 @@ class ApiError extends Error {
     const text = String(body)
     const restricted = [401, 403].includes(status) && /unauthori[sz]ed[_\s-]*client|client[^\n]{0,40}(?:not allowed|not authori[sz]ed|detected)/i.test(text)
     const blocked = status === 400 && /content[_\s-]*blocked|content[_\s-]*policy|blocked by (?:the )?provider/i.test(text)
+    // AgentRouter's own server filter refuses messages written only in some
+    // languages (tested: Bangla, Banglish and Hindi are blocked; English, French,
+    // Chinese and mixed Bangla+English pass). Say so plainly.
+    const agentRouter = /agent_router_api_error|agentrouter/i.test(text)
     super(blocked
-      ? `The provider's content filter blocked this message (HTTP 400). Try another provider, add one to the Fallback model chain, or rephrase the message. Provider said: ${text.slice(0, 300)}`
+      ? agentRouter
+        ? `AgentRouter's filter blocked this message (HTTP 400). AgentRouter refuses chats that start in some languages, such as Bangla, Banglish or Hindi, even harmless ones. Start the chat in English (once the model itself has replied in Bangla, Bangla and Banglish messages usually pass), mix in English, pick another model, or use the Fallback model so the next provider answers automatically. Provider said: ${text.slice(0, 200)}`
+        : `The provider's content filter blocked this message (HTTP 400). Try another provider, add one to the Fallback model chain, or rephrase the message. Provider said: ${text.slice(0, 300)}`
       : restricted
         ? `This provider rejected VibeCoder AI as an unauthorized client (HTTP ${status}). The credential is restricted to another approved application; ask the provider to authorize VibeCoder AI or use an unrestricted API credential. Provider said: ${text.slice(0, 300)}`
         : `HTTP ${status}: ${text.slice(0, 500)}`)

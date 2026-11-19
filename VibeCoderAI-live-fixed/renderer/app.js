@@ -2688,6 +2688,7 @@ async function performSend(queued = null) {
       showError("Could not switch model", message, { key: "model-switch" })
       return // Never send the prompt using the session's previously active provider.
     }
+    state.pendingModelPick = null // the new session now uses the picked model
     hideError("model-switch")
   }
   setMainEmpty(false)
@@ -5814,6 +5815,10 @@ document.querySelector(".model-head .icon-btn.square")?.addEventListener("click"
 /* ---------- model picker (searchable) ---------- */
 state.models = []
 state.selectedModel = null
+// A model the user just picked that the engine has not adopted yet (for example
+// in a new task, before a session exists). It wins over the engine's older saved
+// choice until a session confirms it, so the first message uses the picked model.
+state.pendingModelPick = null
 state.modelMenuOpen = false
 let modelLoadGeneration = 0
 let providerLoadGeneration = 0
@@ -5858,7 +5863,8 @@ function applyProviderCatalog(data) {
   // only while that exact provider/model pair exists in the fresh disk catalog.
   const previousSelection = valid(state.selectedModel) ? state.selectedModel : null
   const cachedSelection = valid(cached) ? cached : null
-  state.selectedModel = serverSelection || previousSelection || cachedSelection || null
+  const pickedSelection = valid(state.pendingModelPick) ? state.pendingModelPick : null
+  state.selectedModel = pickedSelection || serverSelection || previousSelection || cachedSelection || null
   if (cached && !valid(cached)) {
     try { localStorage.removeItem("vibecoder.model") } catch {}
   }
@@ -6016,6 +6022,7 @@ function renderModelList(filter = "") {
       b.onclick = async () => {
         const previous = state.selectedModel
         state.selectedModel = key
+        state.pendingModelPick = key
         $("model-label").textContent = modelDisplayLabel(key)
         updateUsageRing()
         try {
@@ -6037,9 +6044,11 @@ function renderModelList(filter = "") {
               try { localStorage.setItem("vibecoder.model", canonical) } catch {}
               $("model-label").textContent = modelDisplayLabel(canonical)
             }
+            state.pendingModelPick = null // the session adopted it
             hideError("model-switch")
           } catch (err) {
             state.selectedModel = previous
+            state.pendingModelPick = null
             try {
               if (previous) localStorage.setItem("vibecoder.model", previous)
               else localStorage.removeItem("vibecoder.model")
@@ -6472,7 +6481,11 @@ let providerDraftTimer = null
 let providerDraftLastSaved = ""
 
 function providerDraftKey(d = providerState.draft) {
-  return d?.id || "__new__"
+  if (d?.id) return d.id
+  // An unsaved preset (OpenAI, Anthropic…) keeps its own draft, so "+ Add provider"
+  // always opens the blank form instead of the last preset.
+  if (d?.preset) return `__preset__:${d.preset}`
+  return "__new__"
 }
 
 function captureProviderForm() {
@@ -6528,6 +6541,8 @@ async function restoreProviderDraft(d) {
   const res = await vibe.providerDraftLoad({ key }).catch(() => null)
   if (providerState.draft !== d || providerFormDrafts.has(key)) return
   if (res?.ok && res.data?.draft) {
+    // Older builds stored preset forms as the blank "__new__" draft: never show one of those as "Add provider".
+    if (key === "__new__" && isUntouchedPresetDraft(res.data.draft)) return
     Object.assign(d, res.data.draft, { id: d.id, isNew: d.isNew, keyVisible: false })
     providerFormDrafts.set(key, d)
     renderProviderDetail()
@@ -6786,6 +6801,12 @@ const PROVIDER_PRESETS = [
 ]
 
 const presetKey = (p) => String(p && p.baseURL || "").trim().replace(/\/+$/, "").toLowerCase()
+/** A draft that is only a preset's prefilled form (no key and no models typed in). */
+function isUntouchedPresetDraft(d) {
+  if (!d || d.id) return false
+  const k = presetKey(d)
+  return !!k && PROVIDER_PRESETS.some((p) => presetKey(p) === k) && !String(d.apiKey || "").trim() && !(d.models || []).length
+}
 
 function renderProviderPresets() {
   const box = $("preset-provider-list")
@@ -6845,23 +6866,39 @@ function selectProviderPreset(preset) {
   }
   if (providerState.draft && providerDraftDirty()) void persistProviderDraft()
   providerState.selectedId = null
-  const d = newProviderDraft()
-  Object.assign(d, {
-    name: preset.name,
-    baseURL: preset.baseURL,
-    apiFormat: preset.apiFormat,
-    models: [],
-    isNew: true,
-  })
+  const ownKey = `__preset__:${presetKey(preset)}`
+  let d = providerFormDrafts.get(ownKey)
+  if (!d) {
+    d = newProviderDraft()
+    Object.assign(d, {
+      name: preset.name,
+      baseURL: preset.baseURL,
+      apiFormat: preset.apiFormat,
+      models: [],
+      isNew: true,
+      preset: presetKey(preset),
+    })
+  }
   providerState.draft = d
-  // Remember the filled form so an auto-saved "__new__" draft can't replace it.
-  providerFormDrafts.set("__new__", d)
+  // Remember this preset's form under its own key (never the blank "__new__" one).
+  providerFormDrafts.set(ownKey, d)
   updateProviderSelection()
   updatePresetActive()
   renderProviderDetail()
+  showProviderFormPanel()
   $("model-detail").scrollTop = 0
   // The form's input/change handlers save once the user actually edits it.
   // Writing a draft on every preset click just added IPC noise to the switch.
+}
+
+/** Show the custom/preset provider form and nothing else (the VibeCoderAI
+ *  account panel belongs to its own list item only). */
+function showProviderFormPanel() {
+  state.selectedProvider = null
+  for (const item of document.querySelectorAll(".provider-item[data-provider=opencode]")) item.classList.remove("selected")
+  $("md-opencode").hidden = true
+  $("md-custom").hidden = false
+  $("model-detail").querySelector(".md-empty")?.setAttribute("hidden", "")
 }
 
 function selectProvider(id) {
@@ -6875,24 +6912,22 @@ function selectProvider(id) {
   renderProviderDetail()
   $("model-detail").scrollTop = 0
   void restoreProviderDraft(providerState.draft)
-  // the OpenCode built-in block is not shown while a custom provider is open
-  $("md-opencode").hidden = true
-  $("md-custom").hidden = false
-  $("model-detail").querySelector(".md-empty")?.setAttribute("hidden", "")
+  // the VibeCoderAI account block is not shown while a custom provider is open
+  showProviderFormPanel()
 }
 
 function startNewProvider() {
   if (providerState.draft && providerDraftDirty()) void persistProviderDraft()
   providerState.selectedId = null
-  providerState.draft = providerFormDrafts.get("__new__") || newProviderDraft()
+  const blank = providerFormDrafts.get("__new__")
+  providerState.draft = blank && !isUntouchedPresetDraft(blank) ? blank : newProviderDraft()
+  providerFormDrafts.set("__new__", providerState.draft)
   updateProviderSelection()
   updatePresetActive()
   renderProviderDetail()
   $("model-detail").scrollTop = 0
   void restoreProviderDraft(providerState.draft)
-  $("md-opencode").hidden = true
-  $("md-custom").hidden = false
-  $("model-detail").querySelector(".md-empty")?.setAttribute("hidden", "")
+  showProviderFormPanel()
 }
 
 function renderProviderDetail() {
@@ -7356,6 +7391,8 @@ function setSubagentHeader(details) {
   $("subagent-send").disabled = status === "running"
   $("subagent-input").disabled = status === "running"
   $("subagent-input").placeholder = status === "running" ? "This subagent is still working…" : "Send a follow-up to this subagent…"
+  // Own-workspace bar (Review / Merge / Discard) lives in crew-ui.js.
+  try { if (typeof window.renderCrewWorkspace === "function") window.renderCrewWorkspace(details) } catch {}
 }
 
 function renderSubagentDetails(details) {
@@ -8606,6 +8643,9 @@ const TOOL_META = {
   computer_drag: { icon: "🖱", label: "Drag" },
   computer_wait: { icon: "⏳", label: "Wait" },
   vibecoder_help: { icon: "?", label: "VibeCoder guide" },
+  crewChanges: { icon: "🤖", label: "Review helper's work" },
+  crewMerge: { icon: "🤖", label: "Merge helper's work" },
+  crewDiscard: { icon: "🤖", label: "Discard helper's work" },
   // GitHub connector
   github_repos: { icon: "⎇", label: "GitHub repos" },
   github_files: { icon: "⎇", label: "GitHub file" },

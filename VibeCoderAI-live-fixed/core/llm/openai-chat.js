@@ -23,6 +23,8 @@ function toWire(system, messages) {
           id: c.id,
           type: "function",
           function: { name: c.name, arguments: JSON.stringify(c.args == null ? {} : c.args) },
+          // Gemini 3 needs its thought_signature back on each function call.
+          ...(c.extra && typeof c.extra === "object" ? { extra_content: c.extra } : {}),
         }))
       out.push(msg)
     } else {
@@ -61,11 +63,31 @@ function parseArgs(raw) {
   }
 }
 
+// Google's OpenAI-compatible Gemini endpoint.
+const isGemini = (profile) => /(^|.)generativelanguage.googleapis.com/i.test(String((profile && profile.baseURL) || ""))
+// Gemini model ids are lowercase ("models/gemini-2.5-flash-Lite" is a 400).
+const geminiModel = (m) => String(m || "").trim().toLowerCase()
+// Gemini 3 rejects a function call without its thought_signature. Calls saved
+// before signatures were kept (or made by another model) get Google's
+// documented placeholder so the chat can continue.
+const GEMINI_SKIP_SIGNATURE = "skip_thought_signature_validator"
+function withGeminiSignatures(wire) {
+  for (const m of wire) {
+    if (m.role !== "assistant" || !Array.isArray(m.tool_calls)) continue
+    for (const tc of m.tool_calls) {
+      const sig = tc.extra_content && tc.extra_content.google && tc.extra_content.google.thought_signature
+      if (!sig) tc.extra_content = { ...(tc.extra_content || {}), google: { ...((tc.extra_content && tc.extra_content.google) || {}), thought_signature: GEMINI_SKIP_SIGNATURE } }
+    }
+  }
+  return wire
+}
+
 async function* stream({ profile, apiKey, system, messages, tools, signal }) {
   const q = profile.quirks || {}
+  const gemini = isGemini(profile)
   const body = {
-    model: profile.model,
-    messages: toWire(system, messages),
+    model: gemini ? geminiModel(profile.model) : profile.model,
+    messages: gemini ? withGeminiSignatures(toWire(system, messages)) : toWire(system, messages),
     stream: true,
     stream_options: { include_usage: true },
     [q.maxTokensParam || "max_tokens"]: profile.maxOutput || 8192,
@@ -144,6 +166,7 @@ async function* stream({ profile, apiKey, system, messages, tools, signal }) {
       }
       if (!c) calls.set(i, (c = { id: tc.id || newId("call"), name: "", args: "" }))
       if (tc.id) c.id = tc.id
+      if (tc.extra_content && typeof tc.extra_content === "object") c.extra = tc.extra_content
       if (tc.function) {
         if (tc.function.name && !c.name) c.name = tc.function.name
         if (tc.function.arguments) c.args += tc.function.arguments
@@ -151,7 +174,7 @@ async function* stream({ profile, apiKey, system, messages, tools, signal }) {
     }
     if (ch.finish_reason) finish = ch.finish_reason
   }
-  for (const c of calls.values()) if (c.name) yield { type: "tool_call", id: c.id, name: c.name, args: parseArgs(c.args) }
+  for (const c of calls.values()) if (c.name) yield { type: "tool_call", id: c.id, name: c.name, args: parseArgs(c.args), ...(c.extra ? { extra: c.extra } : {}) }
   yield { type: "finish", reason: calls.size ? "tool_calls" : finish }
 }
 
@@ -169,9 +192,9 @@ function* fromJson(j) {
     if (!tc || !tc.function || !tc.function.name) continue
     n++
     const a = tc.function.arguments
-    yield { type: "tool_call", id: tc.id || newId("call"), name: tc.function.name, args: typeof a === "string" ? parseArgs(a) : a || {} }
+    yield { type: "tool_call", id: tc.id || newId("call"), name: tc.function.name, args: typeof a === "string" ? parseArgs(a) : a || {}, ...(tc.extra_content && typeof tc.extra_content === "object" ? { extra: tc.extra_content } : {}) }
   }
   yield { type: "finish", reason: n ? "tool_calls" : (ch && ch.finish_reason) || "stop" }
 }
 
-module.exports = { stream, toWire, fromJson }
+module.exports = { stream, toWire, fromJson, isGemini, geminiModel, withGeminiSignatures }

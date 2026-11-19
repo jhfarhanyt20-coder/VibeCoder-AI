@@ -1220,6 +1220,10 @@ const handlers = {
   },
   subagentResume: async (a = {}) => engine.resumeSubagent(a.id || a.subagentID, a.text || a.prompt || "Continue and report the result.", { maxSteps: a.maxSteps }),
   subagentStop: async (a = {}) => ({ stopped: await engine.stopSubagent(a.id || a.subagentID) }),
+  // Crew helpers that worked in their own workspace: review, merge or discard.
+  crewChanges: async (a = {}) => engine.crewChanges(String(a.id || a.subagentID || ""), { withDiff: a.diff !== false }),
+  crewMerge: async (a = {}) => engine.crewMerge(String(a.id || a.subagentID || ""), { only: Array.isArray(a.files) && a.files.length ? a.files.map(String) : undefined }),
+  crewDiscard: async (a = {}) => engine.crewDiscard(String(a.id || a.subagentID || "")),
   computerUseGet: async () => ({ enabled: computerUseEnabled, supported: process.platform === "win32", killSwitch: "Ctrl+Alt+Esc", logFile: path.join(home, "computer-actions.log") }),
   computerUseSet: async (a = {}) => { applyComputerUse(!!a.enabled); persistUIState(); return { enabled: computerUseEnabled, supported: process.platform === "win32" } },
   // Connectors (GitHub…): sign in through the browser; the engine keeps the account.
@@ -1333,7 +1337,7 @@ const preloadNames = [
   "listSessions","createSession","getMessages","renameSession","deleteSession","revertSession","undoSession","listSnapshots","listStepSnapshots","previewSnapshot","undoStepSession","redoSession","listRedo","getTrail","prompt","queuePrompt","resumeRun","interrupt","compactSession","getCompactionSettings","setCompactionSettings",
   "listShells","shellOutput","shellInput","backgroundSession","backgroundShell","cancelShell","setPermissions","listPermissionRequests","replyPermission","listForms","replyForm","cancelForm",
   "listModels","listAllModels","listModelLimits","setModel","providerCatalog","providerList","providerSave","providerRemove","providerDraftSave","providerDraftLoad","providerDraftRemove","providerDisabled","providerKey","providerModels","providerModel","providerMeta","fallbackGet","fallbackSave","fallbackReset",
-  "cwd","setDirectory","getDirectory","gitBranch","pickProject","pickAttachments","readAttachment","ensureAgent","switchAgent","listAgents","setAgentDisabled","mcpList","mcpAdd","mcpRemove","subagentCreate","subagentList","subagentStatus","subagentResult","subagentDetails","subagentResume","subagentStop","subagentToggle","computerUseGet","computerUseSet","connectorsList","connectorConnect","connectorCancel","connectorDisconnect",
+  "cwd","setDirectory","getDirectory","gitBranch","pickProject","pickAttachments","readAttachment","ensureAgent","switchAgent","listAgents","setAgentDisabled","mcpList","mcpAdd","mcpRemove","subagentCreate","subagentList","subagentStatus","subagentResult","subagentDetails","subagentResume","subagentStop","crewChanges","crewMerge","crewDiscard","subagentToggle","computerUseGet","computerUseSet","connectorsList","connectorConnect","connectorCancel","connectorDisconnect",
   "pluginList","pluginAdd","pluginRemove","builtins","installBuiltinPlugin","removeBuiltinPlugin","marketplace","installSkill","removeSkill","installCustomSkill","removeCustomSkill","importGitHubSkills","registryAdd","registryRemove","memoryPath","memoryList","memoryAdd","memoryRemove","openMemoryFile","todoList","todoSave","cliInfo","cliInstallTested","cliUpdateCheck","authStatus","authConnect","authDisconnect","upgradeInfo","startUpgrade","ownerScan","ownerVerify","notify","openExternal","restartEvents","logError","openErrorLog","appUpdateStatus","appUpdateSetPrefs"
 ]
 

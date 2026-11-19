@@ -550,3 +550,25 @@ body.side-resizing * { cursor: col-resize !important; }
 .mkt-registry #mkt-reg-name { flex: 0 1 200px; min-width: 140px; }
 .mkt-registry #mkt-reg-url { flex: 1 1 260px; min-width: 220px; }
 .mkt-registry #mkt-reg-add { flex: none; white-space: nowrap; }
+
+/* ---------- Crew: own-workspace bar in a helper's view ---------- */
+.crew-ws-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 0 auto 8px; padding: 8px 12px;
+  width: min(760px, calc(100% - 32px));
+  border: 1px dashed var(--border-strong);
+  border-radius: 10px;
+  background: var(--panel);
+  font-size: calc(12.5px * var(--fs-scale, 1));
+}
+.crew-ws-bar[hidden] { display: none; }
+.crew-ws-text { color: var(--muted); }
+.crew-ws-bar .spacer { flex: 1; }
+.crew-ws-bar .save-btn.primary { background: linear-gradient(135deg, var(--logo-1, #e0913a), var(--logo-2, #b8641f)); border-color: transparent; color: #fff; }
+
+/* Selecting chat text: the composer and floating bars are not selected while dragging. */
+body.chat-selecting .composer,
+body.chat-selecting .subagent-composer,
+body.chat-selecting .jump-live,
+body.chat-selecting .todo-panel,
+body.chat-selecting .bg-job { user-select: none; -webkit-user-select: none; }

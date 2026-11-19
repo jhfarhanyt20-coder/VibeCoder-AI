@@ -127,6 +127,9 @@ function connect({ url, token }) {
       details: (id) => call("POST", "/control/crew.show", { id }),
       resume: (id, text, o = {}) => call("POST", "/control/crew.resume", { id, text, ...o }),
       stop: (id) => call("POST", "/control/crew.stop", { id }),
+      changes: (id) => call("POST", "/control/crew.changes", { id }),
+      merge: (id, files) => call("POST", "/control/crew.merge", { id, files }),
+      discard: (id) => call("POST", "/control/crew.discard", { id }),
     },
     todos: {
       list: (sessionId) => call("POST", "/control/todos.list", { sessionId }),

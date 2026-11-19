@@ -22,6 +22,12 @@ const tools = require("../tools")
 const profiles = require("../llm/profiles")
 const { buildSystem } = require("../agent/prompt")
 const { runLoop, repairHistory } = require("../agent/loop")
+const workspaces = require("./workspace")
+const snapshots = require("../store/snapshots")
+
+// Helpers that only read never need a private copy.
+const READ_ONLY_TYPES = new Set(["read", "web", "mcp", "plugin"])
+const READ_ONLY_AGENTS = new Set(["explore", "plan", "scout", "architect"])
 
 const DEFAULT_MAX_STEPS = 25
 
@@ -127,6 +133,7 @@ class SubAgentManager {
       durationMs,
       ok: a.status === "done" ? true : a.status === "error" ? false : null,
       parentToolCallId: a.parentToolCallId || "",
+      workspace: workspaceInfo(a),
     }
   }
 
@@ -149,6 +156,7 @@ class SubAgentManager {
       startedAt: child.subagentStartedAt || child.createdAt || 0,
       completedAt: child.subagentCompletedAt || child.updatedAt || 0,
       parentToolCallId: child.subagentParentToolCallId || "",
+      workspaceState: child.crewWorkspace || null,
       progress: [],
       liveText: "",
       liveReasoning: "",
@@ -171,7 +179,7 @@ class SubAgentManager {
   }
 
   /** Create a subagent inside a session. Returns its public descriptor. */
-  create({ sessionId, name, type = "general", agent: requestedAgent, task, maxSteps, profile, background = true, parentToolCallId = "" } = {}) {
+  create({ sessionId, name, type = "general", agent: requestedAgent, task, maxSteps, profile, background = true, parentToolCallId = "", workspace = "auto" } = {}) {
     const parent = this.engine.store.get(sessionId)
     if (!parent) throw new Error("Session not found: " + sessionId)
     if (parent.kind === "subagent") throw new Error("Subagents cannot spawn nested subagents.")
@@ -187,8 +195,19 @@ class SubAgentManager {
     const displayName = name || definition?.name || PROFILES[legacyType]?.name || `${legacyType}_agent`
     const startedAt = Date.now()
 
+    // A helper that changes files works in its own copy of the project, so
+    // parallel helpers never overwrite each other or the user's files.
+    const wantsOwn = workspace === "isolated" || (workspace !== "shared" && this.engine.crewIsolation !== false &&
+      !READ_ONLY_TYPES.has(legacyType) && !READ_ONLY_AGENTS.has(String(definition?.id || agentId)))
+    let ws = null
+    let wsNote = ""
+    if (wantsOwn && parent.dir) {
+      try { ws = workspaces.create({ dir: parent.dir, id, home: this.engine.home }) }
+      catch (e) { wsNote = "Shared folder (a private copy could not be made: " + ((e && e.message) || e) + ")" }
+    }
+
     const child = this.engine.store.create({
-      dir: parent.dir,
+      dir: ws ? ws.cwd : parent.dir,
       profile: subProfile,
       title: `subagent: ${String(task || type).replace(/\s+/g, " ").trim().slice(0, 40) || type}`,
       kind: "subagent",
@@ -205,6 +224,8 @@ class SubAgentManager {
     child.subagentBackground = background !== false
     child.subagentStartedAt = startedAt
     child.subagentParentToolCallId = String(parentToolCallId || "")
+    if (ws) child.crewWorkspace = { ...ws, state: "open" }
+    if (wsNote) child.crewWorkspaceNote = wsNote
     // The task is a real child-session message: the detail view can show it and
     // the model receives the same durable prompt after resume/restart.
     child.messages.push({ role: "user", parts: [{ type: "text", text: String(task || ""), subagentTask: true }] })
@@ -229,6 +250,8 @@ class SubAgentManager {
       startedAt,
       completedAt: 0,
       parentToolCallId: String(parentToolCallId || ""),
+      workspaceState: child.crewWorkspace || null,
+      workspaceNote: wsNote,
       progress: [],
       liveText: "",
       liveReasoning: "",
@@ -326,6 +349,64 @@ class SubAgentManager {
     return this._public(a)
   }
 
+  /** What a helper changed in its own workspace (summary + diff). */
+  workspaceChanges(id, { withDiff = true } = {}) {
+    const a = this._get(id)
+    if (!a) throw new Error("No helper found with id: " + id)
+    const ws = a.workspaceState
+    if (!ws) return { id, mode: "shared", files: [], diff: "", note: a.workspaceNote || a.session?.crewWorkspaceNote || "This helper worked in the shared project folder." }
+    if (ws.state !== "open") return { id, mode: ws.mode, state: ws.state, files: ws.changes || [], diff: "", note: "Already " + ws.state + "." }
+    const files = workspaces.changes(ws)
+    return { id, mode: ws.mode, state: ws.state, files, diff: withDiff ? workspaces.diff(ws) : "" }
+  }
+
+  /** Apply a finished helper's changes to the real project (three-way, never silent overwrites). */
+  mergeWorkspace(id, { only } = {}) {
+    const a = this._get(id)
+    if (!a) throw new Error("No helper found with id: " + id)
+    if (a.status === "running") throw new Error("This helper is still working. Wait for it to finish (or stop it) before merging.")
+    const ws = a.workspaceState
+    if (!ws || ws.state !== "open") throw new Error(ws ? "This helper's workspace was already " + ws.state + "." : "This helper worked in the shared folder; there is nothing to merge.")
+    const parent = this.engine.store.get(a.sessionId)
+    const ctx = { session: parent, engine: this.engine }
+    const result = workspaces.merge(ws, { only, beforeWrite: (abs) => snapshots.capture(ctx, abs) })
+    const leftOver = only ? workspaces.changes(ws).filter((r) => !only.includes(r.path)) : []
+    if (!leftOver.length) {
+      try { workspaces.remove(ws) } catch {}
+      ws.state = "merged"
+    }
+    ws.merge = { ...result, at: Date.now() }
+    a.session.crewWorkspace = ws
+    this.engine.store.save(a.session)
+    this._event(a, { type: "subagent.workspace", state: ws.state, merge: ws.merge })
+    return { id, state: ws.state, ...result, remaining: leftOver.map((r) => r.path) }
+  }
+
+  /** Throw away a helper's private workspace. The project is not touched. */
+  discardWorkspace(id) {
+    const a = this._get(id)
+    if (!a) throw new Error("No helper found with id: " + id)
+    if (a.status === "running") throw new Error("This helper is still working. Stop it first, then discard its workspace.")
+    const ws = a.workspaceState
+    if (!ws || ws.state !== "open") return { id, state: ws ? ws.state : "shared" }
+    try { workspaces.remove(ws) } catch {}
+    ws.state = "discarded"
+    a.session.crewWorkspace = ws
+    this.engine.store.save(a.session)
+    this._event(a, { type: "subagent.workspace", state: ws.state })
+    return { id, state: ws.state }
+  }
+
+  /** Remove every open workspace of a parent session (used when the chat is deleted). */
+  cleanupWorkspaces(parentSessionId) {
+    for (const row of this.engine.store.list({ includeSubagents: true })) {
+      if (row.parentId !== parentSessionId) continue
+      const child = this.engine.store.get(row.id)
+      const ws = child && child.crewWorkspace
+      if (ws && ws.state === "open") { try { workspaces.remove(ws) } catch {} }
+    }
+  }
+
   stop(id) {
     const a = this._get(id)
     if (!a || a.status !== "running" || !a.ctl) return false
@@ -372,11 +453,15 @@ class SubAgentManager {
 
     try {
       this._event(agent, { type: "subagent.start", name: agent.name, agentType: agent.type, task: agent.task })
-      const profileObj = typeof agent.profile === "string" ? profiles.getProfile(agent.profile, this.engine.home) : agent.profile
-      if (!profileObj || typeof profileObj !== "object" || !profileObj.format) {
+      // Resolve the model exactly like the main agent does: a profile id, an exact
+      // "provider/model" key (e.g. vibecoder/vibecoder/free) or a Fallback group.
+      const profileObj = typeof agent.profile === "string"
+        ? (typeof this.engine._profileTarget === "function" ? this.engine._profileTarget(agent.profile) : profiles.getProfile(agent.profile, this.engine.home))
+        : agent.profile
+      if (!profileObj || typeof profileObj !== "object" || (!profileObj.format && !profileObj.group)) {
         throw new Error(`Subagent model profile is missing a valid format (profile: ${typeof agent.profile === "string" ? agent.profile : "object"})`)
       }
-      const apiKey = profiles.getKey(profileObj, this.engine.home)
+      const apiKey = typeof this.engine._profileKey === "function" ? this.engine._profileKey(profileObj) : profiles.getKey(profileObj, this.engine.home)
       const extraTools = () => {
         const builtin = [...tools.ALL]
         let ext = []
@@ -400,6 +485,9 @@ class SubAgentManager {
           "\n\n" +
           PROFILES[agent.type].systemExtra +
           (agent.definition?.system ? `\n\n${agent.definition.system}` : "") +
+          (agent.workspaceState && agent.workspaceState.state === "open"
+            ? "\n\nYOUR OWN WORKSPACE: you work in a private copy of the project at " + agent.workspaceState.cwd + " (it mirrors " + (agent.workspaceState.source || "the project") + "). Use paths relative to your working directory and change files only here — never write into the original project folder. The parent agent reviews and merges your work."
+            : "") +
           "\n\nWhen you are finished, write a short final summary and stop. Do not ask the user for permission; the parent agent owns the session.",
       })
 
@@ -441,6 +529,23 @@ class SubAgentManager {
       agent.error = (e && e.message) || String(e)
       this._event(agent, { type: "subagent.error", error: agent.error })
     } finally {
+      // Whatever happened (done, failed or stopped): report the helper's changes,
+      // or delete its workspace at once when it changed nothing.
+      const own = agent.workspaceState
+      if (own && own.state === "open") {
+        try {
+          const rows = workspaces.changes(own)
+          own.changes = rows
+          if (rows.length) {
+            const list = rows.slice(0, 12).map((r) => r.status + " " + r.path).join(", ") + (rows.length > 12 ? ", …" : "")
+            agent.result = (agent.result || "") + "\n\n[Own workspace: " + rows.length + " file" + (rows.length === 1 ? "" : "s") + " changed — " + list + ". Nothing is in the project yet: review with crewChanges, then crewMerge to apply or crewDiscard to drop.]"
+          } else {
+            try { workspaces.remove(own) } catch {}
+            own.state = "unchanged"
+          }
+        } catch (e) { own.changesError = (e && e.message) || String(e) }
+        agent.session.crewWorkspace = own
+      }
       agent.completedAt = Date.now()
       agent.liveText = ""
       agent.liveReasoning = ""
@@ -448,6 +553,21 @@ class SubAgentManager {
       this._event(agent, { type: "subagent.end", status: agent.status, result: agent.result, error: agent.error })
       this._publishResult(agent)
     }
+  }
+}
+
+function workspaceInfo(a) {
+  const ws = a.workspaceState
+  const note = a.workspaceNote || (a.session && a.session.crewWorkspaceNote) || ""
+  if (!ws) return note ? { mode: "shared", note } : { mode: "shared" }
+  return {
+    mode: ws.mode,
+    state: ws.state,
+    branch: ws.branch || "",
+    path: ws.cwd,
+    changed: Array.isArray(ws.changes) ? ws.changes.length : null,
+    files: Array.isArray(ws.changes) ? ws.changes.slice(0, 50) : [],
+    ...(ws.merge ? { merge: { applied: ws.merge.applied.length, conflicts: ws.merge.conflicts, kept: ws.merge.kept } } : {}),
   }
 }
 

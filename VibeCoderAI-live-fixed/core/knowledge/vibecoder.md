@@ -105,6 +105,14 @@ keywords: marketplace, mcp, mcp server, plugin, extension, skill, playbook, reci
 keywords: memory, remember, subagent, crew, parallel, background, shell, terminal, long command, todo, plan
 - Say "remember this" and the agent saves it to persistent memory (Settings → Memory, `vibe memory`).
 - Subagents (Crew) can work on parts of a task in parallel (Settings → Subagents, `vibe crew`).
+- Helpers that change files work in their OWN workspace — a git worktree on its own branch
+  (`vibe/crew-<id>`) for git projects, or a private copy otherwise — so parallel helpers never
+  overwrite each other or your files. Read-only helpers share the folder. When a helper finishes,
+  review and merge or discard its work: in the app open the helper and use Review changes / Merge
+  into project / Discard; in the CLI `vibe crew changes|merge|discard <id>`. Merging is three-way:
+  files you did not touch take the helper's version, both-changed lines are merged or clearly marked
+  as conflicts, nothing is silently overwritten, and Rewind can undo a merge. Workspaces are deleted
+  when merged, discarded, or when the chat is deleted.
 - Long commands run in the background; their output and finish are reported back automatically.
   Ctrl+B moves a running command to the background. `vibe shells` / `vibe shell` in the CLI.
 - The agent keeps temporary files in `./.vibe-scratch/` and removes them when the task ends.
@@ -149,6 +157,12 @@ keywords: error, not working, problem, fix, help, 401, 403, 404, 429, rate limit
 - 401/403: the API key is wrong or lacks access — re-add it in Model settings.
 - 404: wrong base URL or format (most services need OpenAI Chat).
 - 429: rate limit — wait, or use a Fallback model.
+- "content filter blocked" (HTTP 400): the provider refused the message. AgentRouter in particular
+  blocks chats that start in Bangla, Banglish or Hindi (English, mixed Bangla+English and most other
+  languages pass). Its filter looks at the whole chat: start in English and ask the model to reply in
+  Bangla — after the model has written Bangla once, Bangla and Banglish messages usually pass. Or use
+  another model, or pick the Fallback model — it moves to the next provider automatically on a
+  content-filter block. VibeCoder free models and Kilo accept Bangla from the first message.
 - Empty replies: raise "Max output tokens" or lower reasoning effort for that model.
 - `vibe doctor` checks paths, keys and the host. App errors are logged to `~/.vibe/app-error.log`.
 - Still stuck: open an issue on GitHub with the steps and the error text (never paste API keys).

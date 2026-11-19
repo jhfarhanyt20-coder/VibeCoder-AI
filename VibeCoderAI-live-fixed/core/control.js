@@ -385,6 +385,10 @@ function createControl(engine) {
       return engine.createSubagent({ ...a, ...(a.agent && !definition ? { type: a.agent, agent: undefined } : {}), background: a.background !== false })
     },
     "crew.stop": async (a) => ({ stopped: await engine.stopSubagent(a.id) }),
+    // A helper's own workspace: review, merge into the project, or discard.
+    "crew.changes": (a) => engine.crewChanges(String(a.id || ""), { withDiff: a.diff !== false }),
+    "crew.merge": (a) => engine.crewMerge(String(a.id || ""), { only: Array.isArray(a.files) && a.files.length ? a.files.map(String) : undefined }),
+    "crew.discard": (a) => engine.crewDiscard(String(a.id || "")),
     "crew.resume": (a) => engine.resumeSubagent(a.id, textContent(a.text), { maxSteps: a.maxSteps }),
     "crew.settings": (a) => {
       if (a.enabled !== undefined) {

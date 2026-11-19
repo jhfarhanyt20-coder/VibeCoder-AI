@@ -547,7 +547,8 @@ ${toolName}${what} has failed ${n} times in a row. Stop retrying the same way: $
     const parts = []
     if (text.trim()) parts.push({ type: "text", text })
     // store the canonical tool name so history and the provider replay stay consistent with the specs
-    for (const c of calls) parts.push({ type: "tool_call", id: c.id, name: (resolve(c.name) || { name: c.name }).name, args: c.args })
+    // `extra` keeps provider data that must be sent back with the call (Gemini's thought_signature).
+    for (const c of calls) parts.push({ type: "tool_call", id: c.id, name: (resolve(c.name) || { name: c.name }).name, args: c.args, ...(c.extra ? { extra: c.extra } : {}) })
     if (!parts.length) {
       // The model answered with NOTHING (no text, no tool call). Ending the run
       // quietly made the chat look dead - "the LLM response never comes".

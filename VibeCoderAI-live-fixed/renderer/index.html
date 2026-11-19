@@ -122,6 +122,13 @@
         <span class="subagent-view-status" id="subagent-view-status">running</span>
         <button class="danger-btn subagent-stop" id="subagent-view-stop" type="button">Stop</button>
       </div>
+      <div class="crew-ws-bar" id="crew-ws-bar" hidden>
+        <span class="crew-ws-text" id="crew-ws-text">Own workspace</span>
+        <span class="spacer"></span>
+        <button class="save-btn" id="crew-ws-review" type="button">Review changes</button>
+        <button class="save-btn primary" id="crew-ws-merge" type="button">Merge into project</button>
+        <button class="save-btn" id="crew-ws-discard" type="button">Discard</button>
+      </div>
 
       <!-- Splash screen (logo + pulse on app start) -->
       <div class="splash" id="splash" role="status" aria-label="Loading">
@@ -1372,6 +1379,8 @@
     <script src="usage.js"></script>
     <script src="icons.js"></script>
     <script src="connectors.js"></script>
+    <script src="crew-ui.js"></script>
+    <script src="chat-select.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

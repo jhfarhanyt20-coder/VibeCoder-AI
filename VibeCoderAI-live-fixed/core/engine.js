@@ -67,6 +67,8 @@ class Engine {
     this._mcpSync = null // in-flight connect promise (dedupe)
     this.crewMaxParallel = Math.max(1, Math.min(16, Math.floor(Number(opts.crewMaxParallel) || 4)))
     this.subagents = new SubAgentManager(this, { maxParallel: this.crewMaxParallel })
+    // Helpers that change files get their own workspace (git worktree or copy).
+    this.crewIsolation = opts.crewIsolation !== false
     this.subagentsEnabled = opts.subagentsEnabled !== false // on by default
     // Computer Use (Windows): off unless the host turns it on (the desktop app
     // does, from Settings → Computer Use). The executor starts on first use.
@@ -94,7 +96,8 @@ class Engine {
     return {
       name: "subagent",
       description:
-        "Run a focused subagent in its own visible child session. By default this waits and returns the final result inline; set background:true to keep the main agent moving while the user watches the child progress.",
+        "Run a focused subagent in its own visible child session. By default this waits and returns the final result inline; set background:true to keep the main agent moving while the user watches the child progress. " +
+        "Helpers that change files work in their OWN workspace (a git worktree or a private copy), so several can work in parallel without overwriting each other: split a big job into independent parts, start one background helper per part, and when they finish review each with crewChanges, apply with crewMerge (fix any marked conflicts) or drop with crewDiscard, then run the tests once on the combined result.",
       parameters: {
         type: "object",
         properties: {
@@ -108,6 +111,7 @@ class Engine {
           name: { type: "string", description: "Optional name" },
           maxSteps: { type: "integer", description: "Max steps, default 25" },
           background: { type: "boolean", description: "true = return immediately; false/default = wait and return the final result" },
+          workspace: { type: "string", enum: ["auto", "isolated", "shared"], description: "auto (default): helpers that change files work in their own copy of the project (git worktree or copy) and you merge their work with crewMerge; read-only helpers share the folder. shared = edit the project folder directly." },
         },
         required: ["task"],
       },
@@ -123,6 +127,7 @@ class Engine {
           maxSteps: a.maxSteps,
           background: a.background === true,
           parentToolCallId: c.toolCallId,
+          workspace: ["isolated", "shared"].includes(a.workspace) ? a.workspace : "auto",
         })
         if (c.stats) Object.assign(c.stats, {
           subagentId: r.id,
@@ -181,7 +186,11 @@ class Engine {
       pl = this.extensions.toolObjects(directory)
     } catch {}
     const ex = [...this.mcp.toolObjects(), ...this.mcp.resourceToolObjects(), ...pl]
-    if (this.subagentsEnabled) ex.push(this.subagentTool())
+    if (this.subagentsEnabled) {
+      ex.push(this.subagentTool())
+      // Review / merge / discard what helpers did in their own workspaces.
+      try { ex.push(...require("./tools/crew").ALL) } catch {}
+    }
     // Computer Use: screen/mouse/keyboard tools are offered to the model only
     // while the setting is on (the tools also refuse when it is off).
     if (this.computerUse && this.computerUse.enabled === true && process.platform === "win32") {
@@ -275,6 +284,8 @@ class Engine {
     // events and saves are ignored; the session store also tombstones the id as a
     // second line of defence.
     if (this.runs.has(id)) this.forceStop(id)
+    // Private Crew workspaces of this chat are deleted with it.
+    try { this.subagents.cleanupWorkspaces(id) } catch {}
     // V-01: child sessions are hidden from list(), so they must be removed here
     // or they would leak on disk for ever.
     try {
@@ -1365,6 +1376,16 @@ class Engine {
   /** Abort a running subagent. */
   stopSubagent(id) {
     return this.subagents.stop(id)
+  }
+  /** A helper's own-workspace changes; merge them into the project; or discard them. */
+  crewChanges(id, opts) {
+    return this.subagents.workspaceChanges(id, opts)
+  }
+  crewMerge(id, opts) {
+    return this.subagents.mergeWorkspace(id, opts)
+  }
+  crewDiscard(id) {
+    return this.subagents.discardWorkspace(id)
   }
 
   // ---- browser (Electron only) ----

@@ -98,6 +98,7 @@
     if (/^computer_/.test(n)) return "monitor"
     if (/^github_/.test(n)) return "branch"
     if (n === "vibecoder_help") return "spark"
+    if (/^crew/.test(n)) return "bot"
     if (/^facebook_/.test(n)) return "users"
     if (/^browser/.test(n)) return "globe"
     if (/^mcp[_.]/.test(n)) return "plug"

@@ -600,9 +600,26 @@ If it did not open: ${st.pending.verificationUri}
       else if (["show", "result", "status"].includes(sub)) print(await call("crew.show", { id: rest[0] }))
       else if (sub === "start") { requireSession(); print(await call("crew.start", { agent: rest[0], task: rest.slice(1).join(" "), background: true, maxSteps: flags.steps })) }
       else if (sub === "stop") print(await call("crew.stop", { id: rest[0] }))
+      else if (sub === "changes" || sub === "diff") {
+        const r = await call("crew.changes", { id: rest[0] })
+        show(r, () => {
+          if (r.mode === "shared") return log(r.note || "This helper worked in the shared project folder.")
+          log(`${r.files.length} file(s) changed in the helper's own workspace (${r.mode}${r.state && r.state !== "open" ? `, ${r.state}` : ""}):`)
+          for (const f of r.files) log(`  ${f.status} ${f.path}`)
+          if (r.diff) log("\n" + safeText(r.diff))
+          if (r.state === "open") log(c.dim(`Apply: vibe crew merge ${rest[0]}   Drop: vibe crew discard ${rest[0]}`))
+        })
+      } else if (sub === "merge") {
+        const r = await call("crew.merge", { id: rest[0], files: rest.slice(1) })
+        show(r, () => {
+          log(`Merged ${r.applied.length} of ${r.total} file(s) into the project.`)
+          if (r.conflicts.length) log(c.yellow(`Fix the marked conflicts in: ${r.conflicts.join(", ")}`))
+          if (r.kept.length) log(c.yellow(`Kept your version; helper's copy saved next to: ${r.kept.map((k) => k.path).join(", ")}`))
+        })
+      } else if (sub === "discard") show(await call("crew.discard", { id: rest[0] }), (r) => log(r.state === "discarded" ? "Discarded the helper's workspace. The project was not changed." : `Nothing to discard (${r.state}).`))
       else if (sub === "resume") print(await call("crew.resume", { id: rest[0], text: rest.slice(1).join(" ") }))
       else if (sub === "settings") print(await call("crew.settings", rest[0] === "parallel" ? { maxParallel: Number(rest[1]) } : rest[0] ? { enabled: valueOf(rest[0]) } : {}))
-      else throw new Error("Usage: vibe crew list|show|start <agent> <task>|stop|resume|settings")
+      else throw new Error("Usage: vibe crew list|show|start <agent> <task>|stop|resume|changes|merge|discard <id>|settings")
       break
     case "shells": print(await call("shells.list")); break
     case "shell":

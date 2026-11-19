@@ -46,7 +46,14 @@ function gitTop(dir) {
   if (!top) return null
   const head = git(dir, ["rev-parse", "--verify", "HEAD"], { allowFail: true })
   if (!head) return null // a repo without commits cannot host a worktree
-  return path.resolve(top.trim())
+  return realDir(top.trim())
+}
+
+// One spelling for a folder: Windows 8.3 short names (C:UsersRUNNER~1) and
+// git's long form must compare equal, or relative paths go wrong.
+function realDir(p) {
+  const abs = path.resolve(p)
+  try { return fs.realpathSync.native(abs) } catch { return abs }
 }
 
 function copyTree(src, dst, stats = { files: 0, bytes: 0 }) {
@@ -96,7 +103,7 @@ function create({ dir, id, home }) {
   const root = path.join(store, String(id).replace(/[^\w.-]/g, "_"))
   const top = gitTop(dir)
   if (top) {
-    const rel = path.relative(top, path.resolve(dir))
+    const rel = path.relative(top, realDir(dir))
     const branch = `vibe/crew-${String(id).replace(/[^\w.-]/g, "-")}`
     git(top, ["worktree", "add", "-q", "-b", branch, root, "HEAD"])
     try {

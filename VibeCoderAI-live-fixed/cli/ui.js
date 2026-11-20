@@ -4,6 +4,8 @@ function computerBrief(name, a) {
   const where = a.element != null && a.element !== "" ? `element ${a.element}` : (a.x != null && a.y != null ? `at ${a.x}, ${a.y}` : "")
   switch (String(name)) {
     case "computer_screenshot": return "looking at the screen"
+    case "computer_zoom": return "looking closer at part of the screen"
+    case "computer_steps": return `doing ${Array.isArray(a.steps) ? a.steps.length : 0} steps: ${(Array.isArray(a.steps) ? a.steps : []).map((s) => s && s.action).filter(Boolean).join(" → ")}`
     case "computer_ui": return "reading the window controls"
     case "computer_windows": return "listing open windows"
     case "computer_focus": return `switching to window ${a.window || a.title || ""}`.trim()
@@ -67,8 +69,17 @@ async function askPermission(rl, ev, state, log = console.log, signal) {
   // A risky action with no terminal to ask: leave it for another client (the
   // desktop app's card when attached) instead of denying it here.
   if (ev.critical && (!rl || !process.stdin.isTTY)) {
-    log(c.dim(`(waiting for approval in the VibeCoder app: ${subject})`))
-    return null
+    // Never wait for ever: when no app answers in time, refuse it, so the
+    // agent stops this action and tells the user instead of hanging the run.
+    const waitMs = Number(process.env.VIBE_CRITICAL_WAIT_MS) > 0 ? Number(process.env.VIBE_CRITICAL_WAIT_MS) : 90000
+    log(c.dim(`(waiting up to ${Math.round(waitMs / 1000)}s for approval in the VibeCoder app: ${subject})`))
+    return await new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        log(c.dim(`(nobody approved within ${Math.round(waitMs / 1000)}s: denied)`))
+        resolve("deny")
+      }, waitMs)
+      signal?.addEventListener?.("abort", () => { clearTimeout(timer); resolve(null) }, { once: true })
+    })
   }
   if (!rl || !process.stdin.isTTY) {
     log(c.dim(`(no terminal to ask, denied: ${ev.tool}) use --yes to allow`))

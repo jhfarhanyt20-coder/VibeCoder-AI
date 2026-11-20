@@ -137,6 +137,54 @@ async function runChat({ vibe, dir, profile, flags = {}, agent, session: initial
     return next
   }
   const context = (extra = {}) => ({ vibe, dir, home, sessionId: session.id, input, out: output, inChat: true, flags: { ...flags, yes: rendererFor(session.id).state.yes }, ...extra })
+  // The sessions sidebar: this project's sessions, newest first.
+  const sidebarSessions = async () => {
+    if (!screen) return undefined
+    try {
+      const rows = await vibe.session.list({ dir })
+      // Empty sessions (opened but never used) only clutter the list; the current one stays.
+      return rows.filter((s) => s.id === session.id || Number(s.messages) > 0 || s.messages === undefined).filter((s) => !s.parentId && s.kind !== "subagent").slice(0, 60).map((s) => ({ id: s.id, title: s.title && s.title !== "New session" ? s.title : "New task", ago: s.updatedAt ? when(s.updatedAt) : "" }))
+    } catch { return [] }
+  }
+  async function sessionMenu(id) {
+    const target = (await vibe.session.list({ dir })).find((s) => s.id === id)
+    if (!target) return
+    const name = target.title && target.title !== "New session" ? target.title : "New task"
+    const choice = await input.pick([
+      { id: "open", label: "Open", description: "Continue working in this session" },
+      { id: "rename", label: "Rename", description: "Give this session a new name" },
+      { id: "delete", label: "Delete", description: "Remove this session and its history (cannot be undone)" },
+    ], `Session: ${clip(name, 50)}`)
+    if (!choice) return
+    if (choice.id === "open") { if (id !== session.id) await switchSession(id); return }
+    if (choice.id === "rename") {
+      const title = String(await input.read(`New name for "${clip(name, 40)}": `, { interrupt: true }) || "").trim()
+      if (!title) return
+      await vibe.session.rename(id, title)
+      if (id === session.id) await refresh()
+      await refreshSidebar()
+      log(c.dim(`Renamed to "${clip(title, 60)}"`))
+      return
+    }
+    if (choice.id === "delete") {
+      const answer = await input.read(`Delete "${clip(name, 60)}" and its history? [y/N] `, { interrupt: true })
+      if (!/^(y|yes)$/i.test(String(answer || "").trim())) return
+      await stopSessionWork(vibe, id).catch(() => {})
+      await vibe.session.remove(id)
+      owned.delete(id)
+      if (id === session.id) {
+        // The open session was deleted: continue in a fresh one.
+        session = await vibe.session.create({ dir, profile: session.profile, agent: session.agent || "build" })
+        owned.add(session.id); sessions = []
+        await refresh()
+        screen?.setHistory(session)
+      }
+      sessions = []
+      await refreshSidebar()
+      log(c.dim(`Deleted "${clip(name, 60)}"`))
+    }
+  }
+  const refreshSidebar = async () => { if (screen) screen.setContext({ sessionId: session.id, sessions: await sidebarSessions() }) }
   const refresh = async () => {
     session = await vibe.session.get(session.id)
     dir = session.dir
@@ -147,9 +195,11 @@ async function runChat({ vibe, dir, profile, flags = {}, agent, session: initial
     const persona = personas.find((a) => a.id === (session.agent || "build"))
     screen?.setContext({
       workspace: path.basename(dir), directory: dir, title: session.title,
-      agent: persona?.name || session.agent || "Pilot", provider: providerName(p, profiles),
+      agent: persona?.name || session.agent || "Pilot", provider: providerName(p, profiles), model: p?.model || "",
       percent: p?.contextLimit ? Math.round(100 * (Number(session.usage?.lastInput) || 0) / p.contextLimit) : null,
       limit: p?.contextLimit, mode: vibe.mode, yes: rendererFor(session.id).state.yes,
+      commands: LOCAL_COMMANDS.filter((n) => n !== "quit"),
+      sessionId: session.id, sessions: await sidebarSessions(),
     })
   }
   const label = () => {
@@ -409,6 +459,7 @@ async function runChat({ vibe, dir, profile, flags = {}, agent, session: initial
     for (const p of pending.pending.filter((p) => p.sessionId === session.id)) await enqueue({ type: "permission.ask", permissionId: p.id, tool: p.tool, subject: p.subject, sessionId: session.id })
     while (!exiting && !input.closed) {
       await eventQueue
+      await refreshSidebar().catch(() => {}) // titles and times after each turn
       const answer = await input.read(label(), { multiline: true, history: stored.history, palette: true, initial: draft })
       draft = ""
       if (answer === null) { if (input.closed || exiting) break; continue }
@@ -425,6 +476,27 @@ async function runChat({ vibe, dir, profile, flags = {}, agent, session: initial
       if (answer?.action === "access") {
         try { await handleCommand("/access") } catch (error) { log(c.red(error.message)) }
         draft = answer.draft
+        continue
+      }
+      // Sessions sidebar: open any session to continue it, or start a new one.
+      if (answer?.action === "session") {
+        try { if (answer.id && answer.id !== session.id) await switchSession(answer.id) } catch (error) { log(c.red(error.message)) }
+        draft = answer.id === session.id ? answer.draft : ""
+        continue
+      }
+      // Right-click on a session in the sidebar: open, rename or delete it.
+      if (answer?.action === "sessionMenu") {
+        try { await sessionMenu(answer.id) } catch (error) { log(c.red(error.message)) }
+        draft = answer.draft
+        continue
+      }
+      if (answer?.action === "new") {
+        try { await handleCommand("/new") } catch (error) { log(c.red(error.message)) }
+        continue
+      }
+      if (answer?.action === "close") {
+        await exit()
+        if (!exiting) draft = answer.draft
         continue
       }
       let text = String(answer || "").trim()

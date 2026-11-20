@@ -393,12 +393,48 @@ public static class VcComputer {
             item["password"] = pw;
             if (!pw) { try { object vp; if (el.TryGetCurrentPattern(ValuePattern.Pattern, out vp)) { string v = ((ValuePattern)vp).Current.Value ?? ""; if (v.Length > 60) v = v.Substring(0, 60) + "…"; item["value"] = v; } } catch { } }
           }
+          try { object sp; if (el.TryGetCurrentPattern(SelectionItemPattern.Pattern, out sp) && ((SelectionItemPattern)sp).Current.IsSelected) item["selected"] = true; } catch { }
+          try { object tp; if (el.TryGetCurrentPattern(TogglePattern.Pattern, out tp)) item["checked"] = ((TogglePattern)tp).Current.ToggleState == ToggleState.On; } catch { }
           els.Add(el); rects.Add(r); items.Add(item);
         }
       } catch { }
+      MarkHidden(h, els, rects, items);
     }
     if (store) { lastElements = els; lastRects = rects; }
     return new Dictionary<string, object> { { "window", win }, { "elements", items } };
+  }
+  // The accessibility tree also lists controls that exist but are not drawn
+  // where they claim (behind another control, under another window, outside
+  // the screen). Hit-test each centre so the model is told, instead of
+  // believing a button is there because the list says so.
+  static bool IsSameOrInside(AutomationElement hit, AutomationElement el, int depth) {
+    var walker = TreeWalker.ControlViewWalker;
+    var cur = hit;
+    for (int i = 0; cur != null && i < depth; i++) {
+      try { if (Automation.Compare(cur, el)) return true; } catch { return false; }
+      try { cur = walker.GetParent(cur); } catch { cur = null; }
+    }
+    return false;
+  }
+  static void MarkHidden(IntPtr h, List<AutomationElement> els, List<Rectangle> rects, List<Dictionary<string, object>> items) {
+    var screen = VirtualScreenRect();
+    var sw = Stopwatch.StartNew();
+    for (int i = 0; i < els.Count; i++) {
+      if (sw.ElapsedMilliseconds > 1500) break; // big windows: the rest stay unchecked
+      var r = rects[i];
+      var c = new System.Drawing.Point(r.X + r.Width / 2, r.Y + r.Height / 2);
+      if (!screen.Contains(c)) { items[i]["hidden"] = "outside the screen"; continue; }
+      try {
+        IntPtr top = WindowFromPoint(new POINT { X = c.X, Y = c.Y });
+        IntPtr topRoot = GetAncestor(top, 2); if (topRoot != IntPtr.Zero) top = topRoot;
+        if (top != h) { items[i]["hidden"] = "covered by another window"; continue; }
+        var hit = AutomationElement.FromPoint(new System.Windows.Point(c.X, c.Y));
+        if (hit == null || IsSameOrInside(hit, els[i], 10)) continue;
+        // The point may land on a parent of the element (text that is not hit-testable): not proof.
+        if (IsSameOrInside(els[i], hit, 6)) continue;
+        items[i]["hidden"] = "covered by another control";
+      } catch { }
+    }
   }
   static Dictionary<string, object> ElementInfo(int id) {
     if (id < 1 || id > lastRects.Count) throw new Exception("Element " + id + " is not in the latest list. Take a new computer_screenshot (or computer_ui) and use a number from it.");
@@ -423,9 +459,13 @@ public static class VcComputer {
   static Dictionary<string, object> Screenshot(Dictionary<string, object> a) {
     IntPtr h = Hwnd(a);
     Rectangle area = h != IntPtr.Zero && IsWindow(h) ? Rectangle.Intersect(WinRect(h), VirtualScreenRect()) : VirtualScreenRect();
-    if (area.Width < 1 || area.Height < 1) throw new Exception("That window is minimized or off-screen. Call computer_focus first.");
+    bool zoom = a.ContainsKey("rw");
+    if (zoom) area = Rectangle.Intersect(new Rectangle(Int(a, "rx", 0), Int(a, "ry", 0), Math.Max(8, Int(a, "rw", 0)), Math.Max(8, Int(a, "rh", 0))), VirtualScreenRect());
+    if (area.Width < 1 || area.Height < 1) throw new Exception(zoom ? "That area is outside the screen." : "That window is minimized or off-screen. Call computer_focus first.");
     int maxW = Int(a, "maxW", 1280), maxH = Int(a, "maxH", 800);
     double scale = Math.Max(1.0, Math.Max((double)area.Width / maxW, (double)area.Height / maxH));
+    // Zoom: a small area is enlarged (up to 3x) so small text becomes readable.
+    if (zoom) scale = Math.Max(1.0 / 3.0, Math.Max((double)area.Width / maxW, (double)area.Height / maxH));
     int sw = (int)Math.Round(area.Width / scale), sh = (int)Math.Round(area.Height / scale);
     List<Dictionary<string, object>> marks = new List<Dictionary<string, object>>();
     Dictionary<string, object> scanned = null;

@@ -156,6 +156,11 @@ class TerminalInput extends EventEmitter {
     if (action?.kind === "access" && this.active?.multiline) this.finish({ action: "access", draft: this.active.text })
     else if (action?.kind === "paste") this.pasteClipboard()
     else if (action?.kind === "pick" && this.active?.kind === "pick") this.finish(action.value)
+    else if (action?.kind === "session" || action?.kind === "sessionMenu" || action?.kind === "newSession" || action?.kind === "window" && action.action === "close") {
+      // Sidebar / close: handled by the chat between turns (the draft is kept).
+      if (this.active?.multiline) this.finish({ action: action.kind === "session" ? "session" : action.kind === "sessionMenu" ? "sessionMenu" : action.kind === "newSession" ? "new" : "close", id: action.id, draft: this.active.text })
+      else { if (this.screen) this.screen.notice = "Finish or stop the current run (Ctrl+C) first"; this.draw() }
+    } else if (action?.kind === "window") { this.screen?.windowAction?.(action.action); this.draw() }
     else this.draw()
   }
   /** Conhost sends Ctrl+V as a key instead of pasting; read the OS clipboard. */

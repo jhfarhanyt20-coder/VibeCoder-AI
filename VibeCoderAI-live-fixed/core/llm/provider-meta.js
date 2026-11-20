@@ -294,6 +294,20 @@ function catalogLookup(catalog, modelId, providerHint) {
   return (exact && exact.meta) || (tailHit && tailHit.meta) || (contains && contains.meta) || null
 }
 
+/**
+ * Can this model read images? true / false when the models.dev catalog (cached
+ * on disk) or the built-in table knows it, null when nobody knows (then the
+ * profile's own "image" switch decides). Sync and cheap: no network.
+ */
+let imageCatalog
+function modelImageSupport(modelId) {
+  const id = String(modelId || "").trim()
+  if (!id) return null
+  if (imageCatalog === undefined) imageCatalog = catalogMem || catalogStale() || null
+  const hit = (imageCatalog && catalogLookup(imageCatalog, id)) || builtinLookup(id)
+  return hit && typeof hit.image === "boolean" ? hit.image : null
+}
+
 /* ---------- offline fallbacks ---------- */
 const BUILTIN = [
   { re: /^claude-(opus|sonnet|haiku)/i, context: 200000, output: 64000, image: true },
@@ -375,4 +389,4 @@ function modelPricing(profile, home) {
   } catch { return null }
 }
 
-module.exports = { repairBaseUrl, repairProfile, listRemoteModels, ollamaShow, modelsDev, reloadModelsDevFromDisk, catalogLookup, modelPricing, builtinLookup, lookupModel, KNOWN, HOST_FORMATS, TO_UI, TO_ENGINE }
+module.exports = { modelImageSupport, repairBaseUrl, repairProfile, listRemoteModels, ollamaShow, modelsDev, reloadModelsDevFromDisk, catalogLookup, modelPricing, builtinLookup, lookupModel, KNOWN, HOST_FORMATS, TO_UI, TO_ENGINE }

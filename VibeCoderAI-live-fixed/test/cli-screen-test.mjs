@@ -49,7 +49,8 @@ test("fresh home is centered, provider identity occurs once in the composer and 
     assert.ok(frame.regions.composer.x > 2)
     const identity = frame.canvas.line(frame.regions.composer.y + frame.regions.composer.height - 1)
     assert.equal(identity.match(/cloudfire/g)?.length, 1)
-    assert.ok(lines(t.screen).some((s) => s.includes("Work on your next change.")))
+    assert.ok(lines(t.screen).some((s) => s.includes("What should we build or fix today?")))
+    assert.ok(lines(t.screen)[0].includes("VibeCoder") || lines(t.screen)[0].includes("Vibe"), "own title bar on the first row")
     assert.equal(t.text().includes("http://127"), false)
   } finally { t.ui.close(); await answer }
 })
@@ -65,7 +66,7 @@ test("chat transcript separates roles, activities and code while the composer/pa
     t.screen.event({ type: "usage", input: 1000, output: 50 }, { totals: { input: 1000, output: 50 }, costKnown: false })
     const frame = t.screen.frame()
     const text = frame.canvas.rows.map((_, i) => frame.canvas.line(i)).join("\n")
-    assert.ok(text.includes("You") && text.includes("VibeCoder") && text.includes("[+] read"))
+    assert.ok(text.includes("You") && text.includes("VibeCoder") && text.includes("● Read") && text.includes("└ ok"))
     assert.ok(text.includes("Result") && text.includes("const a = 1"))
     assert.equal(frame.regions.composer.y, frame.canvas.height - frame.regions.composer.height - 2)
     assert.ok(frame.regions.panel.x >= frame.regions.content.x + frame.regions.content.width)
@@ -339,6 +340,146 @@ test("saved Full Access skips repeated permission dialogs after restarting the C
     server.closeAllConnections(); await new Promise((r) => server.close(r))
     fs.rmSync(temp, { recursive: true, force: true })
   }
+})
+
+test("own title bar: window title shows VibeCoder and the project, a header row, live working status", async () => {
+  const t = terminal()
+  const answer = t.ui.read("Compose", { multiline: true })
+  try {
+    assert.ok(t.text().includes("\x1b]0;VibeCoder · Desktop\x07"), "the window title bar names VibeCoder and the project, not a file path")
+    t.screen.userMessage("Run something.")
+    t.screen.event({ type: "run.start" })
+    t.screen.event({ type: "tool.start", id: "sh-1", name: "bash", args: { command: "node -v" } })
+    await new Promise((r) => setImmediate(r))
+    assert.ok(t.text().includes("\x1b]0;VibeCoder · Desktop · working\x07"), "the title says when the agent works")
+    let all = lines(t.screen).join("\n")
+    assert.ok(lines(t.screen)[0].includes("VibeCoder") || lines(t.screen)[0].includes("Coder"), "header row")
+    assert.match(lines(t.screen)[0], /Desktop/)
+    assert.match(all, /● Shell  node -v/)
+    assert.match(all, /Working · \d/)
+    t.screen.event({ type: "tool.end", id: "sh-1", output: "v26.13.1\n", isError: false, durationMs: 1200 })
+    t.screen.event({ type: "done", reason: "stop" })
+    all = lines(t.screen).join("\n")
+    assert.match(all, /● Shell  node -v · 1\.2s/)
+    assert.match(all, /└ v26\.13\.1/)
+    assert.match(all, /Done in /)
+    assert.equal(t.screen.ticker, null, "the status ticker stops when the run ends")
+    // Hostile control characters can never reach the title sequence.
+    t.screen.setContext({ workspace: "evil\x07\x1b]0;x" })
+    assert.equal(t.text().includes("evil\x07"), false)
+  } finally { t.ui.close(); await answer }
+  assert.ok(t.text().endsWith("\x1b]0;VibeCoder\x07") || t.text().includes("\x1b[?1049l\x1b]0;VibeCoder\x07"), "closing leaves a plain VibeCoder title")
+})
+
+test("typing / shows a command dropdown: filter, arrows choose, Tab completes, Enter runs the highlighted one", async () => {
+  const t = terminal()
+  const answer = t.ui.read("Compose", { multiline: true })
+  try {
+    t.screen.setContext({ commands: ["help", "model", "models", "new", "exit"] })
+    t.input.write("/")
+    await new Promise((r) => setImmediate(r))
+    let all = lines(t.screen).join("\n")
+    assert.match(all, /\/help\s+all commands and keys/)
+    assert.match(all, /↑↓ choose/)
+    t.input.write("mo")
+    await new Promise((r) => setImmediate(r))
+    all = lines(t.screen).join("\n")
+    assert.match(all, /\/model\s+pick or switch the model/)
+    assert.match(all, /\/models/)
+    assert.doesNotMatch(all, /\/help\s+all commands/, "the list filters as you type")
+    t.input.write("\x1b[B") // Down: highlight /models
+    t.input.write("\t") // Tab completes it
+    await new Promise((r) => setImmediate(r))
+    assert.equal(t.ui.active.text, "/models ")
+    assert.equal(t.screen.suggestions().length, 0, "the dropdown closes once a command is chosen")
+  } finally { t.ui.close(); await answer }
+  // Enter on a partial command runs the highlighted match.
+  const u = terminal()
+  const sent = u.ui.read("Compose", { multiline: true })
+  u.screen.setContext({ commands: ["help", "model", "models"] })
+  u.input.write("/he")
+  await new Promise((r) => setImmediate(r))
+  u.input.write("\r")
+  assert.equal(await sent, "/help")
+  u.ui.close()
+})
+
+test("own window title bar: native caption hidden by a helper, buttons work, everything restored on exit", async () => {
+  const { applyWindowChrome, _script, supported } = require("../cli/window-chrome")
+  const s = _script("C:\\app\\build\\icon.ico")
+  assert.match(s, /GetConsoleWindow/)
+  assert.match(s, /icon\.ico/)
+  assert.match(s, /-bnot 0x00C00000/, "the native caption is hidden")
+  assert.match(s, /SetWindowLong\(\$h, -16, \$style\)/, "and the original style comes back")
+  assert.match(s, /'min'[\s\S]*'max'[\s\S]*'drag'/)
+  assert.doesNotMatch(s, /WindowStyle|Hidden/, "never hides the shared console")
+  assert.equal(supported({ isTTY: false }), false, "pipes and files are never touched")
+  if (process.platform !== "win32") return
+  const { EventEmitter } = require("node:events")
+  const writes = []
+  let ended = false
+  const fake = (cmd, args, opts) => {
+    const e = new EventEmitter(); e.stdout = new EventEmitter(); e.unref = () => {}
+    e.stdin = { write: (t) => writes.push(t), end: () => { ended = true }, on: () => {}, unref: () => {} }
+    assert.equal(opts.windowsHide, false)
+    setImmediate(() => e.stdout.emit("data", "ready\n"))
+    return e
+  }
+  const saved = process.env.WT_SESSION
+  delete process.env.WT_SESSION
+  let ready = 0
+  const chrome = applyWindowChrome({ output: { isTTY: true }, run: fake, onReady: () => ready++ })
+  if (saved !== undefined) process.env.WT_SESSION = saved
+  assert.equal(chrome.send("min"), false, "no button works before the helper is ready")
+  await new Promise((r) => setImmediate(r))
+  assert.equal(ready, 1)
+  assert.equal(chrome.active(), true)
+  assert.equal(chrome.send("min"), true)
+  assert.equal(chrome.send("max"), true)
+  assert.equal(chrome.send("format c:"), false, "only the three known actions")
+  chrome(); chrome()
+  assert.deepEqual(writes, ["min\n", "max\n", "restore\n"])
+  assert.equal(ended, true)
+})
+test("sessions sidebar lists every session, opens one on click, + New session; title bar buttons map to window actions", async () => {
+  const t = terminal(130, 40)
+  const answer = t.ui.read("Compose", { multiline: true })
+  try {
+    t.screen.setContext({ sessionId: "s2", sessions: [{ id: "s1", title: "Fix login bug", ago: "2h ago" }, { id: "s2", title: "Build the shop page", ago: "5m ago" }] })
+    const frame = t.screen.frame()
+    const all = frame.canvas.rows.map((_, i) => frame.canvas.line(i)).join("\n")
+    assert.match(all, /\+ New session/)
+    assert.match(all, /Fix login bug/)
+    assert.match(all, /Build the shop/)
+    assert.match(all, /Sessions \(2\)/)
+    assert.ok(frame.regions.composer.x >= 26, "the main area moves right of the sidebar")
+    t.screen.lastFrame = frame
+    const row = frame.regions.sessionRows.find((r) => r.id === "s1")
+    assert.deepEqual(t.screen.mouse({ button: 0, x: 3, y: row.y }), { kind: "session", id: "s1" })
+    assert.deepEqual(t.screen.mouse({ button: 0, x: 3, y: frame.regions.newSession.y }), { kind: "newSession" })
+    assert.deepEqual(t.screen.mouse({ button: 2, x: 3, y: row.y }), { kind: "sessionMenu", id: "s1" }, "right-click a session: open / rename / delete menu")
+    assert.deepEqual(t.screen.mouse({ button: 2, x: 60, y: 10 }), { kind: "paste" }, "right-click elsewhere still pastes")
+    assert.equal(frame.regions.winClose, undefined, "no window buttons while the native bar is still shown")
+    t.screen.windowControls = true
+    const f2 = t.screen.frame()
+    t.screen.lastFrame = f2
+    assert.match(f2.canvas.line(0), /─[\s\S]*□[\s\S]*×/)
+    assert.deepEqual(t.screen.mouse({ button: 0, x: f2.regions.winClose.x + 1, y: 0 }), { kind: "window", action: "close" })
+    assert.deepEqual(t.screen.mouse({ button: 0, x: f2.regions.winMin.x + 1, y: 0 }), { kind: "window", action: "min" })
+    assert.deepEqual(t.screen.mouse({ button: 0, x: 30, y: 0 }), { kind: "window", action: "drag" })
+    assert.deepEqual(t.screen.mouse({ button: 0, x: 30, y: 0 }), { kind: "window", action: "max" }, "double-click maximizes")
+  } finally { t.ui.close(); await answer }
+  // A click on another session ends the composer read with that session (the chat then opens it).
+  const u = terminal(130, 40)
+  const read = u.ui.read("Compose", { multiline: true })
+  u.screen.setContext({ sessionId: "s2", sessions: [{ id: "s1", title: "Old work" }, { id: "s2", title: "Now" }] })
+  const fr = u.screen.frame(); u.screen.lastFrame = fr
+  const r1 = fr.regions.sessionRows.find((r) => r.id === "s1")
+  u.input.write(`\x1b[<0;4;${r1.y + 1}M`)
+  const got = await read
+  assert.equal(got.action, "session")
+  assert.equal(got.id, "s1")
+  u.ui.close()
 })
 
 let failed = 0

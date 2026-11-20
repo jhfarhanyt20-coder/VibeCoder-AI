@@ -11,6 +11,9 @@ function closeEngine(vibe) {
   }
   vibe.engine.mcp.clients.clear()
   vibe.engine.extensions.close()
+  // The Computer Use helper is a child process: stop it, or `vibe run` never exits.
+  try { vibe.engine.computerHooks?.end?.({ sessionId: null }) } catch {}
+  try { vibe.engine.computer?.stop?.() } catch {}
 }
 
 async function stopSessionWork(vibe, id) {

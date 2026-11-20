@@ -68,7 +68,7 @@
     shell: "terminal", bash: "terminal", terminal: "terminal", exec: "terminal", command: "terminal",
     edit: "pencil", write: "filePlus", patch: "diff", webfetch: "globe", websearch: "globe",
     task: "bot", subagent: "bot", skill: "spark", todowrite: "list",
-    computer_screenshot: "camera", computer_ui: "scan", computer_windows: "windows", computer_focus: "windows",
+    computer_screenshot: "camera", computer_zoom: "search", computer_steps: "pointer",computer_ui: "scan", computer_windows: "windows", computer_focus: "windows",
     computer_launch: "rocket", computer_click: "pointer", computer_type: "type", computer_key: "key",
     computer_scroll: "scroll", computer_drag: "move", computer_wait: "clock",
   }

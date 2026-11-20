@@ -243,6 +243,41 @@ function splitCommand(cmd) {
   return out.length ? out : [s.trim()]
 }
 
+/**
+ * Screenshots are big. Re-sending every old one on each step makes long
+ * Computer/Browser Use runs slower and slower; the model only needs the
+ * newest views. Older ones stay in the history (and in the UI) but go to the
+ * model as a short note. The saved session is not changed.
+ */
+const KEEP_SCREENSHOTS = 2
+// Trim in steps of 4: a trimmed history changes the request prefix and so
+// breaks the provider's prompt cache; moving the cut only every 4 screenshots
+// keeps most requests cached. Between 2 and 5 images are sent.
+const TRIM_STEP = 4
+function recentScreenshotsOnly(messages) {
+  const shots = []
+  for (const m of messages) {
+    for (const p of (m && m.parts) || []) {
+      if (p && p.type === "tool_result" && p.screenshot && p.screenshot.data && p.screenshot.modelVisible !== false) shots.push(p)
+    }
+  }
+  const cut = Math.max(0, Math.floor((shots.length - KEEP_SCREENSHOTS) / TRIM_STEP) * TRIM_STEP)
+  if (!cut) return messages
+  const keep = new Set(shots.slice(cut))
+  return messages.map((m) => {
+    if (!m || !Array.isArray(m.parts) || !m.parts.some((p) => p && p.screenshot && p.screenshot.data && !keep.has(p))) return m
+    return { ...m, parts: m.parts.map((p) => (p && p.type === "tool_result" && p.screenshot && p.screenshot.data && !keep.has(p) && p.screenshot.modelVisible !== false)
+      ? { ...p, output: `${String(p.output || "")}\n[An older screenshot was here; only the latest ones are sent again.]`, screenshot: { ...p.screenshot, modelVisible: false } }
+      : p) }
+  })
+}
+
+/** Does the active model really see images (profile switch AND catalog)? */
+function modelSeesImages(profile) {
+  if (!profile || !profile.image) return false
+  try { return require("../llm/provider-meta").modelImageSupport(profile.model) !== false } catch { return true }
+}
+
 async function runLoop({ session, store, profile, apiKey, emit, signal, askPermission, agentName, agent = null, extraSystem, maxSteps = 100, extraTools = () => [], waitExtraTools = null, isOrphan = () => false, engine = null, compactionConfig = null, summaryProfile = null, summaryApiKey = "", summaryWarning = "", takePendingResults = null, takePendingProgress = null, takePendingPrompts = null }) {
   // V-07: an agent definition can cap the run. An explicit maxSteps wins.
   if (agent && Number(agent.steps) > 0 && maxSteps === 100) maxSteps = Math.floor(Number(agent.steps))
@@ -298,7 +333,7 @@ ${toolName}${what} has failed ${n} times in a row. Stop retrying the same way: $
     const result = { type: "tool_result", id: call.id, name: shown, output: "", isError: false }
     try {
       if (prepError) throw prepError
-      const ctx = { cwd: session.dir, signal, session, emit, stats: {}, engine, toolCallId: call.id, toolName: shown, askPermission, step: stepNo }
+      const ctx = { cwd: session.dir, signal, session, emit, stats: {}, engine, toolCallId: call.id, toolName: shown, askPermission, step: stepNo, visionOff: !modelSeesImages(profile) }
       for (const p of tool.paths(call.args, ctx)) {
         if (!isInside(session.dir, p) && !(await askPermission({ tool: "external_directory", subject: p }))) {
           throw new Error(`Permission denied: ${p} is outside the workspace. Do not retry; ask the user.`)
@@ -499,7 +534,7 @@ ${toolName}${what} has failed ${n} times in a row. Stop retrying the same way: $
     let sawReasoning = false
     let stepUsage = null // last usage event of THIS request -> stored on the message
     try {
-      const request = { apiKey, system: reqSystem, messages: session.messages, tools: reqTools, signal }
+      const request = { apiKey, system: reqSystem, messages: recentScreenshotsOnly(session.messages), tools: reqTools, signal }
       const stream = profile.group
         ? streamWithFallback(profile, request, { home: engine?.home, signal })
         : llm.stream(profile, request)
@@ -661,7 +696,7 @@ ${toolName}${what} has failed ${n} times in a row. Stop retrying the same way: $
         }
         consecutiveGuardHits = 0
 
-        const ctx = { cwd: session.dir, signal, session, emit, stats: {}, engine, toolCallId: c.id, toolName: shown, askPermission, step: step + 1 }
+        const ctx = { cwd: session.dir, signal, session, emit, stats: {}, engine, toolCallId: c.id, toolName: shown, askPermission, step: step + 1, visionOff: !modelSeesImages(profile) }
         for (const p of tool.paths(c.args, ctx)) {
           if (!isInside(session.dir, p) && !(await askPermission({ tool: "external_directory", subject: p })))
             throw new Error(`Permission denied: ${p} is outside the workspace. Do not retry; ask the user.`)
@@ -699,7 +734,7 @@ ${toolName}${what} has failed ${n} times in a row. Stop retrying the same way: $
               ...(source.caption ? { caption: String(source.caption).slice(0, 60) } : {}),
               // Always retain/show the screenshot. Only pass pixels back into the
               // next LLM request when the selected model advertises vision support.
-              modelVisible: !!profile.image,
+              modelVisible: modelSeesImages(profile),
             }
           }
         } else {
@@ -736,4 +771,4 @@ ${toolName}${what} has failed ${n} times in a row. Stop retrying the same way: $
   emit({ type: "done", reason: "max_steps", ...(finalized ? { summarized: true } : {}) })
 }
 
-module.exports = { runLoop, repairHistory, abortable, splitCommand, isFailoverError }
+module.exports = { modelSeesImages, recentScreenshotsOnly, runLoop, repairHistory, abortable, splitCommand, isFailoverError }

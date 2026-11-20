@@ -6,7 +6,7 @@
  */
 const path = require("path")
 const { pathToFileURL } = require("node:url")
-const { app, BrowserWindow, Menu, clipboard, shell, nativeImage, session } = require("electron")
+const { app, BrowserWindow, Menu, clipboard, shell, nativeImage, session, dialog } = require("electron")
 const { initBackend, shutdownBackend } = require("./backend.cjs")
 const updater = require("./updater.cjs")
 const { setWindowTheme } = require("./window-theme.cjs")
@@ -162,9 +162,25 @@ function createWindow() {
 /* ---------- production guards ---------- */
 // One instance only: two apps (or app + `vibe serve`) share ~/.vibe/sessions and
 // their in-memory stores would silently overwrite each other's writes.
+// The installed app and the dev app (npm run app) share this lock on purpose.
+// The one started second used to vanish silently while the other window jumped
+// to the front, which looked like "the other app keeps opening". It now says why.
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
-  app.quit()
+  app.whenReady().then(() => {
+    try {
+      dialog.showMessageBoxSync({
+        type: "info",
+        title: "VibeCoder AI is already open",
+        message: "VibeCoder AI is already open",
+        detail: app.isPackaged
+          ? "Another VibeCoder AI window is running (maybe the dev version started with npm run app). Both use the same chats, so only one can run at a time. Close the other one first, then open this again."
+          : "The installed VibeCoder AI app is running. The dev version (npm run app) uses the same chats, so only one can run at a time. Close the installed app first, then start the dev version again.",
+        buttons: ["OK"],
+      })
+    } catch {}
+    app.quit()
+  })
 } else {
   app.on("second-instance", () => {
     const w = BrowserWindow.getAllWindows()[0]
@@ -187,6 +203,7 @@ if (!gotLock) {
 }
 
 app.whenReady().then(() => {
+  if (!gotLock) return // the copy started second only shows its notice and quits
   // Guest pages in the browser dock are isolated: no popups and no navigation
   // outside normal web/about/file/data URLs.
   app.on("web-contents-created", (_event, contents) => {

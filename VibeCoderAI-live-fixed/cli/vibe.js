@@ -8,7 +8,7 @@ const { createServer } = require("./server")
 const { TerminalInput } = require("./input")
 const { c, configureTheme } = require("./theme")
 const { loadSettings, saveSettings } = require("./settings")
-const { runCommand, HELP } = require("./actions")
+const { runCommand, HELP, formatHelp } = require("./actions")
 const { findHost, loopbackUrl } = require("./connection")
 const { runEvents, closeEngine, stopSessionWork } = require("./run")
 
@@ -91,7 +91,7 @@ async function main(argv = process.argv.slice(2)) {
   const { flags, rest } = parseArgs(argv)
   const command = rest[0]
   if (flags.version) return console.log(require("../package.json").version)
-  if (flags.help || command === "help" || !command && !process.stdin.isTTY) return console.log(HELP)
+  if (flags.help || command === "help" || !command && !process.stdin.isTTY) return console.log(formatHelp(HELP, { color: !!process.stdout.isTTY && !flags.json }))
   const dir = path.resolve(flags.dir || process.cwd())
   if (!fs.statSync(dir).isDirectory()) throw new Error(`Not a directory: ${dir}`)
   const stored = loadSettings()

@@ -76,6 +76,11 @@ keywords: computer use, screen, mouse, keyboard, click, screenshot, test app, de
 - Risky actions (send, delete, install, pay, confirm, sign out, format, …) always ask first. It never
   types passwords, one-time codes or card numbers and never solves CAPTCHAs.
 - A log of actions is kept in `~/.vibe/computer-actions.log`. Windows only.
+- After every click, key or typed text the agent is told what really changed in the window, so it
+  does not report success when nothing happened. Controls that exist but are covered or off-screen
+  are marked "NOT visible". It can zoom into part of the screen to read small text.
+- Works best with a model that can see images and is good at multi-step work; a model that cannot
+  see images only gets the list of controls and says what it could not check.
 
 ## Browser Use
 keywords: browser, web, website, chrome, page, ctrl+shift+b, scrape, test website
@@ -133,6 +138,12 @@ keywords: cli, terminal, command line, vibe command, install cli, npm, vibe chat
 - Everything the desktop agent can do, the CLI agent can do too (same engine and settings in `~/.vibe`).
 - Useful: `vibe help`, `vibe doctor`, `vibe models`, `vibe provider`, `vibe usage`, `vibe theme`,
   `vibe computer`, `vibe connectors`. Inside chat: `/help` or Ctrl+P.
+- Typing `/` in the chat shows every command with a short description (↑↓ choose, Tab complete,
+  Enter run). The left sidebar lists this project's sessions: click one to continue it,
+  "+ New session" starts fresh, right-click a session to Open, Rename or Delete it.
+- In a classic Windows console the CLI uses its own title bar (─ □ × buttons, drag to move,
+  double-click to maximize); the window gets its normal title bar back when the CLI exits.
+  Set `VIBE_WINDOW_CHROME=0` to keep the Windows title bar.
 
 ## Updates
 keywords: update, upgrade, new version, auto update, install update, release

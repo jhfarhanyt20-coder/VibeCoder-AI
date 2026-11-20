@@ -216,6 +216,8 @@ if ($("error-retry")) $("error-retry").onclick = () => {
 
 /* Last-resort visibility for renderer crashes / unhandled async failures. */
 window.addEventListener("error", (e) => {
+  // The browser's harmless "ResizeObserver loop" notice is not an app error.
+  if (/ResizeObserver loop/i.test(String(e?.message || ""))) { e.stopImmediatePropagation?.(); return }
   showError("Unexpected UI error", e?.error?.stack || e?.message || String(e))
 })
 window.addEventListener("unhandledrejection", (e) => {
@@ -8632,6 +8634,8 @@ const TOOL_META = {
   todowrite: { icon: "📋", label: "Todo" },
   // Computer Use: each step reads like what a person would do.
   computer_screenshot: { icon: "📸", label: "Screenshot" },
+  computer_zoom: { icon: "🔍", label: "Look closer" },
+  computer_steps: { icon: "🖱", label: "Several steps" },
   computer_ui: { icon: "🔎", label: "Read screen" },
   computer_windows: { icon: "🪟", label: "Windows" },
   computer_focus: { icon: "🪟", label: "Switch window" },
@@ -8743,6 +8747,10 @@ function toolSubtitle(name, input = {}) {
       return input.from_element != null || input.to_element != null ? `item ${input.from_element ?? "?"} → item ${input.to_element ?? "?"}` : ""
     case "computer_wait":
       return input.for_window ? `for “${input.for_window}”` : input.seconds != null ? `${input.seconds} s` : ""
+    case "computer_steps":
+      return Array.isArray(input.steps) ? input.steps.map((s) => s && s.action).filter(Boolean).join(" → ") : ""
+    case "computer_zoom":
+      return input.width != null ? `${Math.round(input.width)}×${Math.round(input.height || 0)} at ${Math.round(input.x || 0)}, ${Math.round(input.y || 0)}` : ""
     case "computer_screenshot":
     case "computer_ui":
     case "computer_windows":

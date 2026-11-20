@@ -27,8 +27,8 @@ const HELP = `vibe - VibeCoder coding agent CLI
   vibe mcp                    list/add/remove/status/resources/read/auth
   vibe plugins / extensions   list/install/reload/remove reviewed local JS
   vibe tools                  built-in, Crew, extension and MCP tools
-  vibe marketplace / registry catalogs and reviewed installs
-  vibe memory / todos / trail persistent notes, plan and audit log
+  vibe marketplace / registry  catalogs and reviewed installs
+  vibe memory / todos / trail  persistent notes, plan and audit log
   vibe permissions / locks    scoped rules and pending requests
   vibe crew / shell / shells  details, resume/stop, live output/input
   vibe undo / redo / steps     turn and step Rewind; vibe diff for previews
@@ -263,7 +263,7 @@ async function runCommand(ctx, argv) {
   }
 
   switch (name) {
-    case "help": log(HELP); break
+    case "help": log(formatHelp(HELP, { color: !!process.stdout.isTTY && !ctx.flags?.json })); break
     case "skills":
     case "playbooks": await listMarkdown("skills", "Playbook"); break
     case "agents": await listMarkdown("agents", "Agent"); break
@@ -708,4 +708,27 @@ function completionScript(shell) {
   throw new Error("Choose completion bash|zsh|fish|powershell.")
 }
 
-module.exports = { runCommand, modelChoices, splitCommand, fileText, writeNewFile, valueOf, COMMANDS, HELP, completionScript }
+/**
+ * The help page, tidied for reading: commands in one aligned column (accent
+ * colour on a colour terminal), section titles bold. Same text as HELP.
+ */
+function formatHelp(text = HELP, { color = false } = {}) {
+  const { c } = require("./theme")
+  const paint = (fn, v) => (color && typeof fn === "function" ? fn(v) : v)
+  const COL = 34
+  const src = String(text).split(/\r?\n/)
+  const out = []
+  let lastWasCommand = false
+  for (const raw of src) {
+    const row = /^  (vibe\b.*?)\s{2,}(\S.*)$/.exec(raw)
+    if (row) { out.push("  " + paint(c.accent, row[1].padEnd(COL - 2)) + " " + row[2]); lastWasCommand = true; continue }
+    if (lastWasCommand && /^\s{6,}\S/.test(raw)) { out.push(" ".repeat(COL + 1) + raw.trim()); continue }
+    lastWasCommand = false
+    if (/^(Options|Examples)$/.test(raw.trim())) { out.push(paint(c.bold, raw.trim())); continue }
+    if (/^vibe - VibeCoder coding agent CLI/.test(raw)) { out.push(paint(c.bold, raw)); continue }
+    out.push(raw)
+  }
+  return out.join("\n")
+}
+
+module.exports = { runCommand, modelChoices, splitCommand, fileText, writeNewFile, valueOf, COMMANDS, HELP, formatHelp, completionScript }

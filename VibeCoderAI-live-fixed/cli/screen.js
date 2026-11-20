@@ -23,13 +23,46 @@ const number = (value) => {
   const n = Number(value) || 0
   return n >= 1000000 ? (n / 1000000).toFixed(1) + "M" : n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n)
 }
-const WORDMARK = [
-  " __      ___ _          ",
-  " \\ \\    / (_) |__   ___ ",
-  "  \\ \\  / /| | '_ \\ / _ \\",
-  "   \\ \\/ / | | |_) |  __/",
-  "    \\__/  |_|_.__/ \\___|",
-]
+// VibeCoder's own block wordmark (5 rows): "VIBE" in the accent colour,
+// "CODER" in the text colour. Plain block characters, width 1 in every console.
+const LETTERS = {
+  V: ["█   █", "█   █", "█   █", " █ █ ", "  █  "],
+  I: ["███", " █ ", " █ ", " █ ", "███"],
+  B: ["████ ", "█   █", "████ ", "█   █", "████ "],
+  E: ["█████", "█    ", "████ ", "█    ", "█████"],
+  C: [" ████", "█    ", "█    ", "█    ", " ████"],
+  O: [" ███ ", "█   █", "█   █", "█   █", " ███ "],
+  D: ["████ ", "█   █", "█   █", "█   █", "████ "],
+  R: ["████ ", "█   █", "████ ", "█  █ ", "█   █"],
+}
+const wordRows = (word) => LETTERS.V.map((_, row) => [...word].map((ch) => LETTERS[ch][row]).join(" "))
+const WORDMARK = { vibe: wordRows("VIBE"), coder: wordRows("CODER") }
+const WORDMARK_WIDTH = WORDMARK.vibe[0].length + 2 + WORDMARK.coder[0].length
+// Friendly names for tool rows; unknown tools keep their own name.
+const TOOL_LABELS = {
+  bash: "Shell", shell: "Shell", read: "Read", write: "Write", edit: "Edit", multiedit: "Edit", patch: "Patch", apply_patch: "Patch",
+  list: "List", glob: "Find files", grep: "Search", webfetch: "Fetch", websearch: "Web search", todowrite: "Plan", question: "Question",
+  subagent: "Crew", subagentResult: "Crew result", subagentStatus: "Crew status", memory: "Memory", skill: "Skill", vibecoder_help: "Guide",
+}
+const toolLabel = (name = "") => TOOL_LABELS[name] || (String(name).startsWith("computer_") ? "Computer · " + String(name).slice(9).replace(/_/g, " ") : String(name).startsWith("browser") ? "Browser · " + String(name).replace(/^browser[_.]?/, "") : String(name))
+// One-line descriptions for the "/" dropdown (commands without one still show).
+const COMMAND_INFO = {
+  help: "all commands and keys", model: "pick or switch the model", models: "provider catalog", agent: "pick an agent",
+  new: "start a new session", sessions: "open an earlier session", use: "open a session by number or id", rename: "rename this session",
+  delete: "delete this session", compact: "summarize old context", undo: "rewind the last turn", redo: "restore what undo removed",
+  steps: "step snapshots", step: "undo one step", diff: "preview changes", history: "show the saved conversation", export: "export this session",
+  usage: "tokens and cost", skills: "playbooks you can load", skill: "load a playbook", playbooks: "playbooks", agents: "agent definitions",
+  recipes: "prompt recipes", recipe: "run a recipe", memory: "saved notes", mcp: "MCP servers", plugins: "plugins", extensions: "extensions",
+  tools: "available tools", doctor: "check the setup", config: "settings", theme: "terminal colours", access: "Ask or Full Access",
+  computer: "Computer Use on/off", connectors: "GitHub / Facebook sign-in", provider: "add or test providers", permissions: "permission rules",
+  locks: "hard locks", forms: "pending questions", crew: "helpers and their work", shells: "running shells", shell: "shell output and input",
+  trail: "audit log", todos: "the task list", browser: "the real desktop browser", marketplace: "catalog", registry: "catalog",
+  auth: "API keys", profile: "advanced profiles", reasoning: "show or hide thinking", thinking: "reasoning effort", verbose: "detailed tool output",
+  yes: "toggle Full Access", dir: "working folder", clear: "clear the screen", exit: "leave", quit: "leave", fallback: "failover chain for outages",
+}
+const seconds = (ms) => (ms >= 10000 ? Math.round(ms / 1000) + "s" : (ms / 1000).toFixed(1) + "s")
+// The terminal window's own title bar ("VibeCoder · project"); controls removed.
+const windowTitle = (text) => "\x1b]0;" + String(text).replace(/[\x00-\x1f\x7f-\x9f]/g, "").slice(0, 120) + "\x07"
 
 class Canvas {
   constructor(width, height) {
@@ -119,7 +152,28 @@ class TerminalScreen {
     this.opened = true
     // Alternate buffer and explicit background replace, not persist, PS blue.
     this.output.write("\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1006h" + screenStyle() + "\x1b[2J\x1b[H")
+    // The real console window: dark title bar + VibeCoder icon (Windows; undone on close).
+    if (this.output === process.stdout) { try { this.restoreChrome = require("./window-chrome").applyWindowChrome({ output: this.output, onReady: () => { this.windowControls = true; this.lastTitle = null; this.updateTitle(); this.previous = []; this.schedule() } }) } catch {} }
+    this.updateTitle()
     this.render()
+  }
+  /** Title bar buttons: min / max / drag go to the window helper. */
+  windowAction(action) { return !!this.restoreChrome?.send?.(action) }
+  /** The window's title bar shows VibeCoder and the project, not a file path. */
+  updateTitle() {
+    if (!this.opened || this.closed) return
+    const name = this.context.workspace || path.basename(this.context.directory || "") || ""
+    const title = `VibeCoder${name ? " · " + name : ""}${this.busy ? " · working" : ""}`
+    if (title === this.lastTitle) return
+    this.lastTitle = title
+    this.output.write(windowTitle(title))
+  }
+  /** While the agent works the status line ticks (time + pulsing dot). */
+  tick(on) {
+    if (on && !this.ticker && !this.closed) {
+      this.ticker = setInterval(() => { this.pulse = !this.pulse; this.schedule() }, 500)
+      this.ticker.unref?.()
+    } else if (!on && this.ticker) { clearInterval(this.ticker); this.ticker = null }
   }
   close() {
     if (this.closed) return
@@ -127,7 +181,9 @@ class TerminalScreen {
     if (this.pending) clearImmediate(this.pending)
     this.pending = null
     this.output.off?.("resize", this.onResize)
-    if (this.opened) this.output.write("\x1b[?1000l\x1b[?1006l\x1b[0m\x1b[?25h\x1b[?1049l")
+    this.tick(false)
+    try { this.restoreChrome?.() } catch {}
+    if (this.opened) this.output.write("\x1b[?1000l\x1b[?1006l\x1b[0m\x1b[?25h\x1b[?1049l" + windowTitle("VibeCoder"))
     this.opened = false
   }
   schedule() {
@@ -136,7 +192,7 @@ class TerminalScreen {
   }
   setInput(input) { this.input = input; this.schedule() }
   setDialog(dialog) { this.dialog = dialog; this.modalOffset = 0; this.schedule() }
-  setContext(context) { this.context = { ...this.context, ...context }; this.schedule() }
+  setContext(context) { this.context = { ...this.context, ...context }; this.updateTitle(); this.schedule() }
   setHistory(session) {
     this.blocks = []; this.tools.clear(); this.streams.clear(); this.scrollOffset = 0; this.anchor = null
     this.todos = Array.isArray(session.todos) ? session.todos : []
@@ -176,6 +232,7 @@ class TerminalScreen {
     const key = `${this.run}:${actor}:${ev.type === "reasoning.delta" ? "thinking" : "text"}`
     if (ev.type === "run.start" && !ev.subagentId) {
       this.run++; this.busy = true; this.streams.clear(); this.notice = "Working"
+      this.busySince = Date.now(); this.tick(true); this.updateTitle()
     } else if (ev.type === "text.delta" || ev.type === "reasoning.delta") {
       if (ev.type === "reasoning.delta" && !state.showReasoning || state.quiet && ev.subagentId) return
       let block = this.streams.get(key)
@@ -209,6 +266,8 @@ class TerminalScreen {
     } else if (ev.type === "notice" || ev.type === "error") this.addBlock({ kind: ev.type === "error" ? "error" : "activity", text: clean(ev.text || ev.message || ev.error || ""), status: ev.type === "error" ? "error" : "done" })
     else if (ev.type === "done" && !ev.subagentId) {
       this.busy = false
+      this.lastRunMs = this.busySince ? Date.now() - this.busySince : 0
+      this.busySince = 0; this.tick(false); this.updateTitle()
       this.notice = ev.reason === "error" ? "Turn failed / use resume to continue" : ev.reason === "interrupted" ? "Interrupted" : "Ready"
     }
     this.schedule()
@@ -230,7 +289,37 @@ class TerminalScreen {
     this.schedule()
   }
   clearTranscript() { this.blocks = []; this.streams.clear(); this.tools.clear(); this.scrollOffset = 0; this.anchor = null; this.schedule() }
+  /** "/" dropdown: matching commands while the draft is a bare "/word". */
+  suggestions() {
+    const a = this.input
+    if (!a || a.kind === "pick" || !a.multiline || this.dialog || this.inspector) return []
+    const m = /^\/([\w-]*)$/.exec(a.text || "")
+    if (!m) return []
+    const names = Array.isArray(this.context.commands) && this.context.commands.length ? this.context.commands : Object.keys(COMMAND_INFO)
+    const want = m[1].toLowerCase()
+    const starts = names.filter((n) => n.startsWith(want))
+    const inner = want ? names.filter((n) => !n.startsWith(want) && n.includes(want)) : []
+    return [...new Set([...starts, ...inner])].map((name) => ({ name, info: COMMAND_INFO[name] || "" }))
+  }
   handleKey(key) {
+    const hints = this.suggestions()
+    if (hints.length) {
+      this.suggestIndex = Math.max(0, Math.min(hints.length - 1, this.suggestIndex || 0))
+      if (key.name === "up" || key.name === "down") {
+        this.suggestIndex = (this.suggestIndex + (key.name === "up" ? hints.length - 1 : 1)) % hints.length
+        this.schedule(); return true
+      }
+      const pick = hints[this.suggestIndex]
+      if (key.name === "tab" && pick) {
+        this.input.text = "/" + pick.name + " "; this.input.cursor = this.input.text.length; this.suggestIndex = 0
+        this.schedule(); return true
+      }
+      // Enter runs the highlighted command (the input then sends this text).
+      if ((key.name === "return" || key.name === "enter") && pick && !key.meta && !key.ctrl) {
+        this.input.text = "/" + pick.name; this.input.cursor = this.input.text.length; this.suggestIndex = 0
+        return false
+      }
+    } else this.suggestIndex = 0
     if (key.ctrl && key.name === "l") { this.previous = []; this.schedule(); return true }
     if (this.inspector) {
       if (key.name === "escape" || key.ctrl && key.name === "c") { this.inspector = null; this.schedule(); return true }
@@ -274,6 +363,26 @@ class TerminalScreen {
       this.schedule()
       return null
     }
+    if ((event.button & 3) === 0 && !(event.button & 32) && !this.dialog && !this.inspector && this.input?.kind !== "pick") {
+      // Own title bar: buttons, double-click to maximize, press-and-drag to move.
+      if (inside(frame.regions.winClose)) return { kind: "window", action: "close" }
+      if (inside(frame.regions.winMax)) return { kind: "window", action: "max" }
+      if (inside(frame.regions.winMin)) return { kind: "window", action: "min" }
+      if (this.windowControls && inside(frame.regions.header)) {
+        const now = Date.now(), double = now - (this.lastHeaderClick || 0) < 450
+        this.lastHeaderClick = double ? 0 : now
+        return { kind: "window", action: double ? "max" : "drag" }
+      }
+      // Sessions sidebar.
+      if (inside(frame.regions.newSession)) return { kind: "newSession" }
+      const row = (frame.regions.sessionRows || []).find((r) => event.y === r.y && event.x >= r.x && event.x < r.x + r.width)
+      if (row) return { kind: "session", id: row.id }
+    }
+    if ((event.button & 3) === 2 && !(event.button & 32) && !this.dialog && !this.inspector && this.input?.kind !== "pick") {
+      // Right-click on a session: open / rename / delete menu (elsewhere: paste, as before).
+      const row = (frame.regions.sessionRows || []).find((r) => event.y === r.y && event.x >= r.x && event.x < r.x + r.width)
+      if (row) return { kind: "sessionMenu", id: row.id }
+    }
     if ((event.button & 3) !== 0) return (event.button & 3) === 2 ? { kind: "paste" } : null
     if (inside(frame.regions.access)) return { kind: "access" }
     if (this.input?.kind === "pick" && inside(frame.regions.modal)) {
@@ -292,10 +401,19 @@ class TerminalScreen {
         rows.push(...styledLines(block.text, width, block.kind === "thinking"))
         push([])
       } else if (block.kind === "tool") {
-        const mark = block.status === "running" ? "..." : block.status === "error" ? "!" : "+"
-        const fg = block.status === "error" ? "error" : block.status === "running" ? "accent" : "muted"
-        push([{ text: `[${mark}] `, fg }, { text: block.name + " ", fg, bold: true }, { text: short(block.brief, Math.max(1, width - block.name.length - 5)), fg: "muted" }])
-        if (block.status === "error") rows.push(...styledLines(block.output.split("\n")[0], width, true))
+        // ● Label  brief · 1.2s  — the dot is green when done, red on error and
+        // pulses while running; one dim result line below says what came back.
+        const running = block.status === "running"
+        const dotFg = block.status === "error" ? "error" : running ? (this.pulse ? "accent" : "muted") : "success"
+        const label = toolLabel(block.name)
+        const time = block.duration ? " · " + seconds(block.duration) : ""
+        push([{ text: "● ", fg: dotFg }, { text: label + "  ", fg: block.status === "error" ? "error" : "text", bold: true }, { text: short(block.brief, Math.max(1, width - cellWidth(label) - cellWidth(time) - 5)), fg: "muted" }, { text: time, fg: "muted" }])
+        const first = String(block.output || "").split("\n").map((s) => s.trim()).find(Boolean)
+        if (block.status === "error") push([{ text: "  └ ", fg: "border" }, { text: short(first || "failed", width - 4), fg: "error" }])
+        else if (!running && first) {
+          const count = String(block.output).split("\n").filter((s) => s.trim()).length
+          push([{ text: "  └ ", fg: "border" }, { text: short(first, width - 16), fg: "muted" }, { text: count > 1 ? `  +${count - 1} lines` : "", fg: "border" }])
+        }
       } else rows.push(...styledLines("  " + block.text, width, true))
     }
     return rows
@@ -324,33 +442,70 @@ class TerminalScreen {
       return { canvas, cursor, regions, small }
     }
     const home = !this.blocks.length
-    const sideWidth = !home && this.panel && cols >= 110 ? 28 : 0
-    const mainWidth = cols - sideWidth
+    // Left: every session of this project, like the desktop app's sidebar.
+    const sessions = Array.isArray(this.context.sessions) ? this.context.sessions : null
+    const left = sessions && this.sessionsPanel !== false && cols >= 100 ? (cols >= 150 ? 32 : 26) : 0
+    const sideWidth = !home && this.panel && cols - left >= 110 ? 28 : 0
+    const mainWidth = cols - sideWidth - left
+    const X = left
     const title = this.context.title && this.context.title !== "New session" ? this.context.title : "New task"
-    const version = "VibeCoder " + this.version
-    canvas.put(2, 0, short(this.context.workspace || path.basename(this.context.directory || "") || "Workspace", Math.max(4, Math.min(24, cols - version.length - 7))), { fg: "text", bold: true })
-    canvas.put(2, 1, short(title, mainWidth - 5), { fg: "muted" })
-    canvas.put(Math.max(2, cols - version.length - 2), 0, version, { fg: "muted" })
+    // VibeCoder's own title bar: brand, project and task on the left; the
+    // model and version on the right; window buttons when the native bar is hidden.
+    const project = this.context.workspace || path.basename(this.context.directory || "") || "Workspace"
+    canvas.fill(0, 0, cols, 1, { bg: "surface" })
+    regions.header = { x: 0, y: 0, width: cols, height: 1 }
+    canvas.put(1, 0, "▌", { fg: "accent", bg: "surface", bold: true }) // block glyph: present in every console font
+    canvas.put(3, 0, "Vibe", { fg: "accent", bg: "surface", bold: true })
+    canvas.put(7, 0, "Coder", { fg: "text", bg: "surface", bold: true })
+    let rightEdge = cols
+    if (this.windowControls) {
+      // ─ minimize   □ maximize/restore   × close (glyphs present in console fonts)
+      const buttons = [["winMin", "─"], ["winMax", "□"], ["winClose", "×"]]
+      rightEdge = cols - buttons.length * 4
+      buttons.forEach(([key, glyph], i) => {
+        const bx = rightEdge + i * 4
+        canvas.put(bx + 1, 0, glyph, { fg: key === "winClose" ? "error" : "muted", bg: "surface", bold: true })
+        regions[key] = { x: bx, y: 0, width: 4, height: 1 }
+      })
+    }
+    const right = `${this.context.model ? short(this.context.model, 30) + "  " : this.context.provider ? short(this.context.provider, 28) + "  " : ""}v${this.version}`
+    const rightX = Math.max(14, rightEdge - cellWidth(right) - 2)
+    const middleRoom = Math.max(0, rightX - 18)
+    if (middleRoom > 4) {
+      canvas.put(13, 0, "│", { fg: "border", bg: "surface" })
+      const proj = short(project, Math.max(4, Math.min(28, middleRoom - 4)))
+      canvas.put(15, 0, proj, { fg: "text", bg: "surface", bold: true })
+      const taskX = 15 + cellWidth(proj) + 2
+      if (rightX - taskX > 8) canvas.put(taskX, 0, short("· " + (this.busy ? "working · " : "") + title, rightX - taskX - 2), { fg: this.busy ? "accent" : "muted", bg: "surface" })
+    }
+    canvas.put(rightX, 0, right, { fg: "muted", bg: "surface" })
+    canvas.put(0, 1, "─".repeat(cols), { fg: "subtle" })
+    if (left) this.drawSessions(canvas, regions, left, rows)
     const inputWidth = Math.max(16, Math.min(home ? 80 : mainWidth - 4, mainWidth - 4))
-    const inputX = home ? Math.floor((mainWidth - inputWidth) / 2) : 2
+    const inputX = X + (home ? Math.floor((mainWidth - inputWidth) / 2) : 2)
     const active = this.input
     const text = active?.kind === "text" && active.multiline ? active.text : ""
     const inputLines = wrapLines(text, inputWidth - 5)
     const inputHeight = Math.max(4, Math.min(9, rows - 7, inputLines.length + 3))
     const inputY = home ? Math.min(rows - inputHeight - 3, Math.max(7, Math.floor(rows * 0.55))) : rows - inputHeight - 2
     regions.composer = { x: inputX, y: inputY, width: inputWidth, height: inputHeight }
-    regions.content = { x: 2, y: 3, width: mainWidth - 4, height: Math.max(1, inputY - 4) }
+    regions.content = { x: X + 2, y: 3, width: mainWidth - 4, height: Math.max(1, inputY - 4) }
     let contentStart = 0, maxStart = 0
     if (home) {
       const logo = "VibeCoder"
       const y = Math.max(3, inputY - 5)
-      if (rows >= 30 && mainWidth >= 85) {
-        const wordmarkX = Math.floor((mainWidth - 25) / 2)
-        for (let i = 0; i < WORDMARK.length; i++) canvas.put(wordmarkX, y - 6 + i, WORDMARK[i], { fg: "accent", bold: true })
-      }
-      canvas.put(Math.floor((mainWidth - logo.length) / 2), y, logo, { fg: "text", bold: true })
-      const sub = "Work on your next change."
-      canvas.put(Math.floor((mainWidth - sub.length) / 2), y + 2, sub, { fg: "muted" })
+      if (rows >= 24 && mainWidth >= WORDMARK_WIDTH + 6) {
+        const wordmarkX = X + Math.floor((mainWidth - WORDMARK_WIDTH) / 2)
+        const coderX = wordmarkX + WORDMARK.vibe[0].length + 2
+        for (let i = 0; i < WORDMARK.vibe.length; i++) {
+          canvas.put(wordmarkX, y - 6 + i, WORDMARK.vibe[i], { fg: "accent", bold: true })
+          canvas.put(coderX, y - 6 + i, WORDMARK.coder[i], { fg: "text", bold: true })
+        }
+      } else canvas.put(X + Math.floor((mainWidth - logo.length) / 2), y, logo, { fg: "text", bold: true })
+      const sub = "What should we build or fix today?"
+      canvas.put(X + Math.floor((mainWidth - sub.length) / 2), y + 1, sub, { fg: "muted" })
+      const tip = "/ for commands   @ to attach files   Ctrl+P menu"
+      if (mainWidth > tip.length + 4) canvas.put(X + Math.floor((mainWidth - tip.length) / 2), y + 3, tip, { fg: "border" })
     } else {
       const content = this.transcript(regions.content.width)
       const maxOffset = Math.max(0, content.length - regions.content.height)
@@ -358,7 +513,7 @@ class TerminalScreen {
       const start = this.anchor === null ? Math.max(0, content.length - regions.content.height - this.scrollOffset) : Math.min(this.anchor, maxOffset)
       this.scrollOffset = Math.max(0, content.length - regions.content.height - start)
       contentStart = start; maxStart = maxOffset
-      for (let i = 0; i < regions.content.height && start + i < content.length; i++) this.putRuns(canvas, 2, 3 + i, content[start + i], regions.content.width)
+      for (let i = 0; i < regions.content.height && start + i < content.length; i++) this.putRuns(canvas, X + 2, 3 + i, content[start + i], regions.content.width)
     }
     canvas.fill(inputX, inputY, inputWidth, inputHeight, { bg: "surface" })
     canvas.put(inputX + 1, inputY + 1, ">", { fg: "accent", bg: "surface", bold: true })
@@ -367,8 +522,8 @@ class TerminalScreen {
     const start = Math.max(0, before.length - visibleCount)
     if (text) {
       for (let i = 0; i < visibleCount; i++) canvas.put(inputX + 3, inputY + 1 + i, inputLines[start + i] || "", { bg: "surface" })
-    } else canvas.put(inputX + 3, inputY + 1, short(this.busy ? "Working / Ctrl+C interrupts" : "Ask VibeCoder to work in this project...", inputWidth - 5), { fg: "muted", bg: "surface" })
-    const identity = `${this.context.agent || "Pilot"} / ${this.context.provider || "Select provider"}`
+    } else canvas.put(inputX + 3, inputY + 1, short(this.busy ? "VibeCoder is working… (Ctrl+C stops)" : "Ask VibeCoder to work in this project...", inputWidth - 5), { fg: "muted", bg: "surface" })
+    const identity = `${this.context.agent || "Pilot"} · ${this.context.provider || "Select provider"}${this.context.model ? " · " + this.context.model : ""}`
     const mode = inputWidth < 58 ? this.context.yes ? "Full" : "Ask" : this.context.yes ? "Full Access" : "Ask before changes"
     const percent = this.context.percent == null ? "" : inputWidth < 58 ? `  ${this.context.percent}%` : `  ${this.context.percent}% context`
     canvas.put(inputX + 3, inputY + inputHeight - 1, short(identity, inputWidth - mode.length - percent.length - 7), { fg: "accent", bg: "surface" })
@@ -377,15 +532,73 @@ class TerminalScreen {
     regions.access = { x: accessX, y: inputY + inputHeight - 1, width: mode.length, height: 1 }
     if (active?.kind === "text" && active.multiline) cursor = { x: Math.min(cols - 1, inputX + 3 + cellWidth(before.at(-1))), y: inputY + 1 + Math.min(visibleCount - 1, before.length - start - 1) }
     if (sideWidth) {
-      regions.panel = { x: mainWidth + 1, y: 3, width: sideWidth - 3, height: rows - 6 }
-      for (let y = 2; y < rows - 2; y++) canvas.put(mainWidth, y, "|", { fg: "border" })
+      regions.panel = { x: X + mainWidth + 1, y: 3, width: sideWidth - 3, height: rows - 6 }
+      for (let y = 2; y < rows - 2; y++) canvas.put(X + mainWidth, y, "│", { fg: "subtle" })
       this.drawPanel(canvas, regions.panel)
     }
     const footer = this.scrollOffset ? `History / ${this.scrollOffset} rows above latest   Ctrl+End latest` : "Enter send   Ctrl+J newline   Ctrl+V paste   F4 access   Mouse/PgUp history"
     canvas.put(2, rows - 1, short(footer, cols - 4), { fg: "muted" })
-    if (this.notice && !home) canvas.put(2, inputY - 1, short(this.notice, mainWidth - 4), { fg: this.busy ? "accent" : "muted" })
+    if (this.busy && !home) {
+      // Live status: pulsing dot, elapsed time, how to stop.
+      const elapsed = this.busySince ? seconds(Date.now() - this.busySince) : ""
+      canvas.put(X + 2, inputY - 1, "●", { fg: this.pulse ? "accent" : "muted", bold: true })
+      canvas.put(X + 4, inputY - 1, short(`Working${elapsed ? " · " + elapsed : ""}   Ctrl+C stops`, mainWidth - 6), { fg: "accent" })
+    } else if (this.notice && !home) {
+      const done = this.notice === "Ready" && this.lastRunMs ? `Done in ${seconds(this.lastRunMs)}` : this.notice
+      canvas.put(X + 2, inputY - 1, short(done, mainWidth - 4), { fg: /fail|error/i.test(this.notice) ? "error" : "muted" })
+    } else if (this.notice && home) {
+      canvas.put(inputX, inputY + inputHeight, short(this.notice, inputWidth), { fg: /fail|error|first/i.test(this.notice) ? "warning" : "muted" })
+    }
+    const hints = this.suggestions()
+    if (hints.length) {
+      // Dropdown just above the composer: as many rows as fit (max 16), scrolls with the highlight.
+      const index = Math.max(0, Math.min(hints.length - 1, this.suggestIndex || 0))
+      const count = Math.min(16, hints.length, Math.max(1, inputY - 3))
+      const first = Math.max(0, Math.min(index - count + 1, hints.length - count))
+      const boxY = inputY - count - 1
+      const nameWidth = Math.min(16, Math.max(...hints.map((h) => h.name.length)) + 2)
+      canvas.fill(inputX, boxY, inputWidth, count + 1, { bg: "subtle" })
+      for (let i = 0; i < count; i++) {
+        const h = hints[first + i], selected = first + i === index
+        const bg = selected ? "selection" : "subtle"
+        canvas.fill(inputX, boxY + i, inputWidth, 1, { bg })
+        canvas.put(inputX + 2, boxY + i, short("/" + h.name, nameWidth), { fg: selected ? "onSelection" : "accent", bg, bold: selected })
+        canvas.put(inputX + 3 + nameWidth, boxY + i, short(h.info, inputWidth - nameWidth - 5), { fg: selected ? "onSelection" : "muted", bg })
+      }
+      canvas.put(inputX + 2, boxY + count, short(`↑↓ choose   Tab complete   Enter run${hints.length > count ? `   ${hints.length} commands` : ""}`, inputWidth - 4), { fg: "border", bg: "subtle" })
+      regions.suggestions = { x: inputX, y: boxY, width: inputWidth, height: count + 1 }
+    }
     if (active && (active.kind === "pick" || !active.multiline) || this.inspector) cursor = this.drawModal(canvas, regions)
     return { canvas, cursor, regions, small: false, home, contentStart, maxStart }
+  }
+  /** The sessions sidebar: + New session, then every session (current one highlighted). */
+  drawSessions(canvas, regions, left, rows) {
+    const list = this.context.sessions || []
+    for (let y = 2; y < rows - 1; y++) canvas.put(left - 1, y, "│", { fg: "subtle" })
+    let y = 3
+    canvas.put(2, y, "+ New session", { fg: "accent", bold: true })
+    regions.newSession = { x: 0, y, width: left - 1, height: 1 }
+    y += 2
+    canvas.put(2, y++, short(`Sessions${list.length ? ` (${list.length})` : ""}`, left - 4), { fg: "muted", bold: true })
+    regions.sessionRows = []
+    if (!list.length) canvas.put(2, y, "No sessions yet", { fg: "border" })
+    const room = Math.max(0, rows - 3 - y)
+    const currentAt = Math.max(0, list.findIndex((s) => s.id === this.context.sessionId))
+    const first = Math.max(0, Math.min(currentAt - Math.floor(room / 2), list.length - room))
+    for (let i = first; i < list.length && y < rows - 2; i++) {
+      const s = list[i]
+      const current = s.id === this.context.sessionId
+      const bg = current ? "selection" : "background"
+      canvas.fill(1, y, left - 3, 1, { bg })
+      const ago = s.ago ? String(s.ago).replace(/\s*ago$/, "") : ""
+      const titleWidth = left - 6 - (ago ? cellWidth(ago) + 1 : 0)
+      canvas.put(2, y, short(s.title || "Untitled", titleWidth), { fg: current ? "onSelection" : "text", bg, bold: current })
+      if (ago) canvas.put(left - 3 - cellWidth(ago), y, ago, { fg: current ? "onSelection" : "border", bg })
+      regions.sessionRows.push({ x: 0, y, width: left - 1, id: s.id })
+      y++
+    }
+    const tip = "Right-click: rename, delete"
+    if (list.length && rows - 3 > y && left - 4 >= tip.length) canvas.put(2, rows - 3, tip, { fg: "border" })
   }
   drawPanel(canvas, box) {
     let y = box.y
@@ -393,7 +606,10 @@ class TerminalScreen {
     line("Context", "text", true)
     const percent = Math.max(0, Math.min(100, this.context.percent || 0))
     const filled = Math.round(percent / 100 * 20)
-    line("[" + "=".repeat(filled) + " ".repeat(20 - filled) + "]", "accent")
+    if (y < box.y + box.height) {
+      canvas.put(box.x + 1, y, "█".repeat(filled), { fg: percent > 85 ? "warning" : "accent" })
+      canvas.put(box.x + 1 + filled, y++, "░".repeat(20 - filled), { fg: "border" })
+    }
     line(`${percent}% / ${number(this.context.limit)} limit`)
     y++
     line("Usage", "text", true)

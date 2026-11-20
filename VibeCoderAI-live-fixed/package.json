@@ -1,6 +1,6 @@
 {
   "name": "vibe-core",
-  "version": "0.3.17",
+  "version": "0.3.18",
   "description": "VibeCoder AI engine and desktop app: own CLI, own SDK, 3 LLM formats, auto-compaction, provider fallback and a secure updater.",
   "license": "UNLICENSED",
   "author": {
@@ -14,7 +14,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node test/timeline-ui-regression.cjs && node test/shell-output-regression.cjs && node test/pending-prompts-regression.cjs && node test/usage-cost-regression.cjs && node test/core-test.mjs && node test/agents-test.mjs && node test/skills-test.mjs && node test/harness-test.mjs && node test/control-test.mjs && node test/cli-test.mjs && node test/cli-runtime-test.mjs && node test/cli-screen-test.mjs && node test/cli-provider-test.mjs && node test/cli-package-test.cjs && node test/electron-backend-smoke.cjs && node test/provider-label-regression.cjs && node test/compaction-ui-regression.mjs && node test/subagent-ui-regression.mjs && node test/harness-ui-regression.mjs && node test/app-update-ui-regression.mjs && node test/app-updater-test.cjs && node test/vibecoder-account-test.cjs && node test/computer-use-test.cjs && node test/computer-smart-test.cjs && node test/tool-args-test.cjs && node test/github-connector-test.cjs && node test/facebook-connector-test.cjs && node test/branch-chip-regression.cjs && node test/vibehelp-test.cjs && node test/provider-headers-test.cjs && node test/model-pick-regression.cjs && node test/provider-panel-regression.cjs && node test/add-provider-regression.cjs && node test/crew-workspace-test.cjs && node test/gemini-compat-test.cjs",
+    "test": "node test/timeline-ui-regression.cjs && node test/shell-output-regression.cjs && node test/pending-prompts-regression.cjs && node test/usage-cost-regression.cjs && node test/core-test.mjs && node test/agents-test.mjs && node test/skills-test.mjs && node test/harness-test.mjs && node test/control-test.mjs && node test/cli-test.mjs && node test/cli-runtime-test.mjs && node test/cli-screen-test.mjs && node test/cli-provider-test.mjs && node test/cli-package-test.cjs && node test/electron-backend-smoke.cjs && node test/provider-label-regression.cjs && node test/compaction-ui-regression.mjs && node test/subagent-ui-regression.mjs && node test/harness-ui-regression.mjs && node test/app-update-ui-regression.mjs && node test/app-updater-test.cjs && node test/vibecoder-account-test.cjs && node test/computer-use-test.cjs && node test/computer-smart-test.cjs && node test/tool-args-test.cjs && node test/github-connector-test.cjs && node test/facebook-connector-test.cjs && node test/branch-chip-regression.cjs && node test/vibehelp-test.cjs && node test/provider-headers-test.cjs && node test/model-pick-regression.cjs && node test/provider-panel-regression.cjs && node test/add-provider-regression.cjs && node test/crew-workspace-test.cjs && node test/gemini-compat-test.cjs && node test/free-limit-test.cjs",
     "cli": "node cli/vibe.js",
     "pack:cli": "node scripts/package-cli.cjs",
     "serve": "node cli/vibe.js serve",

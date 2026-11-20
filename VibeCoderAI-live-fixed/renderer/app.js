@@ -9635,8 +9635,14 @@ async function refreshAuthUI() {
   }
   if (connected) {
     const who = res.data.email || res.data.org || "account"
+    // The free quota resets at 00:00 UTC: show that as the user's own clock time.
+    let resets = ""
+    try {
+      const at = res.data.usage?.resetsAt ? new Date(res.data.usage.resetsAt) : null
+      if (at && !Number.isNaN(at.getTime())) resets = ` · resets at ${at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+    } catch {}
     const usage = res.data.usage && res.data.dailyLimit != null
-      ? ` · ${Number(res.data.usage.requests) || 0}/${Number(res.data.dailyLimit) || 0} requests today`
+      ? ` · ${Number(res.data.usage.requests) || 0}/${Number(res.data.dailyLimit) || 0} requests today${resets}`
       : ""
     ocSub.textContent = "Signed in — free VibeCoder models are in the model picker"
     ocStDot.className = "st-dot on"

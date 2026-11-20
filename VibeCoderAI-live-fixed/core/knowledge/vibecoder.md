@@ -42,6 +42,8 @@ keywords: model, provider, api key, custom header, header, headers, proxy, reque
 keywords: free, sign in with vibecoder, vibecoder account, daily limit, quota, free models, training
 - Click "Sign in with VibeCoder" in the sidebar account menu (the browser opens; press Allow). A
   provider called "VibeCoder AI" then appears with free models.
+- The daily request limit resets at 00:00 UTC (6:00 AM in Bangladesh); the account line and the
+  limit message show the reset time in the user's own clock time.
 - Free models have a daily request limit, may change or disappear at any time, and are powered by
   third-party AI providers. Those providers may use free-model prompts and outputs to improve their
   models — do not send secrets, credentials, personal data or code you may not share.

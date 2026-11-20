@@ -52,6 +52,27 @@ const compatClients = new Set()
 const prefersCompatClient = (id) => !!id && compatClients.has(id)
 const rememberCompatClient = (id) => { if (id) compatClients.add(id) }
 
+/**
+ * The free quota resets at 00:00 UTC (6:00 AM in Bangladesh, for example).
+ * "Resets at 00:00 UTC" alone reads like "never" to most people, so give the
+ * local clock time and how long is left.
+ */
+function nextUtcMidnight(now = Date.now()) {
+  const d = new Date(now)
+  d.setUTCHours(24, 0, 0, 0)
+  return d.getTime()
+}
+function freeLimitMessage(text, now = Date.now()) {
+  const limit = /\((\d+) requests\)/.exec(String(text))?.[1]
+  const at = nextUtcMidnight(now)
+  const left = Math.max(0, at - now)
+  const hours = Math.floor(left / 3600000), minutes = Math.ceil((left % 3600000) / 60000)
+  const inText = hours ? `${hours}h ${minutes === 60 ? 0 : minutes}m` : `${minutes}m`
+  let clock = ""
+  try { clock = new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) } catch {}
+  return `Today's free VibeCoder requests are used up${limit ? ` (${limit} per day)` : ""}. They come back at ${clock ? clock + " your time" : "midnight UTC"} (00:00 UTC), in ${inText}. Until then, pick another model, or use the Fallback model so another provider answers.`
+}
+
 class ApiError extends Error {
   constructor(status, body) {
     const text = String(body)
@@ -61,7 +82,11 @@ class ApiError extends Error {
     // languages (tested: Bangla, Banglish and Hindi are blocked; English, French,
     // Chinese and mixed Bangla+English pass). Say so plainly.
     const agentRouter = /agent_router_api_error|agentrouter/i.test(text)
-    super(blocked
+    // VibeCoder's free models: say when the daily quota comes back, in local time.
+    const freeLimit = status === 429 && /"code"\s*:\s*"daily_limit"|Daily free limit reached/i.test(text)
+    super(freeLimit
+      ? freeLimitMessage(text)
+      : blocked
       ? agentRouter
         ? `AgentRouter's filter blocked this message (HTTP 400). AgentRouter refuses chats that start in some languages, such as Bangla, Banglish or Hindi, even harmless ones. Start the chat in English (once the model itself has replied in Bangla, Bangla and Banglish messages usually pass), mix in English, pick another model, or use the Fallback model so the next provider answers automatically. Provider said: ${text.slice(0, 200)}`
         : `The provider's content filter blocked this message (HTTP 400). Try another provider, add one to the Fallback model chain, or rephrase the message. Provider said: ${text.slice(0, 300)}`
@@ -71,6 +96,7 @@ class ApiError extends Error {
     this.name = "ApiError"
     this.status = status
     this.body = text
+    if (freeLimit) this.code = "FREE_DAILY_LIMIT"
     if (restricted) this.code = "PROVIDER_CLIENT_RESTRICTED"
     if (blocked) this.code = "PROVIDER_CONTENT_BLOCKED"
   }

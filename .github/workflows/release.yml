@@ -47,24 +47,44 @@ jobs:
         working-directory: ${{ env.APP_DIR }}
         run: npm test
 
-      - name: Build the Windows NSIS installer + publish update metadata
+      # Build only. electron-builder's own upload raced (it created the release
+      # twice) and silently lost the installer and latest.yml in v0.3.17 and
+      # v0.3.18 while the job still passed. The next step uploads everything.
+      - name: Build the Windows NSIS installer + update metadata (no upload)
         working-directory: ${{ env.APP_DIR }}
-        env:
-          # Release artifacts are uploaded to the GitHub Release for the tag.
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win nsis --x64 --publish always
+        run: npx electron-builder --win nsis --x64 --publish never
 
       - name: Package the standalone Node CLI (no runtime dependencies)
         working-directory: ${{ env.APP_DIR }}
         run: node scripts/package-cli.cjs
 
-      - name: Add the standalone CLI to the same tagged release
+      - name: Publish the release (installer, blockmap, latest.yml, CLI)
         working-directory: ${{ env.APP_DIR }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
         run: |
-          $asset = (Get-ChildItem "release/VibeCoder-CLI-*.tgz").FullName
-          gh release upload $env:GITHUB_REF_NAME $asset --repo $env:GITHUB_REPOSITORY
+          $v = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $files = @("release/VibeCoderAI-v2-$v.exe", "release/VibeCoderAI-v2-$v.exe.blockmap", "release/latest.yml", "release/VibeCoder-CLI-$v.tgz")
+          foreach ($f in $files) { if (-not (Test-Path $f)) { throw "Missing build output: $f" } }
+          gh release view $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) { gh release upload $env:GITHUB_REF_NAME @files --clobber --repo $env:GITHUB_REPOSITORY }
+          else { gh release create $env:GITHUB_REF_NAME @files --title $v --notes "" --verify-tag --repo $env:GITHUB_REPOSITORY }
+          if ($LASTEXITCODE -ne 0) { throw "Publishing the release failed" }
+
+      # A release without latest.yml is invisible to the in-app updater: fail loudly.
+      - name: Verify the release has every asset
+        working-directory: ${{ env.APP_DIR }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $v = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $names = gh release view $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[].name'
+          foreach ($n in @("latest.yml", "VibeCoderAI-v2-$v.exe", "VibeCoderAI-v2-$v.exe.blockmap", "VibeCoder-CLI-$v.tgz")) {
+            if ($names -notcontains $n) { throw "The release is missing $n" }
+          }
+          "All four release assets are present."
 
       # Security: GITHUB_TOKEN is short-lived and scoped to this repository; it
       # is never printed. For signed production releases, set a code-signing

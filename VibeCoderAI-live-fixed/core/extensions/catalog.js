@@ -18,18 +18,39 @@ const readJson = (f, fb) => {
   }
 }
 
-/** The shipped catalog: well-known, no-key MCP servers + example skills. */
+// Built-in skill texts and plugin sources live in ./builtin (VibeCoder's own).
+const builtinFile = (...p) => { try { return fs.readFileSync(path.join(__dirname, "builtin", ...p), "utf8") } catch { return "" } }
+const skill = (id, title, description, tags) => ({ id, title, description, tags, content: builtinFile("skills", id + ".md") })
+const plugin = (id, title, description, tags) => ({ id, name: id, title, description, tags, spec: id, content: builtinFile("plugins", id + ".js") })
+
+/** The shipped catalog: well-known, no-key MCP servers + VibeCoder skills and plugins. */
 const BUILTIN = {
   mcp: [
     { name: "everything", title: "Everything (MCP test server)", description: "Reference MCP server exercising tools, resources and prompts. Needs Node.js (npx).", type: "local", command: ["npx", "-y", "@modelcontextprotocol/server-everything"], tags: ["demo", "official"] },
     { name: "memory", title: "Memory graph", description: "Persistent knowledge graph across sessions. Needs Node.js (npx).", type: "local", command: ["npx", "-y", "@modelcontextprotocol/server-memory"], tags: ["memory", "official"] },
     { name: "filesystem", title: "Filesystem", description: "Expose extra folders as sandboxed file tools. Needs Node.js (npx).", type: "local", command: ["npx", "-y", "@modelcontextprotocol/server-filesystem", "."], tags: ["files", "official"] },
+    { id: "playwright", name: "playwright", title: "Playwright browser", description: "A real browser the agent can drive: open pages, click, type, take snapshots. Needs Node.js (npx).", type: "local", command: ["npx", "-y", "@playwright/mcp@latest", "--headless"], tags: ["browser", "testing"] },
+    { name: "context7", title: "Context7 docs", description: "Up-to-date documentation and code examples for libraries and frameworks, so the agent does not rely on old knowledge. Needs Node.js (npx).", type: "local", command: ["npx", "-y", "@upstash/context7-mcp"], tags: ["docs"] },
+    { name: "sequential-thinking", title: "Sequential thinking", description: "Step-by-step thinking tool for long, tricky problems: plan, revise and branch. Needs Node.js (npx).", type: "local", command: ["npx", "-y", "@modelcontextprotocol/server-sequential-thinking"], tags: ["reasoning", "official"] },
   ],
-  plugins: [],
+  plugins: [
+    plugin("project-overview", "Project overview", "Tool project_overview: languages, folders, config files and the run / test / build commands of the open project.", ["project"]),
+    plugin("todo-finder", "TODO finder", "Tool find_todos: every TODO, FIXME, HACK and BUG note in the code with file and line.", ["code"]),
+    plugin("env-check", "Env check", "Tool env_check: settings missing or empty in .env compared with .env.example (names only, never values).", ["config"]),
+    plugin("media-tools", "Media tools", "Tools media_check (FFmpeg, Node, installed voices) and voice_over: free offline voice-over WAV files from the voices in Windows.", ["video", "voice"]),
+    plugin("port-check", "Port check", "Tool ports_in_use: which local dev-server ports (3000, 5173, 8080...) are answering right now.", ["dev server"]),
+  ],
   skills: [
     { id: "commit-helper", title: "Commit helper", description: "Write conventional commits from the working diff.", tags: ["git"], content: "# Commit helper\n\n1. Run `git diff --staged` (fall back to `git status -s` + `git diff`).\n2. Write ONE conventional commit message: `type(scope): summary` (<=72 chars), imperative mood.\n3. Show the message and the exact `git commit -m` command; only run it when the user said to commit.\n" },
     { id: "code-reviewer", title: "Code reviewer", description: "Structured review: bugs, security, style, tests.", tags: ["review"], content: "# Code reviewer\n\nReview the diff/changed files and report ONLY concrete findings, each as: file:line - severity (bug|security|perf|style) - what - suggested fix. No praise, no summary fluff. If nothing is wrong say so.\n" },
     { id: "test-writer", title: "Test writer", description: "Add focused unit tests for changed code.", tags: ["testing"], content: "# Test writer\n\n1. Find the changed functions (git diff).\n2. Add tests to the project's existing test layout and framework (do not invent a new one).\n3. Cover the happy path + one failure path per function. Run the suite and fix until green.\n" },
+    skill("bug-fixer", "Bug fixer", "Reproduce, find the root cause, fix it with a test, and prove it.", ["debugging"]),
+    skill("app-tester", "App tester", "Run the app and test it like a real user, then report what breaks.", ["testing"]),
+    skill("project-explainer", "Project explainer", "Explain an unfamiliar project: parts, flows and how to run it.", ["onboarding"]),
+    skill("safe-refactor", "Safe refactor", "Clean up code in small, tested steps without changing behaviour.", ["refactor"]),
+    skill("security-check", "Security check", "Find secrets, injection risks and unsafe defaults before publishing.", ["security"]),
+    skill("video-maker", "Video maker", "Animated video with a voice-over (Remotion), checked frame by frame, and posted to a Facebook Page on request.", ["video"]),
+    skill("docs-writer", "Docs writer", "Write or update the README from the real, verified commands.", ["docs"]),
   ],
 }
 

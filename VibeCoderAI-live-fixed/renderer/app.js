@@ -1456,10 +1456,65 @@ function nearBottom(slack = 90) {
   return el.scrollHeight - el.scrollTop - el.clientHeight <= slack
 }
 
+// Follow the newest chat while the user stays at the bottom. Decided by where
+// the user last was, not by the distance after the change: a block that grows
+// a lot at once (a table, a code block) must not make the chat stop following.
+var chatFollowing = true // var: safe even if read before this line runs
+// While following, the chat GLIDES to the newest line instead of snapping: a
+// new paragraph or code block used to move everything up 50-70px in one frame,
+// which read as jumping. Each frame closes part of the distance (a long gap is
+// mostly skipped first). Opening a chat (force) still jumps straight there.
+var chatGlide = 0
+function glideStep() {
+  chatGlide = 0
+  const el = $("messages")
+  if (!chatFollowing) return
+  const max = el.scrollHeight - el.clientHeight
+  const dist = max - el.scrollTop
+  if (dist <= 0.5) { window.vibeChatGliding = false; return }
+  window.vibeChatGliding = true
+  const step = dist > el.clientHeight * 1.5 ? dist - el.clientHeight * 0.5 : Math.max(2, dist * 0.22)
+  el.scrollTop = Math.min(max, el.scrollTop + step)
+  chatGlide = requestAnimationFrame(glideStep)
+}
 function scrollChat(force = false) {
   const el = $("messages")
-  if (force || nearBottom()) el.scrollTop = el.scrollHeight
+  if (force) {
+    if (chatGlide) cancelAnimationFrame(chatGlide)
+    chatGlide = 0
+    window.vibeChatGliding = false
+    el.scrollTop = el.scrollHeight
+    chatFollowing = true
+  } else if (chatFollowing || nearBottom()) {
+    chatFollowing = true
+    el.style.overflowAnchor = "none"
+    if (!chatGlide) chatGlide = requestAnimationFrame(glideStep)
+  }
   requestAnimationFrame(updateJumpButton)
+}
+{
+  const el = $("messages")
+  // The browser's own scroll anchoring helps only while the user reads further
+  // up (it keeps their place when something above changes). While following
+  // the bottom it would fight the glide, so it is off then.
+  const anchor = () => { el.style.overflowAnchor = chatFollowing ? "none" : "auto" }
+  anchor()
+  // During a glide the distance to the bottom is the glide's, not the user's.
+  el.addEventListener("scroll", () => { if (!window.vibeChatGliding) chatFollowing = nearBottom(); anchor() }, { passive: true })
+  // Scrolling up by hand stops following (and any glide) at once, before the
+  // next streamed word could pull the chat back down.
+  const stop = () => { chatFollowing = false; window.vibeChatGliding = false; if (chatGlide) cancelAnimationFrame(chatGlide); chatGlide = 0; anchor() }
+  // Scrolling inside a code block, tool output or thought box scrolls that box,
+  // not the chat: it must not stop following.
+  const innerScroller = (target) => {
+    for (let n = target instanceof Element ? target : null; n && n !== el; n = n.parentElement) {
+      if (n.scrollHeight > n.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(n).overflowY)) return true
+    }
+    return false
+  }
+  el.addEventListener("wheel", (event) => { if (event.deltaY < 0 && !innerScroller(event.target)) stop() }, { passive: true })
+  el.addEventListener("keydown", (event) => { if (["ArrowUp", "PageUp", "Home"].includes(event.key)) stop() })
+  el.addEventListener("pointerdown", (event) => { if (event.offsetX > el.clientWidth) stop() }) // the scroll bar
 }
 
 function updateJumpButton() {
@@ -1506,6 +1561,7 @@ $("main")?.addEventListener("wheel", (event) => {
   const scale = event.deltaMode === 1 ? 24 : event.deltaMode === 2 ? messages.clientHeight : 1
   const next = Math.max(0, Math.min(max, messages.scrollTop + event.deltaY * scale))
   if (next === messages.scrollTop) return
+  if (event.deltaY < 0) chatFollowing = false
   messages.scrollTop = next
   event.preventDefault()
   updateJumpButton()
@@ -1764,7 +1820,46 @@ function fileRowEl(f, input = {}, toolName = "") {
     if (!row.querySelector(".fr-diff")) return
     row.classList.toggle("open")
   }
+  linkFileName(row.querySelector(".fr-name"), full, () => changedLinesOf(f))
   return row
+}
+
+// The new-file line numbers the agent added or changed, from a structured
+// diff or a unified patch. Used to mark them in the code panel.
+function changedLinesOf(f = {}) {
+  const lines = []
+  const hunks = Array.isArray(f.hunks) ? f.hunks : []
+  if (hunks.length) {
+    for (const h of hunks) {
+      let n = Number(h.newStart) || Number(h.oldStart) || 1
+      for (const l of Array.isArray(h.lines) ? h.lines : []) {
+        if (l.type === "add") lines.push(n++)
+        else if (l.type !== "del" && l.type !== "meta") n++
+      }
+    }
+    return lines
+  }
+  let n = 0
+  for (const line of String(f.patch ?? "").split(/\r?\n/)) {
+    const m = /^@@ -\d+(?:,\d+)? \+(\d+)/.exec(line)
+    if (m) { n = Number(m[1]); continue }
+    if (!n || line.startsWith("+++") || line.startsWith("---")) continue
+    if (line.startsWith("+")) lines.push(n++)
+    else if (!line.startsWith("-") && !line.startsWith("\\")) n++
+  }
+  return lines
+}
+
+// A file name in the chat: clicking it opens the file in the code panel on
+// the right. The rest of the row keeps its own click (show / hide the diff).
+function linkFileName(nameEl, file, lines) {
+  if (!nameEl || !file || !window.vibeCodePanel) return
+  nameEl.classList.add("fr-link")
+  nameEl.title = `${relPath(file)} · open in the code editor`
+  nameEl.addEventListener("click", (event) => {
+    event.stopPropagation()
+    window.vibeCodePanel.open(file, { lines: typeof lines === "function" ? lines() : lines })
+  })
 }
 
 /* card row for read / list / grep / shell / webfetch */
@@ -1808,6 +1903,7 @@ function toolCardEl(name, input = {}, output = "") {
   ic.style.borderColor = `color-mix(in srgb, ${badge.c} 34%, transparent)`
   row.querySelector(".fr-name").textContent = title
   row.querySelector(".fr-name").title = title
+  if (name === "read") linkFileName(row.querySelector(".fr-name"), input.path ?? input.filePath ?? "")
   row.querySelector(".fr-stats").remove()
 
   const pre = row.querySelector(".fr-diff")
@@ -2713,7 +2809,9 @@ async function performSend(queued = null) {
   msgBuffers.clear()
   textEnded.clear()
   state.needBubble = false
-  const thinking = addMsg("assistant", "Thinking...", "thinking")
+  // No "Thinking..." text: the empty bubble shows blinking dots while the agent runs.
+  const thinking = addMsg("assistant", "", "thinking")
+  thinking.setAttribute("aria-label", "VibeCoder is working")
   state.pendingBubble = thinking
   state.liveTextEl = thinking
   state.retryBubble = thinking // a later retry countdown belongs to this row
@@ -3207,6 +3305,8 @@ function scheduleRetry(reason) {
 /* ---------- running / stop state ---------- */
 function setRunning(on) {
   state.running = !!on
+  // While the agent runs, an empty "working" bubble shows blinking dots (theme.css).
+  document.body.classList.toggle("agent-running", state.running)
   if (!state.running) for (const g of document.querySelectorAll(".timeline-group.is-running")) g.classList.remove("is-running")
   if (!state.running) state.pulse = null
   const btn = $("btn-send")
@@ -3357,7 +3457,20 @@ function typingTick() {
     return
   }
   typing.shown += Math.min(left, 2 + Math.floor(left / 25))
-  typing.el.textContent = typing.full.slice(0, typing.shown)
+  // Show the text already formatted (headings, lists, code, tables) while it
+  // streams. Plain text that turned into markdown only at the end made the
+  // message jump by hundreds of pixels. Formatting costs more than plain text,
+  // so long answers are painted a little less often.
+  const now = performance.now()
+  const every = Math.min(160, 32 + typing.full.length / 400)
+  if (typing.shown < typing.full.length && now - (typing.paintedAt || 0) < every) return
+  typing.paintedAt = now
+  typingPaint(typing.full.slice(0, typing.shown))
+}
+
+function typingPaint(text) {
+  if (window.renderMarkdownInto) window.renderMarkdownInto(typing.el, text)
+  else typing.el.textContent = text
   scrollChat()
 }
 
@@ -3421,12 +3534,7 @@ function typingFlush() {
     clearInterval(typing.timer)
     typing.timer = null
   }
-  if (typing.el) {
-    // Render final text as markdown
-    if (window.renderMarkdownInto) window.renderMarkdownInto(typing.el, typing.full)
-    else typing.el.textContent = typing.full
-    scrollChat()
-  }
+  if (typing.el) typingPaint(typing.full) // the final text, as markdown
   typing.el = null
   typing.full = ""
   typing.shown = 0
@@ -3981,7 +4089,7 @@ vibe.onEvent(async (event) => {
   if (type === "host.retry") {
     const bubble = lastAssistantBubble()
     if (data?.recovered) {
-      if (bubble && /retrying/i.test(bubble.textContent || "")) bubble.textContent = "Thinking..."
+      if (bubble && /retrying/i.test(bubble.textContent || "")) bubble.textContent = ""
     } else if (!data?.failed && bubble) {
       bubble.textContent = `⟳ Provider busy — retrying ${data?.attempt ?? ""}/${data?.of ?? ""}…`
     }
@@ -5144,7 +5252,7 @@ function renderBuiltinMcp() {
 
   for (const s of cfgState.builtinMcp) {
     const row = document.createElement("div")
-    row.className = "cfg-item cfg-builtin"
+    row.className = "cfg-item cfg-builtin" + (s.installed ? " installed" : "")
 
     const main = document.createElement("div")
     main.className = "cfg-main"
@@ -5205,7 +5313,7 @@ function renderBuiltinPlugins() {
 
   for (const p of cfgState.builtinPlugins) {
     const row = document.createElement("div")
-    row.className = "cfg-item cfg-builtin"
+    row.className = "cfg-item cfg-builtin" + (p.installed ? " installed" : "")
 
     const main = document.createElement("div")
     main.className = "cfg-main"
@@ -5217,9 +5325,8 @@ function renderBuiltinPlugins() {
     meta.textContent = p.description
     const detail = document.createElement("div")
     detail.className = "cfg-meta mono"
-    detail.textContent = p.installed
-      ? `${p.path}`
-      : "not installed"
+    // Installed: where it lives. Not installed: nothing (the button says it).
+    detail.textContent = p.installed ? `${p.path}` : ""
     main.append(name, meta, detail, cfgTagRow(p))
 
     const actions = document.createElement("div")
@@ -5579,6 +5686,56 @@ if ($("mkt-chips")) {
 }
 
 /* ---------- installed skills page ---------- */
+// The skills shipped with VibeCoder, each with Install / Remove.
+function renderBuiltinSkills(items) {
+  const list = $("builtin-skill-list")
+  if (!list) return
+  list.innerHTML = ""
+  if (!items.length) {
+    const e = document.createElement("div")
+    e.className = "cfg-empty"
+    e.textContent = "No built-in skills in this build."
+    list.appendChild(e)
+    return
+  }
+  for (const item of items) {
+    const row = document.createElement("div")
+    row.className = "cfg-item cfg-builtin" + (item.installed ? " installed" : "")
+    const main = document.createElement("div")
+    main.className = "cfg-main"
+    const name = document.createElement("div")
+    name.className = "cfg-name"
+    name.textContent = item.title || item.id
+    const meta = document.createElement("div")
+    meta.className = "cfg-meta cfg-wrap"
+    meta.textContent = item.description || ""
+    main.append(name, meta, cfgTagRow(item))
+    const actions = document.createElement("div")
+    actions.className = "cfg-actions"
+    const btn = document.createElement("button")
+    btn.className = item.installed ? "del" : "add"
+    btn.textContent = item.installed ? "Remove" : "Install"
+    btn.onclick = async () => {
+      if (item.installed && !(await showConfirm(`Remove skill "${item.title || item.id}"?`))) return
+      btn.disabled = true
+      btn.textContent = item.installed ? "Removing…" : "Installing…"
+      const r = item.installed
+        ? await vibe.removeSkill({ id: item.id, directory: cfgDir(), global: item.scope === "global" })
+        : await vibe.installSkill({ id: item.id, title: item.title, description: item.description, directory: cfgDir(), global: !!$("builtin-skill-global")?.checked || !cfgDir() })
+      if (!r.ok) {
+        btn.disabled = false
+        btn.textContent = item.installed ? "Remove" : "Install"
+        alert((item.installed ? "Remove" : "Install") + " failed: " + (r.error || "unknown"))
+        return
+      }
+      loadSkills()
+    }
+    actions.appendChild(btn)
+    row.append(main, actions)
+    list.appendChild(row)
+  }
+}
+
 async function loadSkills() {
   const btn = $("skills-refresh")
   if (btn) {
@@ -5589,6 +5746,7 @@ async function loadSkills() {
     const res = await vibe.marketplace({ directory: cfgDir(), kind: "skill" })
     if (!res.ok) throw new Error(res.error || "Could not load skills")
 
+    renderBuiltinSkills((res.data?.items || []).filter((i) => !i.custom))
     const items = (res.data?.items || []).filter((i) => i.installed)
     const list = $("skills-list")
     list.innerHTML = ""
@@ -5650,7 +5808,7 @@ async function loadSkills() {
       const note = document.createElement("div")
       note.className = "cfg-note"
       note.textContent =
-        "Skills are Markdown files with frontmatter (name, description). OpenCode reloads them automatically."
+        "Skills are Markdown files with frontmatter (name, description). VibeCoder picks them up automatically."
       files.appendChild(note)
     }
   } catch (e) {
@@ -8960,10 +9118,14 @@ function questionCardEl(form) {
     box.className = "q-field"
     box.dataset.key = f.key
 
-    const title = document.createElement("div")
-    title.className = "q-title"
-    title.textContent = f.title || f.key
-    box.appendChild(title)
+    // One question: its header is already the card's title, do not repeat it.
+    const fieldTitle = f.title || f.key
+    if (!(fields.length === 1 && fieldTitle === (form.title || "Question"))) {
+      const title = document.createElement("div")
+      title.className = "q-title"
+      title.textContent = fieldTitle
+      box.appendChild(title)
+    }
 
     if (f.description) {
       const desc = document.createElement("div")
@@ -8978,6 +9140,12 @@ function questionCardEl(form) {
     let wrap = null
 
     if (opts.length) {
+      if (f.type === Q_MULTI) {
+        const hint = document.createElement("div")
+        hint.className = "q-multi-hint"
+        hint.textContent = "Pick one or more"
+        box.appendChild(hint)
+      }
       wrap = document.createElement("div")
       wrap.className = "q-opts" + (f.type === Q_MULTI ? " multi" : "")
       for (const o of opts) {
@@ -9048,7 +9216,7 @@ function questionCardEl(form) {
       const inp = document.createElement("input")
       inp.className = "q-custom"
       inp.type = "text"
-      inp.placeholder = opts.length ? "Ba nijer answer lekho…" : f.placeholder || "Answer lekho…"
+      inp.placeholder = opts.length ? "Or type your own answer…" : f.placeholder || "Type your answer…"
       inp.oninput = () => {
         val.custom = inp.value
         if (inp.value.trim()) {
@@ -9115,7 +9283,7 @@ function questionCardEl(form) {
       return
     }
     submit.disabled = true
-    hint.textContent = "Pathacchi…"
+    hint.textContent = "Sending…"
     const r = await vibe.replyForm({
       sessionID: form.sessionID || state.activeSessionID,
       formID: form.id,
@@ -9138,7 +9306,7 @@ function questionCardEl(form) {
     if (r.ok) settleQuestionCard(el, "dismissed")
     else {
       dismiss.disabled = false
-      hint.textContent = "⚠ " + (r.error || "Dismiss fail")
+      hint.textContent = "⚠ " + (r.error || "Could not dismiss the question")
     }
   }
 
@@ -9153,8 +9321,11 @@ function settleQuestionCard(el, kind, answer) {
   if (badge) badge.textContent = kind === "answered" ? "answered" : "dismissed"
   // the inputs are done — keep only the question + the chosen answer
   el.querySelectorAll(".q-opts").forEach((n) => n.remove())
-  el.querySelectorAll(".q-custom").forEach((n) => n.remove())
+  el.querySelectorAll(".q-custom, .q-multi-hint").forEach((n) => n.remove())
   el.querySelector(".q-foot")?.remove()
+  // Several questions answered: the recap lists "question header: answer"
+  // only, instead of every question text and then every answer again.
+  if (kind === "answered" && answer && el.querySelectorAll(".q-field").length > 1) el.classList.add("compact")
   if (kind === "answered" && answer) {
     const keys = Object.keys(answer)
     const titles = el._titles || new Map()
@@ -9177,12 +9348,110 @@ function settleQuestionCard(el, kind, answer) {
     }
     el.appendChild(sum)
   }
+  // Answered or dismissed: the card leaves the box above the composer and
+  // stays in the chat as a short recap of the question and the answer.
+  if (el.classList.contains("q-docked")) {
+    el.classList.remove("q-docked")
+    el.querySelectorAll(".q-tabs, .q-step").forEach((n) => n.remove())
+    el.querySelectorAll(".q-field").forEach((n) => { n.hidden = false })
+    if (el.dataset.sessionId === state.activeSessionID && !state.subagentView) {
+      $("messages").appendChild(el)
+      scrollChat()
+    } else el.remove()
+    renderQuestionDock()
+  }
+}
+
+/* The box above the composer: the active chat's first open question card,
+   one question at a time (tabs + Back / Next when there are several). */
+function dockQuestionCard(el) {
+  const fields = [...el.querySelectorAll(".q-field")]
+  const foot = el.querySelector(".q-foot")
+  const submit = foot?.querySelector(".q-submit")
+  if (!fields.length || !foot || !submit) return
+  el.classList.add("q-docked")
+  const head = el.querySelector(".q-head")
+  const step = document.createElement("span")
+  step.className = "q-step"
+  head.insertBefore(step, head.querySelector(".q-badge"))
+
+  let tabs = null
+  if (fields.length > 1) {
+    tabs = document.createElement("div")
+    tabs.className = "q-tabs"
+    tabs.setAttribute("role", "tablist")
+    fields.forEach((f, i) => {
+      const t = document.createElement("button")
+      t.type = "button"
+      t.className = "q-tab"
+      t.setAttribute("role", "tab")
+      t.textContent = (el._titles && el._titles.get(f.dataset.key)) || `Question ${i + 1}`
+      t.onclick = () => show(i)
+      tabs.appendChild(t)
+    })
+    head.after(tabs)
+  }
+
+  const back = document.createElement("button")
+  back.type = "button"
+  back.className = "ghost-btn q-back"
+  back.textContent = "← Back"
+  const next = document.createElement("button")
+  next.type = "button"
+  next.className = "save-btn q-next"
+  next.textContent = "Next →"
+  foot.insertBefore(back, submit)
+  foot.insertBefore(next, submit)
+  // The buttons sit at the top, right under the title and tabs, and stay in
+  // view while long options scroll: nobody has to scroll down to find Next.
+  ;(tabs || head).after(foot)
+
+  const answered = (f) => !!f.querySelector(".q-opt.on") || !!f.querySelector(".q-custom")?.value.trim()
+  const markTabs = () => tabs?.querySelectorAll(".q-tab").forEach((t, i) => t.classList.toggle("done", answered(fields[i])))
+  let at = 0
+  function show(i) {
+    at = Math.max(0, Math.min(fields.length - 1, i))
+    fields.forEach((f, k) => { f.hidden = k !== at })
+    tabs?.querySelectorAll(".q-tab").forEach((t, k) => {
+      t.classList.toggle("on", k === at)
+      t.setAttribute("aria-selected", k === at ? "true" : "false")
+    })
+    step.textContent = fields.length > 1 ? `${at + 1} of ${fields.length}` : ""
+    const last = at === fields.length - 1
+    back.hidden = at === 0
+    next.hidden = last
+    submit.hidden = !last
+    markTabs()
+  }
+  back.onclick = () => show(at - 1)
+  next.onclick = () => show(at + 1)
+  fields.forEach((f, k) => {
+    f.addEventListener("input", markTabs)
+    f.addEventListener("click", (e) => {
+      markTabs()
+      // A single choice moves on to the next question by itself.
+      if (e.target.closest(".q-opts:not(.multi) .q-opt") && k === at && k < fields.length - 1) setTimeout(() => { if (at === k) show(k + 1) }, 220)
+    })
+  })
+  show(0)
+}
+
+function renderQuestionDock() {
+  const dock = $("q-dock")
+  if (!dock) return
+  const sid = state.activeSessionID
+  const card = [...qCards.values()].find((el) =>
+    el.classList.contains("q-docked") && !el.classList.contains("settled") && el.dataset.sessionId === sid) || null
+  if (dock.firstElementChild !== card) dock.replaceChildren(...(card ? [card] : []))
+  dock.hidden = !card
 }
 
 async function refreshForms() {
-  if (!state.activeSessionID) return
-  const res = await vibe.listForms({ sessionID: state.activeSessionID })
-  if (!res.ok) return
+  renderQuestionDock() // another chat: show only its own questions
+  const listedSid = state.activeSessionID
+  if (!listedSid) return
+  const res = await vibe.listForms({ sessionID: listedSid })
+  if (!res.ok || listedSid !== state.activeSessionID) return
   const list = Array.isArray(res.data) ? res.data : (res.data?.data ?? [])
   const pending = new Set()
   for (const f of list) {
@@ -9190,20 +9459,24 @@ async function refreshForms() {
     pending.add(f.id)
     if (qSeen.has(f.id)) continue
     qSeen.add(f.id)
-    const el = questionCardEl({ ...f, sessionID: f.sessionID || state.activeSessionID })
-    $("messages").appendChild(el)
+    const formSid = f.sessionID || state.activeSessionID
+    const el = questionCardEl({ ...f, sessionID: formSid })
+    el.dataset.sessionId = formSid
+    dockQuestionCard(el)
     qCards.set(f.id, el)
-    scrollChat()
     // The agent is waiting for an answer -> tell the user, even in background.
     const question = (f.questions && f.questions[0] && (f.questions[0].question || f.questions[0].text)) || ""
     notifyAgent("❓ The agent is asking you", question || "The agent needs an answer to continue.")
   }
   // a form that vanished without us answering was answered/cancelled elsewhere
+  // (only this chat's forms were listed, so other chats' cards are left alone)
   for (const [id, el] of [...qCards]) {
     if (pending.has(id)) continue
+    if (el.dataset.sessionId && el.dataset.sessionId !== listedSid) continue
     if (!el.classList.contains("settled")) settleQuestionCard(el, "dismissed")
     qCards.delete(id)
   }
+  renderQuestionDock()
 }
 
 function questionHistoryEl(part) {
@@ -10413,7 +10686,8 @@ function toggleBrowser(url) {
   else openBrowser(url)
 }
 
-$("chip-browser")?.addEventListener("click", () => toggleBrowser())
+// The sidebar icon opens the side panel list (browser, files, changes); Ctrl+Shift+B still opens the browser.
+$("chip-browser")?.addEventListener("click", () => (window.vibeSidePanel ? window.vibeSidePanel.toggle() : toggleBrowser()))
 $("br-close")?.addEventListener("click", closeBrowser)
 $("br-new")?.addEventListener("click", () => brNewTab())
 $("br-reload")?.addEventListener("click", () => {

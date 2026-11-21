@@ -98,7 +98,7 @@ keywords: connector, connectors, github, facebook, sign in with github, reposito
   files and open pull requests. Merging, committing to the default branch, deleting and repository
   settings always ask first. CLI: `vibe connectors github connect|status|disconnect`.
 - Facebook: coming soon (Pages, posts, Messenger, Business and ads), after Meta approves the app.
-- The Connectors page also contains the Marketplace (Browse, Plugins, MCP servers).
+- The Connectors page has tabs: Connectors, Marketplace, Skills, MCP servers, Plugins.
 
 ## Marketplace, MCP, plugins and skills
 keywords: marketplace, mcp, mcp server, plugin, extension, skill, playbook, recipe, agent definition, install
@@ -107,6 +107,11 @@ keywords: marketplace, mcp, mcp server, plugin, extension, skill, playbook, reci
 - Plugins/extensions are reviewed local JavaScript (`vibe plugins`), trusted per project (`vibe trust`).
 - Skills / Playbooks are reusable instructions (`$` in the composer, `vibe skills`, `vibe playbooks`).
 - Recipes are prompt templates (`/` in the composer, `vibe recipes`). Agents: `vibe agents`.
+- Built-in skills (Skills tab, or `vibe marketplace`): bug-fixer, app-tester, project-explainer, safe-refactor, security-check, docs-writer, commit-helper, code-reviewer, test-writer.
+- Built-in MCP servers (one-click, need Node.js): Playwright browser, Context7 docs, Sequential thinking, Memory graph, Filesystem, Everything (test).
+- Built-in plugins (read-only tools): project_overview (languages, folders, run/test/build commands), find_todos (TODO/FIXME notes), env_check (.env vs .env.example, names only), ports_in_use (which local dev ports answer).
+- Media tools plugin: media_check (FFmpeg, Node, installed voices) and voice_over (free offline WAV voice-over from the voices installed in Windows; a language works only if Windows has a voice for it). The video-maker skill makes animated videos with Remotion and can post them.
+- Facebook video: facebook_upload_video (a normal Page video or a Reel: 9:16, 3-90 s; draft by default, publishing always asks) and facebook_video_status. Works on Pages only, not personal profiles.
 
 ## Memory, subagents and background work
 keywords: memory, remember, subagent, crew, parallel, background, shell, terminal, long command, todo, plan

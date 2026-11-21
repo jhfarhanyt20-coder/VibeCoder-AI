@@ -11,11 +11,15 @@
   // ---- Connectors hub: its own page next to the app sidebar, with tabs on top.
   // It reuses the existing pages (connectors, marketplace, plugins, mcp) so all
   // their buttons and data loading keep working.
+  // One tab per page: Skills, MCP servers and Plugins each have their own.
   const TABS = [
     { id: "connectors", label: "Connectors" },
-    { id: "marketplace", label: "Marketplace", sub: [{ id: "marketplace", label: "Browse" }, { id: "plugins", label: "Plugins" }, { id: "mcp", label: "MCP servers" }] },
+    { id: "marketplace", label: "Marketplace" },
+    { id: "skills", label: "Skills" },
+    { id: "mcp", label: "MCP servers" },
+    { id: "plugins", label: "Plugins" },
   ]
-  const HUB_PAGES = new Set(["connectors", "marketplace", "plugins", "mcp"])
+  const HUB_PAGES = new Set(["connectors", "marketplace", "plugins", "mcp", "skills"])
   let hubPage = "connectors"
 
   function settingsEl() { return document.getElementById("settings") }

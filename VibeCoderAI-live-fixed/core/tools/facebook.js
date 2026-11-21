@@ -72,6 +72,32 @@ const ALL = [
       return `${scheduled ? "Scheduled" : live ? "Published" : "Saved as an unpublished draft"}: post ${r.id}.${live ? "" : " Publish it later with facebook_create_post publish=true, or from Facebook."}`
     }),
 
+  tool("facebook_upload_video", "Upload a video file from the project to a Page, as a normal video or as a Reel (reel=true: vertical 9:16 MP4, 3-90 seconds, at least 540x960). publish=true makes it public now (always asks the user first); publish=false (default) uploads it unpublished / as a draft. Then check processing with facebook_video_status.",
+    { page: pageProp, file: { type: "string", description: "Path of the .mp4 file (inside the project)" }, reel: { type: "boolean", description: "true = upload as a Reel" }, title: { type: "string" }, description: { type: "string", description: "The post text shown with the video" }, publish: { type: "boolean", description: "true = public now (asks first); false = unpublished draft (default)" } }, ["page", "file"],
+    (a) => `write video ${a.page}`,
+    async (a, ctx) => {
+      const c = fb(ctx)
+      const page = idOf(a.page, "page")
+      const path = require("path")
+      const file = path.resolve((ctx && ctx.cwd) || process.cwd(), String(a.file || ""))
+      if (!/\.(mp4|mov|m4v)$/i.test(file)) throw new Error('"file" must be an .mp4 (or .mov) video. Nothing was uploaded.')
+      const live = a.publish === true
+      if (live) await confirmCritical(ctx, `publish the ${a.reel ? "Reel" : "video"} "${path.basename(file)}" on Page ${page} now${a.description ? ` with the text "${short(a.description, 160)}"` : ""}`)
+      const r = a.reel
+        ? await c.uploadReel(page, file, { title: a.title, description: a.description, state: live ? "PUBLISHED" : "DRAFT" })
+        : await c.uploadVideo(page, file, { title: a.title, description: a.description, published: live })
+      return `${a.reel ? "Reel" : "Video"} uploaded: ${r.id} (${live ? "published — Facebook is processing it" : "unpublished draft"}). Check it with facebook_video_status page=${page} video_id=${r.id}.`
+    }),
+
+  tool("facebook_video_status", "Check an uploaded video or Reel: processing state (processing, ready, error…) and its link.",
+    { page: pageProp, video_id: { type: "string" } }, ["page", "video_id"], () => "read video",
+    async (a, ctx) => {
+      const d = await fb(ctx).videoStatus(idOf(a.page, "page"), idOf(a.video_id, "video_id"))
+      const s = d.status || {}
+      const phase = (k) => (s[k] && s[k].status ? `${k.replace("_phase", "")}: ${s[k].status}` : "")
+      return [`Video ${a.video_id}: ${s.video_status || "unknown"}`, [phase("uploading_phase"), phase("processing_phase"), phase("publishing_phase")].filter(Boolean).join(" · "), d.permalink_url ? `https://www.facebook.com${d.permalink_url.startsWith("/") ? "" : "/"}${d.permalink_url.replace(/^https:\/\/www\.facebook\.com\/?/, "")}` : ""].filter(Boolean).join("\n")
+    }),
+
   tool("facebook_comments", "Read the comments of a post (or the replies of a comment).",
     { id: { type: "string", description: "Post id or comment id" }, limit: { type: "integer" } }, ["id"], () => "read comments",
     async (a, ctx) => {
@@ -185,5 +211,9 @@ const ALL = [
       return data == null ? `${method} ${p}: done.` : out(data)
     }),
 ]
+
+// The video file is a path: outside the project it needs the user's OK like any other path.
+const uploadTool = ALL.find((t) => t.name === "facebook_upload_video")
+uploadTool.paths = (a, ctx) => [require("path").resolve((ctx && ctx.cwd) || process.cwd(), String((a && a.file) || ""))]
 
 module.exports = { ALL }

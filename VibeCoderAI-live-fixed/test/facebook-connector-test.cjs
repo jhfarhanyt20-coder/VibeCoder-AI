@@ -98,6 +98,64 @@ test("deleting the account is impossible; reading needs no permission", async ()
   assert.equal(decide(DEFAULT_RULES, "facebook", "write post 555"), "ask")
 })
 
+test("video upload: a Reel goes start → bytes → finish with the Page token; a normal video is one multipart upload; public always asks", async () => {
+  const calls = []
+  const ok = (body) => ({ ok: true, status: 200, json: async () => body })
+  const base = fakeFacebook().fetch
+  const fetch = async (url, opts = {}) => {
+    calls.push({ url, opts })
+    const u = new URL(url)
+    const p = u.pathname.replace(/^\/v[\d.]+/, "")
+    if (p === "/555/video_reels" && JSON.parse(String(opts.body || "{}").startsWith("{") ? opts.body : "{}").upload_phase === "start") return ok({ video_id: "v77", upload_url: "https://rupload.facebook.com/video-upload/v21.0/v77" })
+    if (u.host === "rupload.facebook.com") return ok({ success: true })
+    if (p === "/555/video_reels") return ok({ success: true })
+    if (u.host === "graph-video.facebook.com" && p === "/555/videos") return ok({ id: "v88" })
+    if (p === "/v77") return ok({ status: { video_status: "ready", processing_phase: { status: "complete" } }, permalink_url: "/reel/v77" })
+    return base(url, opts)
+  }
+  const fb = createFacebook({ home, fetch, setTimer: () => null, accountUrl: SITE, available: true })
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vc-fbv-"))
+  fs.writeFileSync(path.join(dir, "clip.mp4"), Buffer.alloc(4096, 7))
+  const asks = []
+  const ctx = { cwd: dir, engine: { connectors: { facebook: fb } }, askPermission: async (q) => { asks.push(q); return true } }
+
+  // Draft Reel: no critical ask, three steps, bytes with the Page token.
+  assert.match(await T("facebook_upload_video").run({ page: "555", file: "clip.mp4", reel: true, description: "New shop video" }, ctx), /Reel uploaded: v77 \(unpublished draft\)/)
+  assert.equal(asks.length, 0)
+  const start = calls.find((c) => c.url.includes("/555/video_reels") && String(c.opts.body).includes("start"))
+  assert.equal(JSON.parse(start.opts.body).access_token, "EAApage")
+  const bytes = calls.find((c) => c.url.startsWith("https://rupload.facebook.com/"))
+  assert.equal(bytes.opts.headers.Authorization, "OAuth EAApage")
+  assert.equal(bytes.opts.headers.file_size, "4096")
+  assert.equal(bytes.opts.headers.offset, "0")
+  const finish = calls.filter((c) => c.url.includes("/555/video_reels")).pop()
+  assert.match(String(finish.opts.body), /upload_phase=finish/)
+  assert.match(String(finish.opts.body), /video_state=DRAFT/)
+  assert.match(String(finish.opts.body), /description=New\+shop\+video/)
+
+  // Publish a normal video: one critical ask, multipart to graph-video.
+  assert.match(await T("facebook_upload_video").run({ page: "555", file: "clip.mp4", title: "Hi", publish: true }, ctx), /Video uploaded: v88 \(published/)
+  assert.equal(asks.length, 1)
+  assert.equal(asks[0].critical, true)
+  const multi = calls.find((c) => c.url.startsWith("https://graph-video.facebook.com/"))
+  assert(multi.opts.body instanceof FormData)
+  assert.equal(multi.opts.body.get("published"), "true")
+  assert.equal(multi.opts.body.get("access_token"), "EAApage")
+
+  // Saying no publishes nothing; a non-video file or a missing file is refused.
+  const before = calls.length
+  const no = { cwd: dir, engine: { connectors: { facebook: fb } }, askPermission: async () => false }
+  await assert.rejects(T("facebook_upload_video").run({ page: "555", file: "clip.mp4", reel: true, publish: true }, no), /did not allow/)
+  assert.equal(calls.length, before, "nothing sent after a no")
+  await assert.rejects(T("facebook_upload_video").run({ page: "555", file: "notes.txt" }, ctx), /must be an \.mp4/)
+  await assert.rejects(T("facebook_upload_video").run({ page: "555", file: "missing.mp4" }, ctx), /ENOENT|no such file/i)
+  // The path goes through the workspace check.
+  assert.deepEqual(T("facebook_upload_video").paths({ file: "clip.mp4" }, ctx), [path.join(dir, "clip.mp4")])
+  assert.match(await T("facebook_video_status").run({ page: "555", video_id: "v77" }, ctx), /Video v77: ready[\s\S]*processing: complete[\s\S]*facebook\.com\/reel\/v77/)
+  assert.equal(decide(DEFAULT_RULES, "facebook", "read video"), "allow")
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
 test("coming soon: sign-in is closed for users and says so", async () => {
   const fb = createFacebook({ home: fs.mkdtempSync(path.join(os.tmpdir(), "vc-fb3-")), fetch: fakeFacebook().fetch, setTimer: () => null, accountUrl: SITE, available: false })
   assert.equal(fb.status().comingSoon, true)

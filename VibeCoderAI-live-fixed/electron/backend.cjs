@@ -28,6 +28,8 @@ const plugins = require("../core/plugins")
 const skills = require("../core/skills")
 const catalog = require("../core/extensions/catalog")
 const execFileAsync = promisify(execFile)
+// Code panel files (only inside the open project folder).
+const codeFiles = require("./code-files.cjs")
 
 const home = homeDir()
 fs.mkdirSync(home, { recursive: true })
@@ -829,6 +831,9 @@ function promptAttachments(input = []) {
 }
 
 const handlers = {
+  codeTree: async () => { const t = codeFiles.codeTree(currentDirectory); return { ...t, status: await codeFiles.codeGitStatus(t.root) } },
+  codeRead: async (a = {}) => codeFiles.codeRead(currentDirectory, a),
+  codeWrite: async (a = {}) => codeFiles.codeWrite(currentDirectory, a),
   info: async () => {
     const id = selectedProfileId(); const p = engine.listProfiles().find((x) => x.id === id)
     if (id && id.startsWith("group/")) return { mode: "sdk", model: id, home }
@@ -1272,7 +1277,13 @@ const handlers = {
     const counts = { all: items.length, mcp: items.filter((x) => x.kind === "mcp").length, plugin: items.filter((x) => x.kind === "plugin").length, skill: items.filter((x) => x.kind === "skill").length, installed: items.filter((x) => x.installed).length }
     return { items, counts, registries, registryStatus }
   },
-  installSkill: async (a = {}) => skills.installSkillFile({ ...a, directory: a.directory || currentDirectory }),
+  // A built-in skill arrives without its text: take it from the shipped catalog
+  // (it used to install an empty SKILL.md).
+  installSkill: async (a = {}) => {
+    const builtin = !a.content && (catalog.BUILTIN.skills || []).find((x) => x.id === a.id)
+    const extra = builtin ? { content: builtin.content, title: a.title || builtin.title, description: a.description || builtin.description } : {}
+    return skills.installSkillFile({ ...a, ...extra, directory: a.directory || currentDirectory })
+  },
   removeSkill: async (a = {}) => skills.removeSkillFile({ ...a, directory: a.directory || currentDirectory }),
   installCustomSkill: async (a = {}) => skills.installSkillFile({ ...a, directory: a.directory || currentDirectory }),
   removeCustomSkill: async (a = {}) => skills.removeSkillFile({ ...a, directory: a.directory || currentDirectory }),
@@ -1338,7 +1349,7 @@ const preloadNames = [
   "listShells","shellOutput","shellInput","backgroundSession","backgroundShell","cancelShell","setPermissions","listPermissionRequests","replyPermission","listForms","replyForm","cancelForm",
   "listModels","listAllModels","listModelLimits","setModel","providerCatalog","providerList","providerSave","providerRemove","providerDraftSave","providerDraftLoad","providerDraftRemove","providerDisabled","providerKey","providerModels","providerModel","providerMeta","fallbackGet","fallbackSave","fallbackReset",
   "cwd","setDirectory","getDirectory","gitBranch","pickProject","pickAttachments","readAttachment","ensureAgent","switchAgent","listAgents","setAgentDisabled","mcpList","mcpAdd","mcpRemove","subagentCreate","subagentList","subagentStatus","subagentResult","subagentDetails","subagentResume","subagentStop","crewChanges","crewMerge","crewDiscard","subagentToggle","computerUseGet","computerUseSet","connectorsList","connectorConnect","connectorCancel","connectorDisconnect",
-  "pluginList","pluginAdd","pluginRemove","builtins","installBuiltinPlugin","removeBuiltinPlugin","marketplace","installSkill","removeSkill","installCustomSkill","removeCustomSkill","importGitHubSkills","registryAdd","registryRemove","memoryPath","memoryList","memoryAdd","memoryRemove","openMemoryFile","todoList","todoSave","cliInfo","cliInstallTested","cliUpdateCheck","authStatus","authConnect","authDisconnect","upgradeInfo","startUpgrade","ownerScan","ownerVerify","notify","openExternal","restartEvents","logError","openErrorLog","appUpdateStatus","appUpdateSetPrefs"
+  "pluginList","pluginAdd","pluginRemove","builtins","installBuiltinPlugin","removeBuiltinPlugin","marketplace","installSkill","removeSkill","installCustomSkill","removeCustomSkill","importGitHubSkills","registryAdd","registryRemove","memoryPath","memoryList","memoryAdd","memoryRemove","openMemoryFile","todoList","todoSave","cliInfo","cliInstallTested","cliUpdateCheck","authStatus","authConnect","authDisconnect","upgradeInfo","startUpgrade","ownerScan","ownerVerify","notify","openExternal","restartEvents","logError","openErrorLog","appUpdateStatus","appUpdateSetPrefs","codeTree","codeRead","codeWrite"
 ]
 
 function initBackend(targetWin, { port = Number(process.env.VIBE_SERVE_PORT || 4096), serve = process.env.VIBE_SERVE !== "0" } = {}) {

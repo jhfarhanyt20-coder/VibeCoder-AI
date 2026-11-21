@@ -160,10 +160,79 @@ function createFacebook({ home, fetch: fetcher = globalThis.fetch, now = Date.no
     return st.connected && !!store.token(ID, home)
   }
 
+  /* ---------- video upload (Page videos and Reels) ----------
+     Both need the Page permissions the connector already asks for
+     (pages_manage_posts, pages_read_engagement, pages_show_list). */
+  const VIDEO_MAX = 512 * 1024 * 1024
+  function readVideo(file) {
+    const fs = require("fs")
+    const stat = fs.statSync(String(file))
+    if (!stat.isFile()) throw new Error(`Not a file: ${file}. Nothing was uploaded.`)
+    if (stat.size > VIDEO_MAX) throw new Error(`The video is ${Math.round(stat.size / 1048576)} MB; at most 512 MB can be uploaded here. Make it smaller (lower resolution or bitrate) first. Nothing was uploaded.`)
+    if (stat.size < 1024) throw new Error("The video file is almost empty. Nothing was uploaded.")
+    return fs.readFileSync(String(file))
+  }
+  async function json(res, what) {
+    let data = null
+    try { data = await res.json() } catch {}
+    if (!res.ok || (data && data.error) || !data) {
+      const e = (data && data.error) || {}
+      throw new Error(`Facebook ${what} failed: ${e.error_user_msg || e.message || `HTTP ${res.status}`}. Nothing was published.`)
+    }
+    return data
+  }
+
+  /** A normal Page video (any shape), sent as one multipart upload. */
+  async function uploadVideo(pageId, file, { title, description, published } = {}) {
+    const bytes = readVideo(file)
+    const token = await pageToken(pageId)
+    const form = new FormData()
+    form.set("access_token", token)
+    form.set("published", published ? "true" : "false")
+    if (title) form.set("title", String(title))
+    if (description) form.set("description", String(description))
+    form.set("source", new Blob([bytes], { type: "video/mp4" }), require("path").basename(String(file)))
+    const res = await fetcher(`${GRAPH.replace("graph.", "graph-video.")}/${encodeURIComponent(String(pageId))}/videos`, { method: "POST", body: form })
+    const data = await json(res, "video upload")
+    return { id: data.id, published: !!published }
+  }
+
+  /** A Reel (vertical 9:16, 3-90 s): start a session, send the bytes, finish. */
+  async function uploadReel(pageId, file, { title, description, state = "DRAFT" } = {}) {
+    const bytes = readVideo(file)
+    const token = await pageToken(pageId)
+    const page = encodeURIComponent(String(pageId))
+    const start = await json(await fetcher(`${GRAPH}/${page}/video_reels`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ upload_phase: "start", access_token: token }),
+    }), "Reel upload (start)")
+    if (!start.video_id) throw new Error("Facebook did not start the Reel upload. Nothing was published.")
+    const uploadUrl = start.upload_url || `https://rupload.facebook.com/video-upload/${GRAPH.split("/").pop()}/${start.video_id}`
+    await json(await fetcher(uploadUrl, {
+      method: "POST",
+      headers: { Authorization: `OAuth ${token}`, offset: "0", file_size: String(bytes.length), "Content-Type": "application/octet-stream" },
+      body: bytes,
+    }), "Reel upload (sending the video)")
+    const finish = await graph(token, "POST", `/${page}/video_reels`, {
+      video_id: start.video_id, upload_phase: "finish", video_state: state,
+      ...(title ? { title: String(title) } : {}), ...(description ? { description: String(description) } : {}),
+    })
+    if (finish && finish.success === false) throw new Error("Facebook did not accept the Reel. Nothing was published.")
+    return { id: start.video_id, state }
+  }
+
+  /** Processing state of an uploaded video or Reel. */
+  async function videoStatus(pageId, videoId) {
+    const token = await pageToken(pageId)
+    const data = await graph(token, "GET", `/${encodeURIComponent(String(videoId))}`, { fields: "status,permalink_url,title,description" })
+    return data
+  }
+
   return {
     id: ID, status, connect, poll, cancel, disconnect, connected,
     api: (method, path, params) => graph(null, method, path, params),
     asPage: async (pageId, method, path, params) => graph(await pageToken(pageId), method, path, params),
+    uploadVideo, uploadReel, videoStatus,
   }
 }
 

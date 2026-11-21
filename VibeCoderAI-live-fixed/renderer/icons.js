@@ -25,6 +25,8 @@
     chart: '<path d="M4 20V4M4 20h16"/><path d="m7.5 15 4-4.5 3 3L20 7"/>',
     lock: '<rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
+    panelRight: '<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M14.5 4v16"/>',
+    changes: '<path d="M12 4v7M8.5 7.5h7"/><path d="M8.5 16h7"/><rect x="4" y="2.5" width="16" height="19" rx="2.5"/>',
     filter: '<path d="M4 5h16l-6 7.5V19l-4-1.8v-4.7L4 5Z"/>',
     search: '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.4-4.4"/>',
     trash: '<path d="M4 7h16M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13M10 11v5.5M14 11v5.5"/>',
@@ -113,7 +115,7 @@
     set(root.querySelector("#btn-marketplace > .ic"), "bag")
     set(root.querySelector("#btn-connectors > .ic"), "plugs")
     root.querySelectorAll(".cn-logo[data-vc-icon]").forEach((el) => set(el, el.dataset.vcIcon))
-    const mini = { "btn-add-workspace": "plus", "btn-clear-workspaces": "trash", "chip-browser": "globe" }
+    const mini = { "btn-add-workspace": "plus", "btn-clear-workspaces": "trash", "chip-browser": "panelRight" }
     for (const [id, name] of Object.entries(mini)) set(root.getElementById ? root.getElementById(id) : null, name)
     root.querySelectorAll('.side-section-tools .mini-icon[title="Filter"]').forEach((b) => set(b, "filter"))
     root.querySelectorAll('.side-section-tools .mini-icon[title="Search"]').forEach((b) => set(b, "search"))

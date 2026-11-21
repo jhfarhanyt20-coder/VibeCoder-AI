@@ -6,6 +6,8 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" />
   <title>VibeCoder AI</title>
   <script src="theme.js"></script>
+  <link rel="stylesheet" href="vendor/codemirror/codemirror.css" />
+  <link rel="stylesheet" href="vendor/codemirror/addon-dialog.css" />
   <link rel="stylesheet" href="theme.css" />
   <link rel="stylesheet" href="skin.css" />
   <link rel="stylesheet" href="obsidian.css" />
@@ -20,6 +22,12 @@
       <span class="title-brand"><span class="title-logo" aria-hidden="true">V</span>VibeCoder</span>
     </div>
     <div class="win-controls">
+      <button class="title-btn title-files" id="btn-code-files" type="button" title="Project files and code editor" aria-label="Project files and code editor" aria-controls="code-panel">
+        <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M2 4.2c0-.66.54-1.2 1.2-1.2h3.1l1.4 1.6h5.1c.66 0 1.2.54 1.2 1.2v6.4c0 .66-.54 1.2-1.2 1.2H3.2c-.66 0-1.2-.54-1.2-1.2z"/></svg>
+      </button>
+      <button class="title-btn title-files" id="btn-side-panel" type="button" title="Side panel: browser, files, changes (Ctrl+Shift+L)" aria-label="Side panel" aria-controls="side-launch">
+        <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2" y="2.75" width="12" height="10.5" rx="2"/><path d="M9.8 2.75v10.5"/></svg>
+      </button>
       <button class="win-btn" id="win-min" type="button" title="Minimize" aria-label="Minimize">–</button>
       <button class="win-btn" id="win-max" type="button" title="Maximize" aria-label="Maximize">□</button>
       <button class="win-btn win-close" id="win-close" type="button" title="Close" aria-label="Close">✕</button>
@@ -90,7 +98,8 @@
           </div>
         </div>
         <button class="mini-icon" id="btn-devices" title="Devices" hidden>▢</button>
-        <button class="mini-icon" id="chip-browser" title="Browser (Ctrl+Shift+B)">🌐</button>
+        <!-- The side panel lives in the title bar now; this button stays (hidden) for compatibility. -->
+        <button class="mini-icon" id="chip-browser" title="Side panel: browser, files, changes (Ctrl+Shift+L)" hidden>🌐</button>
         <button class="mini-icon" id="btn-settings" title="Settings">⚙</button>
       </div>
     </aside>
@@ -217,6 +226,11 @@
         <span class="jump-arrow">↓</span>
         <span class="jump-label">Agent working</span>
       </button>
+
+      <!-- The agent's questions wait here, right above the composer, one
+           question at a time. Once answered they move into the chat as a
+           short recap. -->
+      <div class="q-dock" id="q-dock" hidden role="region" aria-label="The agent is asking you"></div>
 
       <!-- SINGLE composer -->
       <div class="subagent-composer" id="subagent-composer" hidden>
@@ -365,6 +379,60 @@
             <button class="chip" type="button" data-url="http://localhost:5173">localhost:5173</button>
             <button class="chip" type="button" data-url="http://localhost:8080">localhost:8080</button>
           </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ============ SIDE PANEL LAUNCHER (docked on the right) ============
+         The side-panel icon opens this list of what can be shown on the right. -->
+    <aside class="side-launch" id="side-launch" hidden aria-label="Side panel">
+      <div class="side-launch-head">
+        <span class="side-launch-title">Side panel</span>
+        <button class="mini-icon" id="side-launch-close" type="button" title="Close the side panel">✕</button>
+      </div>
+      <div class="side-launch-list" role="menu">
+        <button class="side-launch-item" type="button" role="menuitem" data-open="changes"><span class="sl-ic" data-vc-icon="changes"></span><span class="sl-text"><span class="sl-name">Changes</span><span class="sl-desc">Files that are new or changed in this project</span></span><span class="sl-keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>G</kbd></span></button>
+        <button class="side-launch-item" type="button" role="menuitem" data-open="browser"><span class="sl-ic" data-vc-icon="globe"></span><span class="sl-text"><span class="sl-name">Browser</span><span class="sl-desc">Web pages and your local app, inside VibeCoder</span></span><span class="sl-keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>B</kbd></span></button>
+        <button class="side-launch-item" type="button" role="menuitem" data-open="files"><span class="sl-ic" data-vc-icon="folder"></span><span class="sl-text"><span class="sl-name">Files and code</span><span class="sl-desc">Browse the project, open a file, edit and save it</span></span><span class="sl-keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>E</kbd></span></button>
+      </div>
+    </aside>
+
+    <!-- ============ CODE PANEL (docked on the right) ============
+         Opens from a file name in the chat or from the folder icon at the top:
+         open files as tabs, a colour-coded editor (lines the agent changed are
+         marked) and the project's files on its right. -->
+    <aside class="code-panel" id="code-panel" hidden aria-label="Code editor">
+      <div class="code-resize" id="code-resize" title="Drag to resize · double-click to reset"></div>
+      <div class="code-tabbar">
+        <div class="code-tabs" id="code-tabs" role="tablist"></div>
+        <button class="mini-icon" id="code-max" type="button" title="Make the code panel bigger">⤢</button>
+        <button class="mini-icon" id="code-close" type="button" title="Close the code panel">✕</button>
+      </div>
+      <div class="code-crumbbar">
+        <div class="code-crumbs" id="code-crumbs"></div>
+        <span class="code-status" id="code-status" role="status"></span>
+        <button class="code-save" id="code-save" type="button" disabled title="Save (Ctrl+S)">Save</button>
+        <button class="mini-icon code-tree-toggle" id="code-tree-toggle" type="button" title="Show or hide the project files" aria-pressed="true">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M3 4h10M3 8h10M3 12h10"/></svg>
+        </button>
+      </div>
+      <div class="code-body" id="code-body">
+        <div class="code-editor" id="code-editor">
+          <div class="code-empty" id="code-empty">
+            <div class="code-empty-title">No file open</div>
+            <p>Pick a file on the right, or click a file name in the chat.</p>
+          </div>
+        </div>
+        <div class="code-split" id="code-split" title="Drag to resize the file list"></div>
+        <div class="code-tree" id="code-tree">
+          <div class="code-tree-head">
+            <span class="code-tree-name" id="code-tree-name"></span>
+            <span class="code-tree-count" id="code-tree-count"></span>
+            <button class="code-chip" id="code-changes" type="button" aria-pressed="false" title="Show only new and changed files">Changed</button>
+            <button class="mini-icon" id="code-tree-refresh" type="button" title="Refresh the file list">⟳</button>
+          </div>
+          <input class="code-tree-filter" id="code-tree-filter" type="text" placeholder="Filter files…" spellcheck="false" autocomplete="off" />
+          <div class="code-tree-list" id="code-tree-list" role="tree"></div>
         </div>
       </div>
     </aside>
@@ -1067,11 +1135,20 @@
           <div class="s-head-row">
             <div>
               <h1 class="s-title">Plugins</h1>
-              <p class="s-sub">Ordered plugin declarations from your VibeCoder config (global + project).</p>
+              <p class="s-sub">Plugins add new tools the agent can use. Install a built-in one or add a reviewed package.</p>
             </div>
             <div class="s-head-actions">
               <button class="save-btn" id="plugin-refresh">⟳ Refresh</button>
             </div>
+          </div>
+
+          <div class="s-card">
+            <div class="s-row s-row-flat">
+              <div class="s-name">Built-in plugins</div>
+              <label class="s-check"><input type="checkbox" id="builtin-plugin-global" /> Install globally</label>
+            </div>
+            <div class="cfg-note cfg-note-top">Installed into <code>.vibe/plugins/</code> of the open project, or the global config folder when no project is open.</div>
+            <div class="cfg-list" id="builtin-plugin-list"></div>
           </div>
 
           <div class="s-card">
@@ -1089,15 +1166,6 @@
 
           <div class="s-card">
             <div class="s-row s-row-flat">
-              <div class="s-name">Built-in plugins</div>
-              <label class="s-check"><input type="checkbox" id="builtin-plugin-global" /> Install globally</label>
-            </div>
-            <div class="cfg-note cfg-note-top">Installed into <code>.vibe/plugins/</code> of the open project, or the global config folder when no project is open.</div>
-            <div class="cfg-list" id="builtin-plugin-list"></div>
-          </div>
-
-          <div class="s-card">
-            <div class="s-row s-row-flat">
               <div class="s-name">Installed plugins</div>
               <span class="s-count" id="plugin-count">–</span>
             </div>
@@ -1110,11 +1178,19 @@
           <div class="s-head-row">
             <div>
               <h1 class="s-title">MCP Servers</h1>
-              <p class="s-sub">Model Context Protocol servers from your VibeCoder config (global + project).</p>
+              <p class="s-sub">MCP servers connect the agent to more tools and data. Add a built-in server in one click, or your own.</p>
             </div>
             <div class="s-head-actions">
               <button class="save-btn" id="mcp-refresh">⟳ Refresh</button>
             </div>
+          </div>
+
+          <div class="s-card">
+            <div class="s-row s-row-flat">
+              <div class="s-name">Built-in servers</div>
+              <span class="s-desc">One-click presets. Written to the project config, or global when no project is open / “Global” is checked.</span>
+            </div>
+            <div class="cfg-list" id="builtin-mcp-list"></div>
           </div>
 
           <div class="s-card">
@@ -1146,14 +1222,6 @@
 
           <div class="s-card">
             <div class="s-row s-row-flat">
-              <div class="s-name">Built-in servers</div>
-              <span class="s-desc">One-click presets. Written to the project config, or global when no project is open / “Global” is checked.</span>
-            </div>
-            <div class="cfg-list" id="builtin-mcp-list"></div>
-          </div>
-
-          <div class="s-card">
-            <div class="s-row s-row-flat">
               <div class="s-name">Configured servers</div>
               <span class="s-count" id="mcp-count">–</span>
             </div>
@@ -1166,12 +1234,21 @@
           <div class="s-head-row">
             <div>
               <h1 class="s-title">Skills</h1>
-              <p class="s-sub">Installed playbooks from .vibe/playbooks (project) and the global VibeCoder folder.</p>
+              <p class="s-sub">Skills are step-by-step instructions the agent follows for a kind of task. Install a built-in one, import from GitHub, or write your own.</p>
             </div>
             <div class="s-head-actions">
-              <button class="save-btn" id="skills-open-market">🛍 Marketplace</button>
+              <button class="save-btn" id="skills-open-market">Marketplace</button>
               <button class="save-btn" id="skills-refresh">⟳ Refresh</button>
             </div>
+          </div>
+
+          <div class="s-card">
+            <div class="s-row s-row-flat">
+              <div class="s-name">Built-in skills</div>
+              <label class="s-check"><input type="checkbox" id="builtin-skill-global" /> Install globally</label>
+            </div>
+            <div class="cfg-note cfg-note-top">Made for VibeCoder. Installed into the open project, or the global folder when no project is open.</div>
+            <div class="cfg-list" id="builtin-skill-list"></div>
           </div>
 
           <div class="s-card" id="skills-github-import-card">
@@ -1381,6 +1458,32 @@
     <script src="connectors.js"></script>
     <script src="crew-ui.js"></script>
     <script src="chat-select.js"></script>
+    <script src="vendor/codemirror/codemirror.js"></script>
+    <script src="vendor/codemirror/addon-simple.js"></script>
+    <script src="vendor/codemirror/addon-dialog.js"></script>
+    <script src="vendor/codemirror/addon-searchcursor.js"></script>
+    <script src="vendor/codemirror/addon-search.js"></script>
+    <script src="vendor/codemirror/addon-matchbrackets.js"></script>
+    <script src="vendor/codemirror/addon-active-line.js"></script>
+    <script src="vendor/codemirror/mode-javascript.js"></script>
+    <script src="vendor/codemirror/mode-css.js"></script>
+    <script src="vendor/codemirror/mode-xml.js"></script>
+    <script src="vendor/codemirror/mode-htmlmixed.js"></script>
+    <script src="vendor/codemirror/mode-python.js"></script>
+    <script src="vendor/codemirror/mode-markdown.js"></script>
+    <script src="vendor/codemirror/mode-clike.js"></script>
+    <script src="vendor/codemirror/mode-shell.js"></script>
+    <script src="vendor/codemirror/mode-sql.js"></script>
+    <script src="vendor/codemirror/mode-yaml.js"></script>
+    <script src="vendor/codemirror/mode-go.js"></script>
+    <script src="vendor/codemirror/mode-rust.js"></script>
+    <script src="vendor/codemirror/mode-php.js"></script>
+    <script src="vendor/codemirror/mode-powershell.js"></script>
+    <script src="vendor/codemirror/mode-toml.js"></script>
+    <script src="vendor/codemirror/mode-diff.js"></script>
+    <script src="vendor/codemirror/mode-dockerfile.js"></script>
+    <script src="code-panel.js"></script>
+    <script src="side-launch.js"></script>
     <script src="chat-steady.js"></script>
     <script src="app.js"></script>
 </body>

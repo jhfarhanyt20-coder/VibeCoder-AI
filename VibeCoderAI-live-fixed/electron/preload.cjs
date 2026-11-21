@@ -115,6 +115,10 @@ const api = {
   cwd: call("cwd"),
   setDirectory: call("setDirectory"),
   getDirectory: call("getDirectory"),
+  // code panel: the open project's files (read, save, list)
+  codeTree: call("codeTree"),
+  codeRead: call("codeRead"),
+  codeWrite: call("codeWrite"),
   gitBranch: call("gitBranch"),
   pickProject: call("pickProject"),
   pickAttachments: call("pickAttachments"),

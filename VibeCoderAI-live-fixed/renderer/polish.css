@@ -572,3 +572,144 @@ body.chat-selecting .subagent-composer,
 body.chat-selecting .jump-live,
 body.chat-selecting .todo-panel,
 body.chat-selecting .bg-job { user-select: none; -webkit-user-select: none; }
+
+/* A hidden control stays hidden even when it carries a line icon. */
+.has-vc-icon[hidden] { display: none !important; }
+
+/* ---------- Skills / MCP servers / Plugins pages: a clean card layout ----------
+   Names in the UI font (code font only for commands and paths), built-in items
+   as a two-column grid of cards with the action at the bottom, an "installed"
+   state that reads at a glance. */
+html[data-theme] .cfg-name {
+  font-family: var(--font-ui, inherit);
+  font-size: calc(13.5px * var(--fs-scale, 1));
+  font-weight: 600;
+  color: var(--text-strong, var(--text));
+  letter-spacing: -0.005em;
+}
+html[data-theme] .cfg-meta.mono:empty { display: none; }
+html[data-theme] .cfg-meta.mono {
+  font-family: var(--font-mono, Consolas, monospace);
+  font-size: calc(11px * var(--fs-scale, 1));
+}
+html[data-theme] .cfg-list:has(> .cfg-builtin) {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+html[data-theme] .cfg-item.cfg-builtin {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  padding: 14px 15px 12px;
+  border-radius: 12px;
+  background: var(--panel-2);
+  transition: border-color 0.15s, background 0.15s;
+}
+html[data-theme] .cfg-item.cfg-builtin:hover { border-color: var(--border-strong, var(--border)); }
+html[data-theme] .cfg-item.cfg-builtin.installed { border-color: var(--green-badge); }
+html[data-theme] .cfg-builtin .cfg-main { padding-top: 0; display: flex; flex-direction: column; flex: 1; }
+html[data-theme] .cfg-builtin .cfg-meta.cfg-wrap { font-size: calc(12px * var(--fs-scale, 1)); line-height: 1.5; margin-top: 5px; }
+/* The command / path of a built-in item: a small code strip. */
+html[data-theme] .cfg-builtin .cfg-meta.mono {
+  margin-top: 8px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  background: var(--bg-main);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+html[data-theme] .cfg-builtin .cfg-tags { margin-top: auto; padding-top: 10px; }
+html[data-theme] .cfg-builtin .cfg-tag { text-transform: none; letter-spacing: 0; font-size: calc(10.5px * var(--fs-scale, 1)); padding: 1px 8px; background: var(--bg-main); }
+html[data-theme] .cfg-builtin .cfg-actions { justify-content: flex-end; border-top: 1px solid var(--border); padding-top: 10px; }
+html[data-theme] .cfg-actions button {
+  font-family: var(--font-ui, inherit);
+  font-weight: 500;
+  padding: 4px 12px;
+  border-radius: 8px;
+}
+html[data-theme] .cfg-actions button.add {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+html[data-theme] .cfg-actions button.add:hover { color: #fff; background: var(--accent); filter: brightness(1.08); }
+html[data-theme] .cfg-actions button:disabled:not(.add) { color: var(--ok); border-color: var(--green-badge); opacity: 1; }
+
+/* Page header text: calmer and full width. */
+html[data-theme] .settings-page.hub .s-sub { max-width: 640px; line-height: 1.55; }
+
+/* Tabs on top of Connectors / Marketplace / Skills / MCP servers / Plugins:
+   one row, the open page underlined in the accent colour. */
+html[data-theme] .hub-tabs { gap: 2px; border-bottom: 1px solid var(--border); padding-bottom: 0; }
+html[data-theme] .hub-tab {
+  position: relative;
+  border: 0;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  padding: 8px 14px 10px;
+}
+html[data-theme] .hub-tab.active { background: transparent; border: 0; color: var(--text-strong, var(--text)); }
+html[data-theme] .hub-tab.active::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+/* The "working" bubble under the VibeCoder name: no text, three dots that
+   light up one after another for as long as the agent runs. A left-over empty
+   bubble is hidden once the run is over. */
+body.agent-running .msg.assistant .bubble.thinking:empty {
+  --dot-on: var(--accent);
+  --dot-off: color-mix(in srgb, var(--accent) 22%, transparent);
+  display: flex;
+  align-items: center;
+  min-height: 22px;
+  padding-left: 14px;
+}
+body.agent-running .msg.assistant .bubble.thinking:empty::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dot-off);
+  box-shadow: -12px 0 0 var(--dot-on), 12px 0 0 var(--dot-off);
+  animation: vc-working-dots 1.2s ease-in-out infinite;
+}
+@keyframes vc-working-dots {
+  0%, 100% { background: var(--dot-off); box-shadow: -12px 0 0 var(--dot-on), 12px 0 0 var(--dot-off); }
+  33% { background: var(--dot-on); box-shadow: -12px 0 0 var(--dot-off), 12px 0 0 var(--dot-off); }
+  66% { background: var(--dot-off); box-shadow: -12px 0 0 var(--dot-off), 12px 0 0 var(--dot-on); }
+}
+@media (prefers-reduced-motion: reduce) {
+  body.agent-running .msg.assistant .bubble.thinking:empty::after { animation: none; background: var(--dot-on); box-shadow: -12px 0 0 var(--dot-on), 12px 0 0 var(--dot-on); opacity: 0.7; }
+}
+body:not(.agent-running) .msg.assistant:has(> .bubble.thinking:empty) { display: none; }
+
+/* A running step's name: a soft band of light sweeps across it from left to
+   right while the agent works on it (VibeCoder's own design). It stops the
+   moment the step is done. */
+@keyframes vc-sweep {
+  from { background-position: 100% 0; }
+  to { background-position: 0% 0; }
+}
+body.agent-running .act:not(.done):not(.failed) .act-title,
+body.agent-running .timeline-group.is-running .used-names {
+  background-image: linear-gradient(90deg, var(--muted) 0%, var(--muted) 38%, var(--text-strong, var(--text)) 50%, var(--muted) 62%, var(--muted) 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: vc-sweep 1.6s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  body.agent-running .act:not(.done):not(.failed) .act-title,
+  body.agent-running .timeline-group.is-running .used-names { animation: none; background: none; color: var(--text); }
+}

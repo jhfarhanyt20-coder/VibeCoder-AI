@@ -1485,13 +1485,20 @@ function scrollChat(force = false) {
     window.vibeChatGliding = false
     el.scrollTop = el.scrollHeight
     chatFollowing = true
-  } else if (chatFollowing || nearBottom()) {
+    chatUserAway = false
+  } else if (!chatUserAway && (chatFollowing || nearBottom())) {
     chatFollowing = true
     el.style.overflowAnchor = "none"
     if (!chatGlide) chatGlide = requestAnimationFrame(glideStep)
   }
   requestAnimationFrame(updateJumpButton)
 }
+// The user scrolled up to read: nothing pulls the chat down again until they
+// scroll back to the very bottom themselves or press the jump arrow. (Being
+// "near" the bottom is not enough: one wheel step up used to count as near,
+// and the next streamed word pulled the chat back down.)
+var chatUserAway = false
+window.vibeChatFollowing = () => chatFollowing && !chatUserAway
 {
   const el = $("messages")
   // The browser's own scroll anchoring helps only while the user reads further
@@ -1500,10 +1507,19 @@ function scrollChat(force = false) {
   const anchor = () => { el.style.overflowAnchor = chatFollowing ? "none" : "auto" }
   anchor()
   // During a glide the distance to the bottom is the glide's, not the user's.
-  el.addEventListener("scroll", () => { if (!window.vibeChatGliding) chatFollowing = nearBottom(); anchor() }, { passive: true })
+  el.addEventListener("scroll", () => {
+    if (!window.vibeChatGliding) {
+      if (chatUserAway) {
+        // Back at the very bottom by the user's own scrolling: follow again.
+        if (el.scrollHeight - el.scrollTop - el.clientHeight <= 6) { chatUserAway = false; chatFollowing = true }
+        else chatFollowing = false
+      } else chatFollowing = nearBottom()
+    }
+    anchor()
+  }, { passive: true })
   // Scrolling up by hand stops following (and any glide) at once, before the
   // next streamed word could pull the chat back down.
-  const stop = () => { chatFollowing = false; window.vibeChatGliding = false; if (chatGlide) cancelAnimationFrame(chatGlide); chatGlide = 0; anchor() }
+  const stop = () => { chatFollowing = false; chatUserAway = true; window.vibeChatGliding = false; if (chatGlide) cancelAnimationFrame(chatGlide); chatGlide = 0; anchor() }
   // Scrolling inside a code block, tool output or thought box scrolls that box,
   // not the chat: it must not stop following.
   const innerScroller = (target) => {

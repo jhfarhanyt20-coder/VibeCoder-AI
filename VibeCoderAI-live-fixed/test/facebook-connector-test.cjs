@@ -156,6 +156,60 @@ test("video upload: a Reel goes start → bytes → finish with the Page token; 
   fs.rmSync(dir, { recursive: true, force: true })
 })
 
+test("full Page control: edit, delete, hide comments, photos, Page info, late Messenger replies — each asks first, the Page itself is never deleted", async () => {
+  const calls = []
+  const ok = (body) => ({ ok: true, status: 200, json: async () => body })
+  const base = fakeFacebook().fetch
+  let messengerWindowOpen = false
+  const fetch = async (url, opts = {}) => {
+    calls.push({ url, opts, method: opts.method || "GET" })
+    const u = new URL(url)
+    const p = u.pathname.replace(/^\/v[\d.]+/, "")
+    const body = typeof opts.body === "string" ? opts.body : ""
+    if (p === "/555/messages") {
+      if (/messaging_type=RESPONSE/.test(body) && !messengerWindowOpen) return { ok: false, status: 400, json: async () => ({ error: { message: "(#10) This message is sent outside of allowed window.", code: 10 } }) }
+      return ok({ message_id: "m.1" })
+    }
+    if (p === "/555_9" || p === "/555_1_2" || p === "/555" && opts.method === "POST") return ok({ success: true })
+    if (p === "/555/photos") return ok({ id: "ph1", post_id: "555_77" })
+    if (opts.method === "DELETE" && p === "/555_9") return ok({ success: true })
+    return base(url, opts)
+  }
+  const fb = createFacebook({ home, fetch, setTimer: () => null, accountUrl: SITE, available: true })
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vc-fbp-"))
+  fs.writeFileSync(path.join(dir, "cover.png"), Buffer.alloc(2048, 3))
+  const asks = []
+  const ctx = { cwd: dir, engine: { connectors: { facebook: fb } }, askPermission: async (q) => { asks.push(q); return true } }
+
+  assert.match(await T("facebook_edit_post").run({ page: "555", post_id: "555_9", message: "New text" }, ctx), /Post 555_9 updated/)
+  assert.match(await T("facebook_delete").run({ page: "555", id: "555_9", what: "post" }, ctx), /Deleted post 555_9/)
+  assert.equal(calls.find((c) => c.method === "DELETE").url.includes("access_token=EAApage"), true, "deletes as the Page")
+  await assert.rejects(T("facebook_delete").run({ page: "555", id: "555" }, ctx), /cannot be deleted/)
+  assert.match(await T("facebook_hide_comment").run({ page: "555", comment_id: "555_1_2" }, ctx), /hidden/)
+  assert.match(String(calls.find((c) => c.url.includes("/555_1_2")).opts.body), /is_hidden=true/)
+  assert.match(await T("facebook_upload_photo").run({ page: "555", file: "cover.png", caption: "Sale", publish: true }, ctx), /Photo uploaded: ph1 \(post 555_77\), published/)
+  assert.equal(calls.find((c) => c.url.includes("/555/photos")).opts.body.get("published"), "true")
+  await assert.rejects(T("facebook_upload_photo").run({ page: "555", file: "notes.txt" }, ctx), /must be a \.jpg/)
+  assert.match(await T("facebook_update_page").run({ page: "555", about: "Clothes for everyone", phone: "+880 1700" }, ctx), /updated: about, phone/)
+  await assert.rejects(T("facebook_update_page").run({ page: "555" }, ctx), /at least one field/)
+
+  // Messenger: outside 24 h a normal reply fails with a clear way forward; the Human Agent tag works.
+  await assert.rejects(T("facebook_send_message").run({ page: "555", recipient_id: "9", text: "Sorry for the wait" }, ctx), /human_agent=true/)
+  assert.match(await T("facebook_send_message").run({ page: "555", recipient_id: "9", text: "Sorry for the wait", human_agent: true }, ctx), /Message sent \(m\.1\)/)
+  assert.match(String(calls.filter((c) => c.url.includes("/555/messages")).pop().opts.body), /messaging_type=MESSAGE_TAG[\s\S]*tag=HUMAN_AGENT|tag=HUMAN_AGENT[\s\S]*messaging_type=MESSAGE_TAG/)
+
+  // Every change asked, as a critical question; a "no" sends nothing.
+  assert.equal(asks.length, 7, "edit, delete, hide, photo, page info and two message tries each asked once")
+  assert(asks.every((q) => q.critical === true))
+  const before = calls.length
+  const no = { cwd: dir, engine: { connectors: { facebook: fb } }, askPermission: async () => false }
+  await assert.rejects(T("facebook_delete").run({ page: "555", id: "555_9" }, no), /did not allow/)
+  await assert.rejects(T("facebook_edit_post").run({ page: "555", post_id: "555_9", message: "x" }, no), /did not allow/)
+  assert.equal(calls.length, before)
+  assert.deepEqual(T("facebook_upload_photo").paths({ file: "cover.png" }, ctx), [path.join(dir, "cover.png")])
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
 test("coming soon: sign-in is closed for users and says so", async () => {
   const fb = createFacebook({ home: fs.mkdtempSync(path.join(os.tmpdir(), "vc-fb3-")), fetch: fakeFacebook().fetch, setTimer: () => null, accountUrl: SITE, available: false })
   assert.equal(fb.status().comingSoon, true)

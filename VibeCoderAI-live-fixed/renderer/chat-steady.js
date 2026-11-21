@@ -35,7 +35,12 @@
   // Was the user at the bottom just before this change? Measured against the
   // height before the fold: after it the browser has already clamped scrollTop.
   // (The app glides to the bottom; while it glides the user still follows.)
-  const following = () => !!window.vibeChatGliding || lastTotal - lastTop - m.clientHeight <= 160
+  // The app knows when the user scrolled up on purpose: then never pull back.
+  const following = () => {
+    if (typeof window.vibeChatFollowing === "function" && !window.vibeChatFollowing()) return false
+    return !!window.vibeChatGliding || lastTotal - lastTop - m.clientHeight <= 160
+  }
+  let lastGrowAt = 0 // when the chat last got taller (text or a tool is arriving)
   // A fold that settle() has not handled yet must not be recorded as "normal".
   const settled = () => !holding || m.scrollHeight >= peakTotal
   const hiddenBelow = () => Math.max(0, m.scrollHeight - m.scrollTop - m.clientHeight)
@@ -80,9 +85,14 @@
       remember()
       return
     }
-    const content = m.scrollHeight - gap
+    const now = m.scrollHeight
+    if (now > lastTotal) lastGrowAt = performance.now()
+    const shrank = now < lastTotal
+    const content = now - gap
     setGap(peakTotal - content)
-    if (m.scrollTop < lastTop) m.scrollTop = lastTop // undo the browser's clamp
+    // Undo the browser's clamp after a fold — only then: a scroll the user made
+    // is never put back.
+    if (shrank && m.scrollTop < lastTop) m.scrollTop = lastTop
     peakTotal = Math.max(peakTotal, m.scrollHeight)
     remember()
   }
@@ -128,6 +138,18 @@
     if (wasLive && !live) { endedAt = Date.now(); holdNextRedraw = true }
     wasLive = live
     if (settled()) remember()
+    // The spare space only catches a sudden fold (a closing Thinking box, a
+    // group folding). Then it closes again in a few frames, so the chat eases
+    // down instead of jumping, and a big fold never leaves a blank screen with
+    // the text stuck at the top. New content that arrives meanwhile fills it.
+    // Only while nothing is arriving: closing the space while new text pushes
+    // the chat up made it go down and up again (a visible wobble).
+    if (gap && settled() && (!live || performance.now() - lastGrowAt > 700)) {
+      setGap(gap > 3 ? gap - Math.min(26, Math.max(2, gap * 0.12)) : 0)
+      peakTotal = m.scrollHeight
+      remember()
+      if (!gap && !live) holding = false
+    }
     requestAnimationFrame(frame)
   }
   requestAnimationFrame(frame)

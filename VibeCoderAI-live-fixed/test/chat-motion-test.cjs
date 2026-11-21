@@ -33,10 +33,10 @@ assert.match(paint, /renderMarkdownInto\(typing\.el/, "typingPaint renders markd
 //    block that grows a lot at once does not stop the follow; scrolling up by
 //    hand stops it at once.
 const scroll = app.slice(app.indexOf("var chatFollowing"), app.indexOf("function updateJumpButton("))
-assert(scroll.includes("} else if (chatFollowing || nearBottom()) {"), "follows by where the user was")
+assert(scroll.includes("} else if (!chatUserAway && (chatFollowing || nearBottom())) {"), "follows by where the user was")
 // It glides to the newest line (a paragraph used to snap the chat 50-74px up in one frame).
 assert(scroll.includes("function glideStep()") && scroll.includes("Math.max(2, dist * 0.22)"), "glides instead of snapping")
-assert(scroll.includes('if (!window.vibeChatGliding) chatFollowing = nearBottom()'), "a glide is not mistaken for the user scrolling")
+assert(scroll.includes("if (!window.vibeChatGliding) {") && scroll.includes("} else chatFollowing = nearBottom()"), "a glide is not mistaken for the user scrolling")
 // Scrolling up by hand stops following and the glide at once.
 assert.match(scroll, /const stop = \(\) => \{ chatFollowing = false;[\s\S]*"wheel"[\s\S]*deltaY < 0 && !innerScroller\(event\.target\)\) stop\(\)/)
 assert(steady.includes("!!window.vibeChatGliding ||"), "the steady chat treats a glide as following")
@@ -101,4 +101,26 @@ console.log("PASS question box: above the composer, one question at a time, butt
   assert(s2.includes("!innerScroller(event.target)"))
   assert(polish.includes("@keyframes vc-sweep") && polish.includes("body.agent-running .act:not(.done):not(.failed) .act-title"))
   console.log("PASS chat polish: anchoring by follow state, inner scrolling, running-step sweep")
+}
+
+// The spare space only catches a sudden fold and then closes by itself, so a
+// folding Thinking box or a finished run never leaves the text stuck at the top.
+{
+  assert(steady.includes("setGap(gap > 3 ? gap - Math.min(26, Math.max(2, gap * 0.12)) : 0)"), "the spare space eases closed")
+  console.log("PASS spare space: closes by itself, no blank screen after a fold or a run")
+}
+
+// Reading while the agent writes: one wheel step up stops following until the
+// user scrolls back to the very bottom (or presses the jump arrow); the steady
+// chat never puts back a scroll the user made, and closes its spare space only
+// while nothing is arriving (no down-and-up wobble).
+{
+  const s3 = app.slice(app.indexOf("var chatFollowing"), app.indexOf("function updateJumpButton("))
+  assert(s3.includes("} else if (!chatUserAway && (chatFollowing || nearBottom())) {"), "a user who scrolled up is not pulled back")
+  assert(s3.includes("chatUserAway = true;"), "scrolling up marks the user as away")
+  assert(s3.includes("el.scrollHeight - el.scrollTop - el.clientHeight <= 6) { chatUserAway = false; chatFollowing = true }"), "back at the very bottom follows again")
+  assert(steady.includes('typeof window.vibeChatFollowing === "function" && !window.vibeChatFollowing()'), "the steady chat respects the user scrolling up")
+  assert(steady.includes("if (shrank && m.scrollTop < lastTop) m.scrollTop = lastTop"), "only a fold's clamp is undone")
+  assert(steady.includes("(!live || performance.now() - lastGrowAt > 700)"), "the spare space closes only while nothing arrives")
+  console.log("PASS reading while writing: scroll up stays put, no wobble")
 }

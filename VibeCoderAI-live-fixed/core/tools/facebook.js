@@ -133,15 +133,85 @@ const ALL = [
       return (data.data || []).map((t) => `${t.id} · ${(t.participants?.data || []).map((p) => `${p.name} (${p.id})`).join(", ")} · ${String(t.updated_time).slice(0, 16)}${t.unread_count ? ` · ${t.unread_count} unread` : ""}\n  ${short(t.snippet)}`).join("\n") || "No conversations."
     }),
 
-  tool("facebook_send_message", "Send a Messenger message from a Page to a person who wrote to the Page (Facebook allows replies within 24 hours of their last message). Always asks the user first.",
-    { page: pageProp, recipient_id: { type: "string", description: "The person's id from facebook_messages" }, text: { type: "string" } }, ["page", "recipient_id", "text"],
+  tool("facebook_send_message", "Send a Messenger message from a Page to a person who wrote to the Page. Facebook's rule: a normal reply works within 24 hours of the person's last message; with human_agent=true a person (the user, through the agent) can reply up to 7 days after it. Messages from a personal profile are not possible through Facebook's API. Always asks the user first.",
+    { page: pageProp, recipient_id: { type: "string", description: "The person's id (from facebook_messages: the participant who is not the Page)" }, text: { type: "string" }, human_agent: { type: "boolean", description: "Reply 1-7 days after their last message (Human Agent tag)" } }, ["page", "recipient_id", "text"],
     (a) => `write message ${a.page}`,
     async (a, ctx) => {
       const c = fb(ctx)
       await confirmCritical(ctx, `send a Messenger message to ${a.recipient_id}: "${short(a.text, 200)}"`)
       const page = idOf(a.page, "page")
-      const r = await c.asPage(page, "POST", `/${page}/messages`, { recipient: { id: idOf(a.recipient_id, "recipient_id") }, messaging_type: "RESPONSE", message: { text: String(a.text) } })
-      return `Message sent (${r.message_id || "ok"}).`
+      const base = { recipient: { id: idOf(a.recipient_id, "recipient_id") }, message: { text: String(a.text) } }
+      try {
+        const r = await c.asPage(page, "POST", `/${page}/messages`, a.human_agent ? { ...base, messaging_type: "MESSAGE_TAG", tag: "HUMAN_AGENT" } : { ...base, messaging_type: "RESPONSE" })
+        return `Message sent (${r.message_id || "ok"}).`
+      } catch (e) {
+        const m = String(e.message || e)
+        if (/outside of allowed window|2018278|24 hour/i.test(m) && !a.human_agent) throw new Error(`${m} Their last message is older than 24 hours: send it again with human_agent=true (works up to 7 days after their last message).`)
+        if (/permission|\(#10\)|\(#200\)|pages_messaging/i.test(m)) throw new Error(`${m} Messenger needs the "pages_messaging" permission (and "human_agent" for late replies) in the Facebook sign-in. Ask the user to add them in the Meta app's Login configuration and sign in to Facebook again in Connectors.`)
+        throw e
+      }
+    }),
+
+  tool("facebook_edit_post", "Change the text of a Page post the Page published. Always asks the user first (people will see the change).",
+    { page: pageProp, post_id: { type: "string", description: "Post id, e.g. 555_123 (from facebook_page_posts)" }, message: { type: "string", description: "The new text" } }, ["page", "post_id", "message"],
+    (a) => `write post ${a.page}`,
+    async (a, ctx) => {
+      const page = idOf(a.page, "page")
+      const id = idOf(a.post_id, "post_id")
+      await confirmCritical(ctx, `change post ${id} on Page ${page} to: "${short(a.message, 200)}"`)
+      await fb(ctx).asPage(page, "POST", `/${id}`, { message: String(a.message) })
+      return `Post ${id} updated.`
+    }),
+
+  tool("facebook_delete", "Delete something the Page owns: a post, a comment, a photo or a video. It cannot be undone, so the user is always asked first. (The Facebook account itself can never be deleted.)",
+    { page: pageProp, id: { type: "string", description: "Id of the post / comment / photo / video" }, what: { type: "string", enum: ["post", "comment", "photo", "video"], description: "What it is (shown to the user in the question)" } }, ["page", "id"],
+    (a) => `write delete ${a.page}`,
+    async (a, ctx) => {
+      const page = idOf(a.page, "page")
+      const id = idOf(a.id, "id")
+      if (id === page) throw new Error("A Page or the account itself cannot be deleted here. Nothing was done.")
+      await confirmCritical(ctx, `permanently delete ${a.what || "item"} ${id} from Page ${page} (cannot be undone)`)
+      await fb(ctx).asPage(page, "DELETE", `/${id}`, {})
+      return `Deleted ${a.what || "item"} ${id}.`
+    }),
+
+  tool("facebook_hide_comment", "Hide a comment on a Page post (hide=true; the writer and their friends still see it, others do not) or show it again (hide=false). Asks the user first.",
+    { page: pageProp, comment_id: { type: "string" }, hide: { type: "boolean", description: "true = hide (default), false = show again" } }, ["page", "comment_id"],
+    (a) => `write comment ${a.page}`,
+    async (a, ctx) => {
+      const page = idOf(a.page, "page")
+      const id = idOf(a.comment_id, "comment_id")
+      const hide = a.hide !== false
+      await confirmCritical(ctx, `${hide ? "hide" : "show again"} comment ${id}`)
+      await fb(ctx).asPage(page, "POST", `/${id}`, { is_hidden: hide })
+      return `Comment ${id} ${hide ? "hidden" : "visible again"}.`
+    }),
+
+  tool("facebook_upload_photo", "Post a photo file from the project on a Page, with an optional caption. publish=true makes it public now (always asks first); publish=false (default) uploads it unpublished.",
+    { page: pageProp, file: { type: "string", description: "Path of a .jpg / .png / .gif / .webp (inside the project)" }, caption: { type: "string" }, publish: { type: "boolean" } }, ["page", "file"],
+    (a) => `write photo ${a.page}`,
+    async (a, ctx) => {
+      const page = idOf(a.page, "page")
+      const path = require("path")
+      const file = path.resolve((ctx && ctx.cwd) || process.cwd(), String(a.file || ""))
+      if (!/\.(jpe?g|png|gif|webp)$/i.test(file)) throw new Error('"file" must be a .jpg, .png, .gif or .webp image. Nothing was uploaded.')
+      if (a.publish === true) await confirmCritical(ctx, `publish the photo "${path.basename(file)}" on Page ${page}${a.caption ? ` with "${short(a.caption, 160)}"` : ""}`)
+      const r = await fb(ctx).uploadPhoto(page, file, { caption: a.caption, published: a.publish === true })
+      return `Photo uploaded: ${r.id}${r.postId ? ` (post ${r.postId})` : ""}, ${r.published ? "published" : "unpublished"}.`
+    }),
+
+  tool("facebook_update_page", "Change a Page's public info: about (short description), description, phone, website, emails, general_info. Asks the user first.",
+    { page: pageProp, about: { type: "string" }, description: { type: "string" }, phone: { type: "string" }, website: { type: "string" }, emails: { type: "array", items: { type: "string" } }, general_info: { type: "string" } }, ["page"],
+    (a) => `write page ${a.page}`,
+    async (a, ctx) => {
+      const page = idOf(a.page, "page")
+      const fields = {}
+      for (const k of ["about", "description", "phone", "website", "general_info"]) if (a[k] != null && a[k] !== "") fields[k] = String(a[k])
+      if (Array.isArray(a.emails) && a.emails.length) fields.emails = a.emails.map(String)
+      if (!Object.keys(fields).length) throw new Error("Give at least one field to change (about, description, phone, website, emails, general_info). Nothing was done.")
+      await confirmCritical(ctx, `change Page ${page}: ${Object.entries(fields).map(([k, v]) => `${k}="${short(Array.isArray(v) ? v.join(", ") : v, 80)}"`).join(", ")}`)
+      await fb(ctx).asPage(page, "POST", `/${page}`, fields)
+      return `Page ${page} updated: ${Object.keys(fields).join(", ")}.`
     }),
 
   tool("facebook_insights", "Read Page or post statistics (reach, engagement, followers…). Default: last 28 days of key Page metrics.",
@@ -213,7 +283,6 @@ const ALL = [
 ]
 
 // The video file is a path: outside the project it needs the user's OK like any other path.
-const uploadTool = ALL.find((t) => t.name === "facebook_upload_video")
-uploadTool.paths = (a, ctx) => [require("path").resolve((ctx && ctx.cwd) || process.cwd(), String((a && a.file) || ""))]
+for (const name of ["facebook_upload_video", "facebook_upload_photo"]) ALL.find((t) => t.name === name).paths = (a, ctx) => [require("path").resolve((ctx && ctx.cwd) || process.cwd(), String((a && a.file) || ""))]
 
 module.exports = { ALL }

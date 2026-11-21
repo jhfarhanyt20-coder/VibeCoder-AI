@@ -221,6 +221,24 @@ function createFacebook({ home, fetch: fetcher = globalThis.fetch, now = Date.no
     return { id: start.video_id, state }
   }
 
+  /** A photo on a Page (with an optional caption), one multipart upload. */
+  async function uploadPhoto(pageId, file, { caption, published } = {}) {
+    const fs = require("fs")
+    const stat = fs.statSync(String(file))
+    if (!stat.isFile()) throw new Error(`Not a file: ${file}. Nothing was uploaded.`)
+    if (stat.size > 10 * 1024 * 1024) throw new Error("The photo is larger than 10 MB. Make it smaller first. Nothing was uploaded.")
+    const token = await pageToken(pageId)
+    const ext = require("path").extname(String(file)).toLowerCase()
+    const type = ext === ".png" ? "image/png" : ext === ".gif" ? "image/gif" : ext === ".webp" ? "image/webp" : "image/jpeg"
+    const form = new FormData()
+    form.set("access_token", token)
+    form.set("published", published ? "true" : "false")
+    if (caption) form.set("caption", String(caption))
+    form.set("source", new Blob([fs.readFileSync(String(file))], { type }), require("path").basename(String(file)))
+    const data = await json(await fetcher(`${GRAPH}/${encodeURIComponent(String(pageId))}/photos`, { method: "POST", body: form }), "photo upload")
+    return { id: data.id, postId: data.post_id || null, published: !!published }
+  }
+
   /** Processing state of an uploaded video or Reel. */
   async function videoStatus(pageId, videoId) {
     const token = await pageToken(pageId)
@@ -232,7 +250,7 @@ function createFacebook({ home, fetch: fetcher = globalThis.fetch, now = Date.no
     id: ID, status, connect, poll, cancel, disconnect, connected,
     api: (method, path, params) => graph(null, method, path, params),
     asPage: async (pageId, method, path, params) => graph(await pageToken(pageId), method, path, params),
-    uploadVideo, uploadReel, videoStatus,
+    uploadVideo, uploadReel, uploadPhoto, videoStatus,
   }
 }
 

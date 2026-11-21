@@ -112,6 +112,7 @@ keywords: marketplace, mcp, mcp server, plugin, extension, skill, playbook, reci
 - Built-in plugins (read-only tools): project_overview (languages, folders, run/test/build commands), find_todos (TODO/FIXME notes), env_check (.env vs .env.example, names only), ports_in_use (which local dev ports answer).
 - Media tools plugin: media_check (FFmpeg, Node, installed voices) and voice_over (free offline WAV voice-over from the voices installed in Windows; a language works only if Windows has a voice for it). The video-maker skill makes animated videos with Remotion and can post them.
 - Facebook video: facebook_upload_video (a normal Page video or a Reel: 9:16, 3-90 s; draft by default, publishing always asks) and facebook_video_status. Works on Pages only, not personal profiles.
+- Facebook Page control: facebook_edit_post, facebook_delete (post, comment, photo, video; never the Page or account), facebook_hide_comment, facebook_upload_photo, facebook_update_page (about, description, phone, website...). Messenger: replies within 24 h of the person's last message, or up to 7 days with human_agent=true. Sending from a personal profile is not possible through Facebook's API. Every public change or deletion asks the user first.
 
 ## Memory, subagents and background work
 keywords: memory, remember, subagent, crew, parallel, background, shell, terminal, long command, todo, plan

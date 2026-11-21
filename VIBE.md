@@ -1,13 +1,30 @@
 # VibeCoder AI — Project Rules (read this first)
 
-Last updated: 2026-11-18
-Current release: **0.3.13** (tag `v0.3.13`, commit `5c44343`) — Sign in with VibeCoder
-Release assets verified: `VibeCoderAI-v2-0.3.13.exe` (121849477 bytes),
-`latest.yml` (`version: 0.3.13`) and `VibeCoder-CLI-0.3.13.tgz`.
-Published installer SHA-512 matched `latest.yml`; release workflow run `44342239212` succeeded.
-Known gap: no `.exe.blockmap` was published for 0.3.13 (after the electron-builder 26
-upgrade), so updates to 0.3.13 download the full installer instead of a differential
-patch. Restore the blockmap in the next release (check `nsis.differentialPackage`).
+Last updated: 2026-11-22
+Current release: **0.3.19** (tag `v0.3.19`, commit `17bd868`, published 2026-11-21) —
+smooth chat, code editor panel, side panel, built-in skills/MCP/plugins, video tools,
+Facebook video upload.
+Release assets verified (all uploaded by `github-actions[bot]`, workflow run
+`44913166157` succeeded): `VibeCoderAI-v2-0.3.19.exe` (122120834 bytes),
+`VibeCoderAI-v2-0.3.19.exe.blockmap` (129461 bytes), `latest.yml` (`version: 0.3.19`)
+and `VibeCoder-CLI-0.3.19.tgz` (305139 bytes). One release per tag, no duplicates.
+Resolved: the blockmap gap of 0.3.13 (differential updates work again since 0.3.14).
+
+Release history notes (so a fresh session does not misread the feed):
+- **0.3.15 has a tag but no GitHub Release.** Tag `v0.3.15` (commit `5c14d16`) exists;
+  its workflow run `44579360831` failed on 2026-11-19, so nothing was published and
+  0.3.16 followed. No patch number was skipped; users went 0.3.14 → 0.3.16.
+- **0.3.17 and 0.3.18: the installer, blockmap and `latest.yml` were uploaded by hand**
+  (by the repository owner's account) after electron-builder's `--publish always`
+  raced, created a second release and lost the uploads. They were built locally
+  from the exact tag commit with a clean tracked tree and uploaded with
+  `gh release upload --clobber`; `latest.yml` matches those installers.
+- **2026-11-20: duplicate release copies of 0.3.13, 0.3.14, 0.3.16, 0.3.17 and 0.3.18
+  were deleted with the user's approval** after every asset was moved into the
+  kept copy. The tags and one complete release per version remain. See §2.7.
+- Commit `76e4b91` changed the workflow (build with `--publish never`, one `gh`
+  step uploads all four assets, a verify step fails the job if one is missing).
+  0.3.19 was the first release made this way and came out complete.
 VibeCoder account: sign-in/account on the website (Render); AI requests through the
 gateway host (Railway, `electron/vibecoder-account.cjs` `DEFAULT_GATEWAY_URL`).
 Repository: https://github.com/jhfarhanyt20-coder/VibeCoder-AI — **PUBLIC**
@@ -55,16 +72,29 @@ same repository. Therefore:
    - commit the intended files and push `master`;
    - create tag `v<version>` on that commit and push the tag.
 3. `.github/workflows/release.yml` runs only on `v*` tags. It validates that the
-   tag matches `package.json`, runs `npm ci`, `npm test`, then
-   `electron-builder --win nsis --x64 --publish always`, which publishes the
-   NSIS installer, `latest.yml`, blockmap and the standalone CLI `.tgz` to the
-   GitHub Release.
+   tag matches `package.json`, runs `npm ci`, `npm test`, then builds with
+   `electron-builder --win nsis --x64 --publish never` and packs the standalone
+   CLI. One `gh release create/upload` step publishes all four assets (NSIS
+   installer, `.exe.blockmap`, `latest.yml`, CLI `.tgz`) to a single release, and
+   a verify step fails the job if any of them is missing. Do not go back to
+   `--publish always`: it raced and created duplicate releases (0.3.17, 0.3.18).
 4. The tag and the `package.json` version must match exactly. Never reuse or
    move an already published tag.
 5. Do not commit when tests are red. Leave the working tree uncommitted instead.
 6. After pushing a tag, verify the Actions run succeeded and that the release
-   contains the `.exe`, `latest.yml` and `.blockmap` assets.
+   contains the `.exe`, `latest.yml`, `.blockmap` and CLI `.tgz` assets (check
+   `gh release view v<version> --json assets` and that
+   `releases/latest/download/latest.yml` shows the new version). A green run is
+   not enough on its own.
 7. Never force-push `master` and never delete a previously published release.
+   The only exception so far was removing duplicate copies of the same tag
+   (2026-11-20, user-approved, every asset kept); ask the user before any
+   release deletion.
+8. Release assets are uploaded by the workflow. A manual upload is allowed only
+   to repair a release the workflow left incomplete, only with the user's OK,
+   and only from a local build of the exact tag commit (clean tracked tree);
+   record it in the release history notes above. If a tag's run fails, fix the
+   cause and release the next patch number; never move or reuse the tag.
 
 ## 3. Repository hygiene
 

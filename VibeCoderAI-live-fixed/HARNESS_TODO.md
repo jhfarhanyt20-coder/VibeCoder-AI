@@ -4,7 +4,7 @@
 > প্রথমে এই ফাইল পড়বে, তারপর প্রথম unchecked phase থেকে কাজ শুরু করবে।
 > প্রতিটা phase শেষে "Progress Log" আপডেট করবে।
 
-Last updated: 2026-11-18
+Last updated: 2026-11-22
 App root: `VibeCoderAI-live-fixed`
 Git root: `C:\Users\farhan\Downloads\VibeCoderAI-live-provider-browser-fixed`
 Git HEAD at start: `41bf358`
@@ -465,3 +465,38 @@ Thin vertical slice first:
   the CLI page, `/download-cli` redirects to the tagged `.tgz`, and the
   footer/FAQ/CLI support section links users to GitHub Issues for problems and
   complaints. Website commit `703f2bb` pushed to `main`.
+
+## 13. State after 0.3.19 and the 0.3.20 checklist — 2026-11-22
+
+- Released: **0.3.19** (commit `17bd868`, tag `v0.3.19`, run `44913166157`), all four
+  assets uploaded by the workflow. See VIBE.md "Release history notes" for 0.3.15
+  (tag without a release), the hand-uploaded 0.3.17/0.3.18 assets and the removed
+  duplicate releases.
+- In the working tree, **not released yet** (needs the owner's OK):
+  - chat: the spare space under the chat closes by itself in a few frames, so a
+    folding Thinking box or a finished run no longer leaves the text stuck at the
+    top over a blank area (`renderer/chat-steady.js`);
+  - Facebook: `facebook_edit_post`, `facebook_delete` (never the Page or the
+    account), `facebook_hide_comment`, `facebook_upload_photo`,
+    `facebook_update_page`, Messenger replies up to 7 days with the Human Agent
+    tag; every public change or deletion asks first.
+- Owner action for Facebook: the Meta Login configuration needs
+  `pages_messaging`, `human_agent`, `pages_manage_engagement` and
+  `pages_manage_metadata` for these tools; then sign in to Facebook again.
+
+### 0.3.20 release checklist
+- [ ] Owner approved the release.
+- [ ] `VibeCoderAI-live-fixed/package.json` and both root entries of
+      `package-lock.json` go from 0.3.19 to **0.3.20** (one patch, no skip).
+- [ ] `npm test` green from `VibeCoderAI-live-fixed`.
+- [ ] Commit only the intended files (never `website/`, `render.yaml`, other
+      product folders, `HANDOFF.local.md`, `node_modules`, `release/`, `dist/`,
+      `.env*`, logs, `core/llm/http.zip`); push `master`.
+- [ ] Tag `v0.3.20` on that commit and push the tag.
+- [ ] `gh run watch` the release run until it succeeds.
+- [ ] `gh release view v0.3.20 --json assets`: exactly one release with the
+      `.exe`, `.exe.blockmap`, `latest.yml` and CLI `.tgz`, all uploaded by
+      `github-actions[bot]`.
+- [ ] `releases/latest/download/latest.yml` shows `version: 0.3.20`.
+- [ ] Update VIBE.md "Current release" and this section.
+- [ ] Website "What's new" updated if the release adds user-facing features.

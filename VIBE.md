@@ -1,13 +1,15 @@
 # VibeCoder AI — Project Rules (read this first)
 
 Last updated: 2026-11-22
-Current release: **0.3.19** (tag `v0.3.19`, commit `17bd868`, published 2026-11-21) —
-smooth chat, code editor panel, side panel, built-in skills/MCP/plugins, video tools,
-Facebook video upload.
+Current release: **0.3.20** (tag `v0.3.20`, commit `5119d2e`, published 2026-11-22) —
+read the chat while the agent writes (no pull-back, no wobble), the spare space
+closes by itself, full Facebook Page control (edit/delete/hide/photo/Page info,
+Messenger Human Agent replies).
 Release assets verified (all uploaded by `github-actions[bot]`, workflow run
-`44913166157` succeeded): `VibeCoderAI-v2-0.3.19.exe` (122120834 bytes),
-`VibeCoderAI-v2-0.3.19.exe.blockmap` (129461 bytes), `latest.yml` (`version: 0.3.19`)
-and `VibeCoder-CLI-0.3.19.tgz` (305139 bytes). One release per tag, no duplicates.
+`44936878289` succeeded): `VibeCoderAI-v2-0.3.20.exe` (122122916 bytes),
+`VibeCoderAI-v2-0.3.20.exe.blockmap` (129390 bytes), `latest.yml` (`version: 0.3.20`)
+and `VibeCoder-CLI-0.3.20.tgz` (307420 bytes). One release per tag, no duplicates.
+Previous: 0.3.19 (`17bd868`, run `44913166157`, also complete and bot-uploaded).
 Resolved: the blockmap gap of 0.3.13 (differential updates work again since 0.3.14).
 
 Release history notes (so a fresh session does not misread the feed):
@@ -24,7 +26,7 @@ Release history notes (so a fresh session does not misread the feed):
   kept copy. The tags and one complete release per version remain. See §2.7.
 - Commit `76e4b91` changed the workflow (build with `--publish never`, one `gh`
   step uploads all four assets, a verify step fails the job if one is missing).
-  0.3.19 was the first release made this way and came out complete.
+  0.3.19 was the first release made this way and came out complete; 0.3.20 too.
 VibeCoder account: sign-in/account on the website (Render); AI requests through the
 gateway host (Railway, `electron/vibecoder-account.cjs` `DEFAULT_GATEWAY_URL`).
 Repository: https://github.com/jhfarhanyt20-coder/VibeCoder-AI — **PUBLIC**

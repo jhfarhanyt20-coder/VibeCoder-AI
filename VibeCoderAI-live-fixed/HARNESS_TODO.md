@@ -466,37 +466,41 @@ Thin vertical slice first:
   footer/FAQ/CLI support section links users to GitHub Issues for problems and
   complaints. Website commit `703f2bb` pushed to `main`.
 
-## 13. State after 0.3.19 and the 0.3.20 checklist — 2026-11-22
+## 13. Releases 0.3.19 and 0.3.20 — 2026-11-22
 
-- Released: **0.3.19** (commit `17bd868`, tag `v0.3.19`, run `44913166157`), all four
-  assets uploaded by the workflow. See VIBE.md "Release history notes" for 0.3.15
-  (tag without a release), the hand-uploaded 0.3.17/0.3.18 assets and the removed
+- **0.3.19** (commit `17bd868`, tag `v0.3.19`, run `44913166157`): all four assets
+  uploaded by the workflow. See VIBE.md "Release history notes" for 0.3.15 (tag
+  without a release), the hand-uploaded 0.3.17/0.3.18 assets and the removed
   duplicate releases.
-- In the working tree, **not released yet** (needs the owner's OK):
-  - chat: the spare space under the chat closes by itself in a few frames, so a
-    folding Thinking box or a finished run no longer leaves the text stuck at the
-    top over a blank area (`renderer/chat-steady.js`);
+- **0.3.20** (commit `5119d2e`, tag `v0.3.20`, run `44936878289`, owner approved):
+  - chat: one wheel step up stops following until the user scrolls back to the
+    very bottom or presses the jump arrow; the steady chat never puts back a
+    scroll the user made; its spare space closes by itself (no blank screen after
+    a folding Thinking box or a finished run) and only while nothing is arriving,
+    so the chat no longer goes down and up while text streams
+    (`renderer/app.js`, `renderer/chat-steady.js`);
   - Facebook: `facebook_edit_post`, `facebook_delete` (never the Page or the
     account), `facebook_hide_comment`, `facebook_upload_photo`,
     `facebook_update_page`, Messenger replies up to 7 days with the Human Agent
     tag; every public change or deletion asks first.
-- Owner action for Facebook: the Meta Login configuration needs
-  `pages_messaging`, `human_agent`, `pages_manage_engagement` and
-  `pages_manage_metadata` for these tools; then sign in to Facebook again.
+- Meta Login configuration (checked 2026-11-22): `pages_messaging`,
+  `pages_manage_engagement` and `pages_manage_metadata` are already in the
+  configuration. `human_agent` cannot be added there: it needs Meta App Review.
+  Until then Messenger replies work only within 24 hours of the person's last
+  message.
 
-### 0.3.20 release checklist
-- [ ] Owner approved the release.
-- [ ] `VibeCoderAI-live-fixed/package.json` and both root entries of
-      `package-lock.json` go from 0.3.19 to **0.3.20** (one patch, no skip).
-- [ ] `npm test` green from `VibeCoderAI-live-fixed`.
-- [ ] Commit only the intended files (never `website/`, `render.yaml`, other
-      product folders, `HANDOFF.local.md`, `node_modules`, `release/`, `dist/`,
-      `.env*`, logs, `core/llm/http.zip`); push `master`.
-- [ ] Tag `v0.3.20` on that commit and push the tag.
-- [ ] `gh run watch` the release run until it succeeds.
-- [ ] `gh release view v0.3.20 --json assets`: exactly one release with the
-      `.exe`, `.exe.blockmap`, `latest.yml` and CLI `.tgz`, all uploaded by
+### 0.3.20 release checklist (done)
+- [x] Owner approved the release.
+- [x] `package.json` and both root entries of `package-lock.json` 0.3.19 → **0.3.20**.
+- [x] `npm test` green from `VibeCoderAI-live-fixed`.
+- [x] Only the intended files committed; `master` pushed.
+- [x] Tag `v0.3.20` pushed.
+- [x] Release run `44936878289` succeeded.
+- [x] One release with `.exe` (122122916 bytes), `.exe.blockmap` (129390),
+      `latest.yml` and `VibeCoder-CLI-0.3.20.tgz` (307420), all by
       `github-actions[bot]`.
-- [ ] `releases/latest/download/latest.yml` shows `version: 0.3.20`.
-- [ ] Update VIBE.md "Current release" and this section.
-- [ ] Website "What's new" updated if the release adds user-facing features.
+- [x] `releases/latest/download/latest.yml` shows `version: 0.3.20`.
+- [x] VIBE.md "Current release" and this section updated.
+- [x] Website "What's new" updated (website commit `4413ec5`).
+
+### Next release (0.3.21): same checklist, one patch up, never skip.

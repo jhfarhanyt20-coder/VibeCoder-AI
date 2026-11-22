@@ -104,6 +104,71 @@ test("writing to the default branch and merging always ask (critical); a work br
   await assert.rejects(T("github_api").run({ method: "DELETE", path: "/repos/jamil/app" }, ctx), /did not allow/)
 })
 
+test("fix 2: github_api always asks for merge, ref moves, file commits and settings — a query string cannot slip past", async () => {
+  const fake = fakeGitHub()
+  const gh = createGitHub({ home, fetch: fake.fetch, setTimer: () => null })
+  const asks = []
+  const ctx = { engine: { connectors: { github: gh } }, askPermission: async (p) => { asks.push(p); return false } }
+  const must = [
+    ["PATCH", "/repos/jamil/app?x=1"],
+    ["PATCH", "/repos/jamil/app/"],
+    ["PATCH", "/user?a=b"],
+    ["PUT", "/repos/jamil/app/collaborators/bob?permission=admin"],
+    ["PUT", "/repos/jamil/app/pulls/3/merge"],
+    ["PUT", "/repos/jamil/app/pulls/3/merge?merge_method=squash"],
+    ["PATCH", "/repos/jamil/app/git/refs/heads/main"],
+    ["POST", "/repos/jamil/app/git/refs"],
+    ["PUT", "/repos/jamil/app/contents/src/a.js"],
+    ["PUT", "/repos/jamil/app/contents/a.js?ref=main"],
+    ["DELETE", "/repos/jamil/app/issues/comments/1"],
+  ]
+  for (const [method, p] of must) await assert.rejects(T("github_api").run({ method, path: p, body: { x: 1 } }, ctx), /did not allow/, `${method} ${p} must ask`)
+  assert.equal(asks.length, must.length)
+  assert(asks.every((q) => q.critical === true))
+  assert.equal(fake.calls.filter((c) => c.method !== "GET").length, 0, "nothing was changed")
+  // Ordinary writes are left to the normal permission mode.
+  for (const [m, p] of [["POST", "/repos/jamil/app/issues"], ["POST", "/repos/jamil/app/releases"], ["PATCH", "/repos/jamil/app/issues/1"], ["GET", "/repos/jamil/app?x=1"]]) assert.equal(ghTools.criticalApi(m, p), false, `${m} ${p}`)
+})
+
+test("fix 8: github_files reads a line range, says how to read more, and spots binary files", async () => {
+  const long = Array.from({ length: 3000 }, (_, i) => `line ${i + 1} ${"x".repeat(20)}`).join("\n")
+  const json = (status, body) => ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) })
+  const fetch = async (url) => {
+    if (url.includes("/contents/big.txt")) return json(200, { type: "file", path: "big.txt", sha: "b1", size: long.length, content: Buffer.from(long).toString("base64") })
+    if (url.includes("/contents/logo.png")) return json(200, { type: "file", path: "logo.png", sha: "p1", size: 6, content: Buffer.from([137, 80, 78, 71, 0, 1]).toString("base64"), html_url: "https://github.com/jamil/app/blob/main/logo.png" })
+    return json(404, { message: "Not Found" })
+  }
+  const gh = createGitHub({ home, fetch, setTimer: () => null })
+  const ctx = { engine: { connectors: { github: gh } }, askPermission: async () => true }
+  const first = await T("github_files").run({ repo: "jamil/app", path: "big.txt" }, ctx)
+  const m = first.match(/Showing lines 1-(\d+) of 3000\. Use start_line=(\d+) to read more\./)
+  assert(m, first.slice(0, 300))
+  assert.equal(Number(m[2]), Number(m[1]) + 1)
+  assert(first.length <= 24000 + 500)
+  assert(!/more characters cut/.test(first), "cut at whole lines, not mid-file")
+  const part = await T("github_files").run({ repo: "jamil/app", path: "big.txt", start_line: 2990, end_line: 2995 }, ctx)
+  assert.match(part, /Showing lines 2990-2995 of 3000\. Use start_line=2996/)
+  assert.match(part, /^2990\tline 2990 /m)
+  assert(!/^2996\t/m.test(part))
+  const tail = await T("github_files").run({ repo: "jamil/app", path: "big.txt", start_line: 2999 }, ctx)
+  assert.match(tail, /Showing lines 2999-3000 of 3000\.\n/)
+  const bin = await T("github_files").run({ repo: "jamil/app", path: "logo.png" }, ctx)
+  assert.match(bin, /logo\.png is a binary file \(6 bytes/)
+  assert(!bin.includes("\u0000"))
+})
+
+test("fix 7: GitHub calls time out with a clear message and stop with the run", async () => {
+  const hang = (url, opts) => new Promise((resolve, reject) => opts.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true }))
+  const gh = createGitHub({ home, fetch: hang, setTimer: () => null, timeoutMs: 40 })
+  await assert.rejects(gh.api("GET", "/user/repos"), /GitHub GET \/user\/repos timed out after 0\.04s\. Nothing was done/)
+  await assert.rejects(gh.api("POST", "/repos/jamil/app/issues", { title: "x" }), /timed out after 0\.04s\. It may or may not have been done/)
+  const ctl = new AbortController()
+  const slow = createGitHub({ home, fetch: hang, setTimer: () => null })
+  setTimeout(() => ctl.abort(), 20)
+  await assert.rejects(T("github_repos").run({}, { signal: ctl.signal, engine: { connectors: { github: slow } } }), /Stopped/)
+  assert.equal(require("../core/connectors/github").TIMEOUT_MS, 30000)
+})
+
 test("permissions: reading is allowed, changes ask by default", () => {
   assert.equal(decide(DEFAULT_RULES, "github", "read jamil/app"), "allow")
   assert.equal(decide(DEFAULT_RULES, "github", "read repos"), "allow")

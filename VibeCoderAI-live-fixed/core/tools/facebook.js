@@ -13,12 +13,46 @@
 
 const MAX = 24000
 const clip = (s, n = MAX) => (s.length <= n ? s : `${s.slice(0, n)}\n… [${s.length - n} more characters cut; ask for less]`)
-const out = (data) => clip(JSON.stringify(data, null, 2))
+// Tokens and secrets in API answers (e.g. Page access tokens from /me/accounts) never reach the model.
+const SECRET_KEY = /access_token|token|secret|password|app_secret/i
+function redact(v, depth = 0) {
+  if (depth > 40 || v == null || typeof v !== "object") return v
+  if (Array.isArray(v)) return v.map((x) => redact(x, depth + 1))
+  const o = {}
+  for (const [k, x] of Object.entries(v)) o[k] = SECRET_KEY.test(k) && x != null && x !== "" ? "[hidden]" : redact(x, depth + 1)
+  return o
+}
+const out = (data) => clip(JSON.stringify(redact(data), null, 2))
+
+// Ad money fields come in the currency's smallest unit (cents); these currencies have none.
+const NO_MINOR = new Set(["CLP", "COP", "CRC", "HUF", "ISK", "IDR", "JPY", "KRW", "PYG", "TWD", "VND"])
+function money(v, currency) {
+  if (v == null || v === "") return ""
+  const n = Number(v)
+  if (!currency || !Number.isFinite(n)) return String(v)
+  const cur = String(currency).toUpperCase()
+  return `${v} (= ${NO_MINOR.has(cur) ? n : (n / 100).toFixed(2)} ${cur})`
+}
+const ACCOUNT_STATUS = { 1: "ACTIVE", 2: "DISABLED", 3: "UNSETTLED", 7: "PENDING_RISK_REVIEW", 8: "PENDING_SETTLEMENT", 9: "IN_GRACE_PERIOD", 100: "PENDING_CLOSURE", 101: "CLOSED", 201: "ANY_ACTIVE", 202: "ANY_CLOSED" }
+const accountStatus = (s) => (s == null ? "unknown" : ACCOUNT_STATUS[s] ? `${ACCOUNT_STATUS[s]} (${s})` : String(s))
 
 function fb(ctx) {
   const c = ctx && ctx.engine && ctx.engine.connectors && ctx.engine.connectors.facebook
   if (!c || !c.connected()) throw new Error("Facebook is not connected. Ask the user to sign in under Connectors → Facebook (CLI: vibe connectors facebook connect). Nothing was done.")
-  return c
+  // Pass the run's stop signal along, so Stop also cancels a Facebook call in flight.
+  const signal = ctx && ctx.signal
+  if (!signal) return c
+  const o = (x) => ({ signal, ...(x || {}) })
+  return {
+    ...c,
+    api: (m, p, q, x) => c.api(m, p, q, o(x)),
+    asPage: (id, m, p, q, x) => c.asPage(id, m, p, q, o(x)),
+    ...(c.uploadVideo ? { uploadVideo: (id, f, x) => c.uploadVideo(id, f, o(x)) } : {}),
+    ...(c.uploadReel ? { uploadReel: (id, f, x) => c.uploadReel(id, f, o(x)) } : {}),
+    ...(c.uploadPhoto ? { uploadPhoto: (id, f, x) => c.uploadPhoto(id, f, o(x)) } : {}),
+    ...(c.videoStatus ? { videoStatus: (id, v, x) => c.videoStatus(id, v, o(x)) } : {}),
+    ...(c.userId ? { userId: (x) => c.userId(o(x)) } : {}),
+  }
 }
 
 async function confirmCritical(ctx, what) {
@@ -98,14 +132,23 @@ const ALL = [
       return [`Video ${a.video_id}: ${s.video_status || "unknown"}`, [phase("uploading_phase"), phase("processing_phase"), phase("publishing_phase")].filter(Boolean).join(" · "), d.permalink_url ? `https://www.facebook.com${d.permalink_url.startsWith("/") ? "" : "/"}${d.permalink_url.replace(/^https:\/\/www\.facebook\.com\/?/, "")}` : ""].filter(Boolean).join("\n")
     }),
 
-  tool("facebook_comments", "Read the comments of a post (or the replies of a comment).",
-    { id: { type: "string", description: "Post id or comment id" }, limit: { type: "integer" } }, ["id"], () => "read comments",
+  tool("facebook_comments", "Read the comments of a post (or the replies of a comment). For a comment id, pass page too.",
+    { id: { type: "string", description: "Post id or comment id" }, limit: { type: "integer" }, page: { type: "string", description: "Optional Page id that owns the post (needed for comment ids; from facebook_pages)" } }, ["id"], () => "read comments",
     async (a, ctx) => {
       const id = idOf(a.id, "id")
-      const page = id.includes("_") ? id.split("_")[0] : null
+      const given = a.page != null && String(a.page).trim() !== ""
+      // Without page: a post id PAGEID_POSTID starts with the Page id. A comment id (POSTID_COMMENTID) does not.
+      const page = given ? idOf(a.page, "page") : id.includes("_") ? id.split("_")[0] : null
       const c = fb(ctx)
       const params = { fields: "id,from,message,created_time,like_count,comment_count", limit: Math.min(100, Number(a.limit) || 30), order: "reverse_chronological" }
-      const data = page ? await c.asPage(page, "GET", `/${id}/comments`, params) : await c.api("GET", `/${id}/comments`, params)
+      let data
+      try {
+        data = page ? await c.asPage(page, "GET", `/${id}/comments`, params) : await c.api("GET", `/${id}/comments`, params)
+      } catch (e) {
+        const m = String(e.message || e)
+        if (!given && page && /No access|failed/i.test(m)) throw new Error(`${m} If ${id} is a comment id, the Page could not be told from it (its first part is the post, not the Page): call facebook_comments again with page=<Page id from facebook_pages>.`)
+        throw e
+      }
       const rows = data.data || []
       return rows.length ? rows.map((m) => `${m.id} · ${m.from?.name || "someone"} · ${String(m.created_time).slice(0, 16)} · ${m.like_count || 0} likes${m.comment_count ? ` · ${m.comment_count} replies` : ""}\n  ${short(m.message, 300)}`).join("\n") : "No comments."
     }),
@@ -214,24 +257,42 @@ const ALL = [
       return `Page ${page} updated: ${Object.keys(fields).join(", ")}.`
     }),
 
-  tool("facebook_insights", "Read Page or post statistics (reach, engagement, followers…). Default: last 28 days of key Page metrics.",
-    { id: { type: "string", description: "Page id or post id" }, metrics: { type: "string", description: "Comma-separated metric names (optional)" }, period: { type: "string", enum: ["day", "week", "days_28", "lifetime"] } }, ["id"], () => "read insights",
+  tool("facebook_insights", "Read Page or post statistics (reach, engagement, followers…). Default: last 28 days of key Page metrics (page_impressions_unique, page_post_engagements, page_follows) or, for a post, post_impressions_unique, post_clicks, post_reactions_by_type_total. Meta retires metric names over time: if one is rejected, pass metrics explicitly.",
+    { id: { type: "string", description: "Page id or post id" }, metrics: { type: "string", description: "Comma-separated metric names (optional)" }, metric: { type: "string", description: "Same as metrics (either name works)" }, period: { type: "string", enum: ["day", "week", "days_28", "lifetime"] } }, ["id"], () => "read insights",
     async (a, ctx) => {
       const c = fb(ctx)
       const id = idOf(a.id, "id")
       const isPost = id.includes("_")
-      const metric = a.metrics || (isPost ? "post_impressions,post_impressions_unique,post_engaged_users,post_clicks" : "page_impressions,page_impressions_unique,page_post_engagements,page_fans")
+      const asked = String(a.metrics || a.metric || "").trim()
+      const metric = asked || (isPost ? "post_impressions_unique,post_clicks,post_reactions_by_type_total" : "page_impressions_unique,page_post_engagements,page_follows")
       const page = isPost ? id.split("_")[0] : id
-      const data = await c.asPage(page, "GET", `/${id}/insights`, { metric, ...(isPost ? {} : { period: a.period || "days_28" }) })
-      return (data.data || []).map((m) => `${m.name} (${m.period}): ${(m.values || []).map((v) => typeof v.value === "object" ? JSON.stringify(v.value) : v.value).join(", ")}`).join("\n") || "No statistics returned."
+      const extra = isPost ? {} : { period: a.period || "days_28" }
+      const show = (rows) => rows.map((m) => `${m.name} (${m.period}): ${(m.values || []).map((v) => typeof v.value === "object" ? JSON.stringify(redact(v.value)) : v.value).join(", ")}`)
+      const rejected = (e) => e && (e.code === 100 || /\(#100\)/.test(String(e.message || "")))
+      const help = `Pass metrics explicitly with names Meta supports today (see https://developers.facebook.com/docs/graph-api/reference/insights), e.g. ${isPost ? "post_impressions_unique,post_clicks" : "page_impressions_unique,page_post_engagements"}.`
+      try {
+        const data = await c.asPage(page, "GET", `/${id}/insights`, { metric, ...extra })
+        return show(data.data || []).join("\n") || "No statistics returned."
+      } catch (e) {
+        if (!rejected(e)) throw e
+        if (asked) throw new Error(`Facebook rejected the metric list "${metric}" (error #100: a name is wrong or retired by Meta, the id is wrong, or a metric is not valid for ${isPost ? "a post" : `period ${extra.period}`}). ${help} Nothing was changed.`)
+        // Defaults: keep the ones that still work, name the ones that do not.
+        const lines = []
+        const bad = []
+        for (const m of metric.split(",")) {
+          try { lines.push(...show((await c.asPage(page, "GET", `/${id}/insights`, { metric: m, ...extra })).data || [])) } catch (e2) { if (!rejected(e2)) throw e2; bad.push(m) }
+        }
+        if (!lines.length) throw new Error(`Facebook rejected the default metrics (${bad.join(", ")}) with error #100. ${help} Nothing was changed.`)
+        return `${lines.join("\n")}\nNot available (error #100): ${bad.join(", ")}. ${help}`
+      }
     }),
 
   tool("facebook_ad_accounts", "List the ad accounts the user can use (id, name, currency, status, amount spent).",
     {}, [], () => "read ads",
     async (a, ctx) => {
-      const data = await fb(ctx).api("GET", "/me/adaccounts", { fields: "id,name,currency,account_status,amount_spent,balance,business", limit: 100 })
+      const data = await fb(ctx).api("GET", "/me/adaccounts", { fields: "id,name,currency,account_status,amount_spent,balance,spend_cap,business", limit: 100 })
       const rows = data.data || []
-      return rows.length ? rows.map((r) => `${r.id} · ${r.name} · ${r.currency} · status ${r.account_status} · spent ${r.amount_spent}${r.business ? ` · business ${r.business.name}` : ""}`).join("\n") : "No ad accounts are available to this sign-in."
+      return rows.length ? rows.map((r) => `${r.id} · ${r.name} · ${r.currency} · status ${accountStatus(r.account_status)} · spent ${money(r.amount_spent, r.currency)}${r.balance != null && r.balance !== "" ? ` · balance ${money(r.balance, r.currency)}` : ""}${r.spend_cap != null && r.spend_cap !== "" && Number(r.spend_cap) !== 0 ? ` · spend cap ${money(r.spend_cap, r.currency)}` : ""}${r.business ? ` · business ${r.business.name}` : ""}`).join("\n") + "\n(Money amounts are in the currency's smallest unit, e.g. cents; the converted value is in brackets.)" : "No ad accounts are available to this sign-in."
     }),
 
   tool("facebook_ads", "List campaigns, ad sets or ads of an ad account with status, budget and recent results.",
@@ -239,9 +300,14 @@ const ALL = [
     async (a, ctx) => {
       const level = ["campaigns", "adsets", "ads"].includes(a.level) ? a.level : "campaigns"
       const fields = level === "campaigns" ? "id,name,objective,status,effective_status,daily_budget,lifetime_budget,insights.date_preset(last_7d){spend,impressions,clicks,ctr}" : level === "adsets" ? "id,name,status,effective_status,campaign_id,daily_budget,lifetime_budget,optimization_goal,insights.date_preset(last_7d){spend,impressions,clicks}" : "id,name,status,effective_status,adset_id,insights.date_preset(last_7d){spend,impressions,clicks}"
-      const data = await fb(ctx).api("GET", `/${actOf(a.ad_account)}/${level}`, { fields, limit: 100 })
+      const c = fb(ctx)
+      const act = actOf(a.ad_account)
+      let currency = ""
+      try { currency = String((await c.api("GET", `/${act}`, { fields: "currency" }))?.currency || "") } catch {}
+      const data = await c.api("GET", `/${act}/${level}`, { fields, limit: 100 })
       const rows = data.data || []
-      return rows.length ? rows.map((r) => { const i = r.insights?.data?.[0] || {}; return `${r.id} · ${r.name} · ${r.effective_status || r.status}${r.objective ? ` · ${r.objective}` : ""}${r.daily_budget ? ` · daily budget ${r.daily_budget}` : ""}${r.lifetime_budget ? ` · lifetime budget ${r.lifetime_budget}` : ""} · last 7 days: spend ${i.spend || 0}, ${i.impressions || 0} impressions, ${i.clicks || 0} clicks` }).join("\n") : `No ${level} in this ad account.`
+      // Budgets are in the smallest unit (cents); insights "spend" is already in the main unit.
+      return rows.length ? rows.map((r) => { const i = r.insights?.data?.[0] || {}; return `${r.id} · ${r.name} · ${r.effective_status || r.status}${r.objective ? ` · ${r.objective}` : ""}${r.daily_budget ? ` · daily budget ${money(r.daily_budget, currency)}` : ""}${r.lifetime_budget ? ` · lifetime budget ${money(r.lifetime_budget, currency)}` : ""} · last 7 days: spend ${i.spend || 0}${currency ? ` ${currency}` : ""}, ${i.impressions || 0} impressions, ${i.clicks || 0} clicks` }).join("\n") + (currency ? "" : "\n(Budgets are in the account currency's smallest unit, e.g. cents.)") : `No ${level} in this ad account.`
     }),
 
   tool("facebook_create_campaign", "Create an ad campaign. It is created PAUSED (no money is spent) unless status=ACTIVE, which always asks the user first.",
@@ -249,7 +315,7 @@ const ALL = [
     (a) => `write campaign ${a.ad_account}`,
     async (a, ctx) => {
       const status = a.status === "ACTIVE" ? "ACTIVE" : "PAUSED"
-      if (status === "ACTIVE" || a.daily_budget) await confirmCritical(ctx, `create campaign "${a.name}" ${status === "ACTIVE" ? "and start spending" : "(paused)"}${a.daily_budget ? ` with daily budget ${a.daily_budget}` : ""}`)
+      if (status === "ACTIVE" || a.daily_budget) await confirmCritical(ctx, `create campaign "${a.name}" ${status === "ACTIVE" ? "and start spending" : "(paused)"}${a.daily_budget ? ` with daily budget ${a.daily_budget} (smallest currency unit, e.g. cents)` : ""}`)
       const r = await fb(ctx).api("POST", `/${actOf(a.ad_account)}/campaigns`, { name: String(a.name), objective: String(a.objective), status, special_ad_categories: [], ...(a.daily_budget ? { daily_budget: Number(a.daily_budget) } : {}) })
       return `Created campaign ${r.id} (${status}). Next: create an ad set and ad (facebook_api), then turn it on with facebook_set_status when the user agrees.`
     }),
@@ -259,7 +325,7 @@ const ALL = [
     (a) => `write status ${a.id}`,
     async (a, ctx) => {
       const id = idOf(a.id, "id")
-      if (a.status === "ACTIVE" || a.daily_budget != null) await confirmCritical(ctx, `${a.status === "ACTIVE" ? "turn ON (start spending) " : ""}${a.daily_budget != null ? `set the daily budget to ${a.daily_budget} for ` : ""}${id}`)
+      if (a.status === "ACTIVE" || a.daily_budget != null) await confirmCritical(ctx, `${a.status === "ACTIVE" ? "turn ON (start spending) " : ""}${a.daily_budget != null ? `set the daily budget to ${a.daily_budget} (smallest currency unit, e.g. cents) for ` : ""}${id}`)
       const params = { ...(a.status ? { status: a.status } : {}), ...(a.daily_budget != null ? { daily_budget: Number(a.daily_budget) } : {}) }
       if (!Object.keys(params).length) throw new Error("Give status (ACTIVE or PAUSED) and/or daily_budget. Nothing was done.")
       await fb(ctx).api("POST", `/${id}`, params)
@@ -274,9 +340,21 @@ const ALL = [
       const method = String(a.method || "GET").toUpperCase()
       const p = String(a.path || "")
       if (!p.startsWith("/")) throw new Error('"path" must start with / (for example /me/accounts). Nothing was done.')
-      // The account itself is never deleted or changed through the agent.
-      if (method === "DELETE" && /^\/(me|\d+)\/?$/.test(p.split("?")[0])) throw new Error("Deleting a Facebook account or user object is not allowed. Nothing was done.")
-      if (method !== "GET") await confirmCritical(ctx, `${method} ${p}${a.params ? ` with ${short(JSON.stringify(a.params), 200)}` : ""}`)
+      // The account itself is never deleted through the agent: /me and the user's own id are blocked.
+      // Ads, campaigns, photos, videos… by numeric id can be deleted (always asks).
+      let unknownMe = false
+      if (method === "DELETE") {
+        const bare = p.split(/[?#]/)[0].replace(/\/{2,}/g, "/").replace(/\/+$/, "").replace(/^\/v[\d.]+(?=\/)/, "")
+        const target = (bare.match(/^\/([^/]+)$/) || [])[1] || ""
+        if (/^me$/i.test(target)) throw new Error("Deleting a Facebook account or user object is not allowed. Nothing was done.")
+        if (/^\d+$/.test(target)) {
+          let me = ""
+          try { me = typeof c.userId === "function" ? String((await c.userId()) || "") : String(c.status?.()?.account?.userId || "") } catch {}
+          if (me && target === me) throw new Error("Deleting a Facebook account or user object is not allowed. Nothing was done.")
+          unknownMe = !me
+        }
+      }
+      if (method !== "GET") await confirmCritical(ctx, `${method} ${p}${a.params ? ` with ${short(JSON.stringify(a.params), 200)}` : ""}${unknownMe ? " (could not check whether this id is the user's own account; only /me is blocked)" : ""}`)
       const data = a.page ? await c.asPage(idOf(a.page, "page"), method, p, a.params || {}) : await c.api(method, p, a.params || {})
       return data == null ? `${method} ${p}: done.` : out(data)
     }),

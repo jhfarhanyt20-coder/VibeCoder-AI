@@ -1044,8 +1044,11 @@ test("browser permissions are scoped to the page origin and unknown origins are 
   )
   assert.match(tools.click.perm({ tabID: "tab_1" }).subject, /^click example\.com$/)
   assert.equal(tools.fill.perm({ tabID: "tab_1" }).neverPersist, undefined)
-  // A tab whose host was never seen falls back to the last known origin.
-  assert.equal(tools.click.perm({ tabID: "tab_missing" }).subject, "click example.com")
+  // A tab whose host was never seen does NOT borrow another tab's origin: it asks every time.
+  const miss = tools.click.perm({ tabID: "tab_missing" })
+  assert.match(miss.subject, /unknown host/)
+  assert.equal(miss.neverPersist, true)
+  assert.equal(miss.forceAsk, true)
   const nav = tools.navigate.perm({ url: "https://docs.example.org/a" })
   assert.equal(nav.subject, "navigate docs.example.org")
   assert.equal(nav.neverPersist, undefined)

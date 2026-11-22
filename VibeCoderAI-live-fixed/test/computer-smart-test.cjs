@@ -131,3 +131,21 @@ console.log("PASS computer smart: change reports, hidden controls, zoom, vision 
   assert.match(out[0].parts[0].output, /older screenshot was here/)
   console.log("PASS screenshot history: only recent images resent, cache-friendly cut, history untouched")
 }
+
+{
+  // A new control at the top renumbers the rest: the model is told the new numbers.
+  const before = [el(1, "Button", "A"), el(2, "Button", "B"), el(3, "Button", "Save")]
+  const after = [el(1, "MenuItem", "New"), el(2, "Button", "A"), el(3, "Button", "B"), el(4, "Button", "Save")]
+  const rep = changeReport(before, after, true)
+  assert.match(rep, /\+ \[1\] MenuItem/)
+  assert.match(rep, /numbers SHIFTED/)
+  assert.match(rep, /\[4\] Button "Save" \(was \[3\]\)/)
+  // Same controls, same numbers: no shift note.
+  assert.doesNotMatch(changeReport(before, before, true), /SHIFTED/)
+  // Enter in a chat app asks first; Enter elsewhere does not.
+  const { riskOf } = require("../core/computer")
+  assert.match(riskOf("key", { keys: "enter", window: "WhatsApp" }), /may send a message/)
+  assert.equal(riskOf("key", { keys: "enter", window: "Untitled - Notepad notepad" }), "")
+  assert.match(riskOf("key", { keys: "shift+delete" }), /permanent delete/)
+  console.log("PASS computer numbers: shifted element numbers are reported; Enter in chat apps asks first")
+}

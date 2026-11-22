@@ -25,7 +25,33 @@ const SCOPES = "repo read:org read:user user:email workflow gist"
 const API = "https://api.github.com"
 const ID = "github"
 
-function createGitHub({ home, fetch: fetcher = globalThis.fetch, now = Date.now, setTimer = setTimeout, onChange = () => {}, accountUrl = ACCOUNT_URL } = {}) {
+// API calls give up after 30 s or when the run is stopped.
+const TIMEOUT_MS = 30 * 1000
+async function timedFetch(fetcher, url, init, { signal, timeoutMs = TIMEOUT_MS, label = "GitHub call", changes = false } = {}) {
+  // A normal (ref'd) timer, so a hung call cannot let the process quit before it reports.
+  const timer = new AbortController()
+  const tid = setTimeout(() => timer.abort(), timeoutMs)
+  const timeout = timer.signal
+  let combined = timeout
+  if (signal) {
+    if (typeof AbortSignal.any === "function") combined = AbortSignal.any([signal, timeout])
+    else {
+      const ctl = new AbortController()
+      const stop = () => ctl.abort()
+      if (signal.aborted) stop(); else signal.addEventListener("abort", stop, { once: true })
+      timeout.addEventListener("abort", stop, { once: true })
+      combined = ctl.signal
+    }
+  }
+  const after = changes ? "It may or may not have been done: check on GitHub before trying again." : "Nothing was done."
+  try { return await fetcher(url, { ...init, signal: combined }) } catch (e) {
+    if (signal && signal.aborted) throw new Error(`Stopped: ${label} was cancelled. ${after}`)
+    if (timeout.aborted) throw new Error(`${label} timed out after ${+(timeoutMs / 1000).toFixed(3)}s. ${after}`)
+    throw e
+  } finally { clearTimeout(tid) }
+}
+
+function createGitHub({ home, fetch: fetcher = globalThis.fetch, now = Date.now, setTimer = setTimeout, onChange = () => {}, accountUrl = ACCOUNT_URL, timeoutMs = TIMEOUT_MS } = {}) {
   let pending = null // { userCode, verificationUri, deviceCode, interval, expiresAt }
   let lastError = ""
   let timer = null
@@ -43,7 +69,7 @@ function createGitHub({ home, fetch: fetcher = globalThis.fetch, now = Date.now,
   }
 
   async function post(url, body) {
-    const res = await fetcher(url, { method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": "VibeCoder-AI" }, body: JSON.stringify(body) })
+    const res = await timedFetch(fetcher, url, { method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": "VibeCoder-AI" }, body: JSON.stringify(body) }, { timeoutMs, label: "GitHub sign-in" })
     let data = {}
     try { data = await res.json() } catch {}
     return { ok: res.ok, status: res.status, data }
@@ -158,11 +184,11 @@ function createGitHub({ home, fetch: fetcher = globalThis.fetch, now = Date.now,
     return status()
   }
 
-  async function api(tokenOverride, method, pathOrUrl, body, { raw = false } = {}) {
+  async function api(tokenOverride, method, pathOrUrl, body, { raw = false, signal, timeoutMs: ms } = {}) {
     const token = tokenOverride || store.token(ID, home)
     if (!token) throw new Error("GitHub is not connected. Ask the user to connect it in Connectors (or `vibe connectors github connect`).")
     const url = /^https:\/\/api\.github\.com\//.test(pathOrUrl) ? pathOrUrl : `${API}${pathOrUrl.startsWith("/") ? "" : "/"}${pathOrUrl}`
-    const res = await fetcher(url, {
+    const res = await timedFetch(fetcher, url, {
       method,
       headers: {
         Authorization: `Bearer ${token}`,
@@ -172,7 +198,7 @@ function createGitHub({ home, fetch: fetcher = globalThis.fetch, now = Date.now,
         ...(body != null ? { "Content-Type": "application/json" } : {}),
       },
       ...(body != null ? { body: JSON.stringify(body) } : {}),
-    })
+    }, { signal, timeoutMs: ms || timeoutMs, label: `GitHub ${method} ${url.replace(API, "").split("?")[0]}`, changes: method !== "GET" })
     const text = await res.text()
     let data = text
     try { data = text ? JSON.parse(text) : null } catch {}
@@ -194,4 +220,4 @@ function createGitHub({ home, fetch: fetcher = globalThis.fetch, now = Date.now,
   return { id: ID, status, connect, poll, cancel, disconnect, api: (method, p, body, opts) => api(null, method, p, body, opts), connected: () => !!store.token(ID, home) }
 }
 
-module.exports = { createGitHub, CLIENT_ID, SCOPES }
+module.exports = { createGitHub, CLIENT_ID, SCOPES, TIMEOUT_MS }

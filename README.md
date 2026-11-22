@@ -22,6 +22,9 @@
 | **Real agent work** | Read and search a project, edit files, run commands, inspect diffs, verify changes, and use MCP connectors — with live tool output in the timeline. |
 | **Control stays with you** | Permission prompts, hard Locks, Guardrails, and per-step Rewind snapshots. Stop a run at any time. |
 | **Long sessions that continue** | Provider-aware context metering, automatic compaction, and overflow recovery. |
+| **Careful with your accounts** | Connector tools never show Facebook or GitHub tokens to the model. Merging a PR, writing to the main branch, force-pushing, pressing Enter in a chat or mail app, and actions on a website the agent has not identified always ask first. |
+| **Fewer wasted steps** | Every browser click or key reports the new page and title. Computer Use says when element numbers moved. Shell results show a command's real exit code, and when a command writes its output to a file, the agent sees that file. |
+| **Stays open in the tray** | The close button hides VibeCoder AI in the Windows tray, so a stray click never stops a running agent. Click the tray icon to bring it back; right-click → Quit to exit. |
 | **Two surfaces, one engine** | The desktop app and the full-screen `vibe` CLI share sessions, providers, tools, permissions, and history. |
 | **Local-first** | No VibeCoder-hosted model service. API keys stay in the local encrypted key store; project code stays on your machine until you send it to your chosen provider. |
 

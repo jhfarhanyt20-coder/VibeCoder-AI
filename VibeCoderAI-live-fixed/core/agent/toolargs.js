@@ -27,6 +27,7 @@ const ALIASES = {
   timeout: ["timeout_ms", "timeoutMs"],
   description: ["desc", "summary"],
   prompt: ["instructions", "message"],
+  patchText: ["patch", "patch_text", "patchtext", "input", "diff"],
 }
 
 function stripFences(s) {

@@ -23,7 +23,34 @@ const ACCOUNT_URL = (() => {
 })()
 const b64url = (buf) => Buffer.from(buf).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "")
 
-function createFacebook({ home, fetch: fetcher = globalThis.fetch, now = Date.now, setTimer = setTimeout, onChange = () => {}, accountUrl = ACCOUNT_URL, available = AVAILABLE } = {}) {
+// Graph calls give up after 30 s (video/photo uploads after 10 min) or when the run is stopped.
+const TIMEOUT_MS = 30 * 1000
+const UPLOAD_TIMEOUT_MS = 10 * 60 * 1000
+async function timedFetch(fetcher, url, init, { signal, timeoutMs = TIMEOUT_MS, label = "Facebook call", changes = false } = {}) {
+  // A normal (ref'd) timer, so a hung call cannot let the process quit before it reports.
+  const timer = new AbortController()
+  const tid = setTimeout(() => timer.abort(), timeoutMs)
+  const timeout = timer.signal
+  let combined = timeout
+  if (signal) {
+    if (typeof AbortSignal.any === "function") combined = AbortSignal.any([signal, timeout])
+    else {
+      const ctl = new AbortController()
+      const stop = () => ctl.abort()
+      if (signal.aborted) stop(); else signal.addEventListener("abort", stop, { once: true })
+      timeout.addEventListener("abort", stop, { once: true })
+      combined = ctl.signal
+    }
+  }
+  const after = changes ? "It may or may not have been done: check on Facebook before trying again." : "Nothing was done."
+  try { return await fetcher(url, { ...init, signal: combined }) } catch (e) {
+    if (signal && signal.aborted) throw new Error(`Stopped: ${label} was cancelled. ${after}`)
+    if (timeout.aborted) throw new Error(`${label} timed out after ${+(timeoutMs / 1000).toFixed(3)}s. ${after}`)
+    throw e
+  } finally { clearTimeout(tid) }
+}
+
+function createFacebook({ home, fetch: fetcher = globalThis.fetch, now = Date.now, setTimer = setTimeout, onChange = () => {}, accountUrl = ACCOUNT_URL, available = AVAILABLE, timeoutMs = TIMEOUT_MS, uploadTimeoutMs = UPLOAD_TIMEOUT_MS } = {}) {
   let pending = null // { secret, verificationUri, interval, expiresAt }
   let lastError = ""
   let timer = null
@@ -118,7 +145,7 @@ function createFacebook({ home, fetch: fetcher = globalThis.fetch, now = Date.no
   }
 
   /** Graph API call. `params` go in the query for GET/DELETE and the form body otherwise. */
-  async function graph(tokenOverride, method, path, params = {}) {
+  async function graph(tokenOverride, method, path, params = {}, opts = {}) {
     const token = tokenOverride || store.token(ID, home)
     if (!token) throw new Error("Facebook is not connected. Ask the user to sign in under Connectors → Facebook (CLI: vibe connectors facebook connect). Nothing was done.")
     const clean = String(path || "").replace(/^https:\/\/graph\.facebook\.com\/v[\d.]+/, "")
@@ -127,7 +154,8 @@ function createFacebook({ home, fetch: fetcher = globalThis.fetch, now = Date.no
     const target = method === "GET" || method === "DELETE" ? url.searchParams : body
     for (const [k, v] of Object.entries(params || {})) if (v != null) target.set(k, typeof v === "object" ? JSON.stringify(v) : String(v))
     url.searchParams.set("access_token", token)
-    const res = await fetcher(url.href, { method, ...(method === "GET" || method === "DELETE" ? {} : { headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: body.toString() }) })
+    const res = await timedFetch(fetcher, url.href, { method, ...(method === "GET" || method === "DELETE" ? {} : { headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: body.toString() }) },
+      { signal: opts.signal, timeoutMs: opts.timeoutMs || timeoutMs, label: `Facebook ${method} ${clean.split("?")[0]}`, changes: method !== "GET" })
     let data = null
     try { data = await res.json() } catch {}
     if (!res.ok || (data && data.error)) {
@@ -146,13 +174,23 @@ function createFacebook({ home, fetch: fetcher = globalThis.fetch, now = Date.no
   }
 
   /** A Page's own access token (needed to post or message as the Page). */
-  async function pageToken(pageId) {
+  async function pageToken(pageId, opts = {}) {
     const id = String(pageId)
     if (pageTokens.has(id)) return pageTokens.get(id)
-    const data = await graph(null, "GET", `/${encodeURIComponent(id)}`, { fields: "access_token,name" })
+    const data = await graph(null, "GET", `/${encodeURIComponent(id)}`, { fields: "access_token,name" }, { signal: opts.signal })
     if (!data || !data.access_token) throw new Error(`No access to Page ${id}. Use facebook_pages to see the Pages this account manages. Nothing was done.`)
     pageTokens.set(id, data.access_token)
     return data.access_token
+  }
+
+  /** The signed-in user's own Facebook id (saved at sign-in, else asked once). "" when unknown. */
+  let meId = ""
+  async function userId(opts = {}) {
+    const saved = store.get(ID, home)
+    if (saved && saved.userId) return String(saved.userId)
+    if (meId) return meId
+    try { const me = await graph(null, "GET", "/me", { fields: "id" }, { signal: opts.signal }); meId = me && me.id ? String(me.id) : "" } catch {}
+    return meId
   }
 
   const connected = () => {
@@ -183,51 +221,51 @@ function createFacebook({ home, fetch: fetcher = globalThis.fetch, now = Date.no
   }
 
   /** A normal Page video (any shape), sent as one multipart upload. */
-  async function uploadVideo(pageId, file, { title, description, published } = {}) {
+  async function uploadVideo(pageId, file, { title, description, published, signal } = {}) {
     const bytes = readVideo(file)
-    const token = await pageToken(pageId)
+    const token = await pageToken(pageId, { signal })
     const form = new FormData()
     form.set("access_token", token)
     form.set("published", published ? "true" : "false")
     if (title) form.set("title", String(title))
     if (description) form.set("description", String(description))
     form.set("source", new Blob([bytes], { type: "video/mp4" }), require("path").basename(String(file)))
-    const res = await fetcher(`${GRAPH.replace("graph.", "graph-video.")}/${encodeURIComponent(String(pageId))}/videos`, { method: "POST", body: form })
+    const res = await timedFetch(fetcher, `${GRAPH.replace("graph.", "graph-video.")}/${encodeURIComponent(String(pageId))}/videos`, { method: "POST", body: form }, { signal, timeoutMs: uploadTimeoutMs, label: "Facebook video upload", changes: true })
     const data = await json(res, "video upload")
     return { id: data.id, published: !!published }
   }
 
   /** A Reel (vertical 9:16, 3-90 s): start a session, send the bytes, finish. */
-  async function uploadReel(pageId, file, { title, description, state = "DRAFT" } = {}) {
+  async function uploadReel(pageId, file, { title, description, state = "DRAFT", signal } = {}) {
     const bytes = readVideo(file)
-    const token = await pageToken(pageId)
+    const token = await pageToken(pageId, { signal })
     const page = encodeURIComponent(String(pageId))
-    const start = await json(await fetcher(`${GRAPH}/${page}/video_reels`, {
+    const start = await json(await timedFetch(fetcher, `${GRAPH}/${page}/video_reels`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ upload_phase: "start", access_token: token }),
-    }), "Reel upload (start)")
+    }, { signal, timeoutMs, label: "Facebook Reel upload (start)", changes: true }), "Reel upload (start)")
     if (!start.video_id) throw new Error("Facebook did not start the Reel upload. Nothing was published.")
     const uploadUrl = start.upload_url || `https://rupload.facebook.com/video-upload/${GRAPH.split("/").pop()}/${start.video_id}`
-    await json(await fetcher(uploadUrl, {
+    await json(await timedFetch(fetcher, uploadUrl, {
       method: "POST",
       headers: { Authorization: `OAuth ${token}`, offset: "0", file_size: String(bytes.length), "Content-Type": "application/octet-stream" },
       body: bytes,
-    }), "Reel upload (sending the video)")
+    }, { signal, timeoutMs: uploadTimeoutMs, label: "Facebook Reel upload (sending the video)", changes: true }), "Reel upload (sending the video)")
     const finish = await graph(token, "POST", `/${page}/video_reels`, {
       video_id: start.video_id, upload_phase: "finish", video_state: state,
       ...(title ? { title: String(title) } : {}), ...(description ? { description: String(description) } : {}),
-    })
+    }, { signal })
     if (finish && finish.success === false) throw new Error("Facebook did not accept the Reel. Nothing was published.")
     return { id: start.video_id, state }
   }
 
   /** A photo on a Page (with an optional caption), one multipart upload. */
-  async function uploadPhoto(pageId, file, { caption, published } = {}) {
+  async function uploadPhoto(pageId, file, { caption, published, signal } = {}) {
     const fs = require("fs")
     const stat = fs.statSync(String(file))
     if (!stat.isFile()) throw new Error(`Not a file: ${file}. Nothing was uploaded.`)
     if (stat.size > 10 * 1024 * 1024) throw new Error("The photo is larger than 10 MB. Make it smaller first. Nothing was uploaded.")
-    const token = await pageToken(pageId)
+    const token = await pageToken(pageId, { signal })
     const ext = require("path").extname(String(file)).toLowerCase()
     const type = ext === ".png" ? "image/png" : ext === ".gif" ? "image/gif" : ext === ".webp" ? "image/webp" : "image/jpeg"
     const form = new FormData()
@@ -235,23 +273,24 @@ function createFacebook({ home, fetch: fetcher = globalThis.fetch, now = Date.no
     form.set("published", published ? "true" : "false")
     if (caption) form.set("caption", String(caption))
     form.set("source", new Blob([fs.readFileSync(String(file))], { type }), require("path").basename(String(file)))
-    const data = await json(await fetcher(`${GRAPH}/${encodeURIComponent(String(pageId))}/photos`, { method: "POST", body: form }), "photo upload")
+    const data = await json(await fetcher(`${GRAPH}/${encodeURIComponent(String(pageId))}/photos`, { method: "POST", body: form }, { signal, timeoutMs: uploadTimeoutMs, label: "Facebook photo upload", changes: true }), "photo upload")
     return { id: data.id, postId: data.post_id || null, published: !!published }
   }
 
   /** Processing state of an uploaded video or Reel. */
-  async function videoStatus(pageId, videoId) {
-    const token = await pageToken(pageId)
-    const data = await graph(token, "GET", `/${encodeURIComponent(String(videoId))}`, { fields: "status,permalink_url,title,description" })
+  async function videoStatus(pageId, videoId, opts = {}) {
+    const token = await pageToken(pageId, opts)
+    const data = await graph(token, "GET", `/${encodeURIComponent(String(videoId))}`, { fields: "status,permalink_url,title,description" }, opts)
     return data
   }
 
   return {
     id: ID, status, connect, poll, cancel, disconnect, connected,
-    api: (method, path, params) => graph(null, method, path, params),
-    asPage: async (pageId, method, path, params) => graph(await pageToken(pageId), method, path, params),
-    uploadVideo, uploadReel, uploadPhoto, videoStatus,
+    // opts (optional): { signal, timeoutMs } — the run's stop signal and a custom timeout.
+    api: (method, path, params, opts) => graph(null, method, path, params, opts || {}),
+    asPage: async (pageId, method, path, params, opts) => graph(await pageToken(pageId, opts || {}), method, path, params, opts || {}),
+    uploadVideo, uploadReel, uploadPhoto, videoStatus, userId,
   }
 }
 
-module.exports = { createFacebook, GRAPH, COMING_SOON }
+module.exports = { createFacebook, GRAPH, COMING_SOON, TIMEOUT_MS, UPLOAD_TIMEOUT_MS }

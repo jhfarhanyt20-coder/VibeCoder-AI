@@ -14,7 +14,42 @@ const clip = (s, n = MAX) => (s.length <= n ? s : `${s.slice(0, n)}\n… [${s.le
 function gh(ctx) {
   const c = ctx && ctx.engine && ctx.engine.connectors && ctx.engine.connectors.github
   if (!c || !c.connected()) throw new Error("GitHub is not connected. Ask the user to sign in under Connectors → GitHub (CLI: vibe connectors github connect). Nothing was done.")
-  return c
+  // Pass the run's stop signal along, so Stop also cancels a GitHub call in flight.
+  const signal = ctx && ctx.signal
+  if (!signal) return c
+  return { ...c, api: (method, p, body, opts) => c.api(method, p, body, { signal, ...(opts || {}) }) }
+}
+
+// github_api calls that are hard to undo: always ask, even in Full Access.
+// The query string is ignored when matching, so "?x" cannot slip past the check.
+function criticalApi(method, path) {
+  if (method === "GET") return false
+  if (method === "DELETE") return true
+  const p = String(path || "").split(/[?#]/)[0].replace(/\/{2,}/g, "/").replace(/\/+$/, "")
+  if (/\/(transfer|collaborators|hooks|keys|secrets|actions\/permissions|branches\/[^/]+\/protection)\b|^\/repos\/[^/]+\/[^/]+$|^\/orgs\/[^/]+$|^\/user$/i.test(p)) return true
+  if (method === "PUT" && /^\/repos\/[^/]+\/[^/]+\/pulls\/\d+\/merge$/i.test(p)) return true // merge (like github_merge_pr)
+  if ((method === "PATCH" || method === "POST") && /^\/repos\/[^/]+\/[^/]+\/git\/refs(\/|$)/i.test(p)) return true // move / force a branch or tag
+  if (method === "PUT" && /^\/repos\/[^/]+\/[^/]+\/contents(\/|$)/i.test(p)) return true // commit a file (github_write_file asks only off the default branch)
+  return false
+}
+
+/** Number the lines of a text file, between start_line and end_line (1-based), cut at whole lines to fit. */
+function showLines(head, text, a) {
+  const lines = text.split("\n")
+  const total = lines.length
+  const from = Math.min(total, Math.max(1, Math.floor(Number(a.start_line)) || 1))
+  const to = Math.min(total, Math.max(from, Math.floor(Number(a.end_line)) || total))
+  let body = ""
+  let last = from - 1
+  for (let i = from; i <= to; i++) {
+    const line = `${i}\t${lines[i - 1]}\n`
+    if (body.length + line.length > MAX && i > from) break
+    body += line.length > MAX ? `${line.slice(0, MAX)}…\n` : line
+    last = i
+  }
+  const partial = from > 1 || last < total
+  const note = partial ? `Showing lines ${from}-${last} of ${total}.${last < total ? ` Use start_line=${last + 1} to read more.` : ""}\n` : ""
+  return `${head}\n${note}${body.replace(/\n$/, "")}`
 }
 
 function repoOf(a) {
@@ -61,7 +96,7 @@ const ALL = [
     }),
 
   tool("github_files", "Read a file, or list a folder, in a GitHub repository (any branch, tag or commit).",
-    { repo: repoProp, path: { type: "string", description: "File or folder path; empty for the repository root" }, ref: { type: "string", description: "Branch, tag or commit (default: the default branch)" } }, ["repo"],
+    { repo: repoProp, path: { type: "string", description: "File or folder path; empty for the repository root" }, ref: { type: "string", description: "Branch, tag or commit (default: the default branch)" }, start_line: { type: "integer", description: "Optional first line to show (1-based) for a long file" }, end_line: { type: "integer", description: "Optional last line to show (1-based)" } }, ["repo"],
     (a) => `read ${a.repo}`,
     async (a, ctx) => {
       const c = gh(ctx)
@@ -71,8 +106,9 @@ const ALL = [
       if (Array.isArray(data)) return `Folder ${repo}/${a.path || ""}${a.ref ? ` @ ${a.ref}` : ""}:\n` + data.map((e) => `${e.type === "dir" ? "dir " : "file"} ${e.path}${e.type === "file" ? ` (${e.size} bytes)` : ""}`).join("\n")
       if (data && data.type === "file") {
         if (data.size > 1024 * 1024) return `${data.path} is ${data.size} bytes, too big to show. Open it on GitHub: ${data.html_url}`
-        const text = Buffer.from(String(data.content || ""), "base64").toString("utf8")
-        return clip(`${data.path} (sha ${String(data.sha).slice(0, 10)}, ${data.size} bytes)\n` + text.split("\n").map((l, i) => `${i + 1}\t${l}`).join("\n"))
+        const bytes = Buffer.from(String(data.content || ""), "base64")
+        if (bytes.includes(0)) return `${data.path} is a binary file (${data.size} bytes, sha ${String(data.sha).slice(0, 10)}); it cannot be shown as text. Open it on GitHub: ${data.html_url || ""}`.trim()
+        return showLines(`${data.path} (sha ${String(data.sha).slice(0, 10)}, ${data.size} bytes)`, bytes.toString("utf8"), a)
       }
       return clip(JSON.stringify(data, null, 2))
     }),
@@ -191,7 +227,7 @@ const ALL = [
       return r.merged ? `Merged #${a.number} in ${repo} (${String(r.sha).slice(0, 7)}).` : `GitHub did not merge #${a.number}: ${r.message || "unknown reason"}.`
     }),
 
-  tool("github_api", "Call any other GitHub REST API endpoint (https://docs.github.com/rest) when no other github_ tool fits, e.g. releases, actions runs, labels, collaborators. GET only reads; other methods change things and may ask the user.",
+  tool("github_api", "Call any other GitHub REST API endpoint (https://docs.github.com/rest) when no other github_ tool fits, e.g. releases, actions runs, labels, collaborators. GET only reads; other methods change things and may ask the user. Deleting, merging, moving/forcing branches or tags, committing files and repository settings always ask (prefer github_create_branch / github_write_file / github_merge_pr).",
     { method: { type: "string", enum: ["GET", "POST", "PATCH", "PUT", "DELETE"] }, path: { type: "string", description: "API path, e.g. /repos/owner/name/releases" }, body: { type: "object", description: "JSON body for POST/PATCH/PUT" } }, ["method", "path"],
     (a) => (String(a.method || "GET").toUpperCase() === "GET" ? "read api" : `write api ${a.path}`),
     async (a, ctx) => {
@@ -199,13 +235,14 @@ const ALL = [
       const method = String(a.method || "GET").toUpperCase()
       const p = String(a.path || "")
       if (!p.startsWith("/")) throw new Error('"path" must start with / (for example /repos/owner/name/releases). Nothing was done.')
-      // Hard to undo: deleting anything, repository/organisation settings, visibility, transfer, collaborators.
-      if (method === "DELETE" || (method !== "GET" && /\/(transfer|collaborators|hooks|keys|secrets|actions\/permissions|branches\/[^/]+\/protection)\b|^\/repos\/[^/]+\/[^/]+$|^\/orgs\/[^/]+$|^\/user$/.test(p))) {
-        await confirmCritical(ctx, `${method} ${p}`)
+      // Hard to undo: deleting anything, repository/organisation settings, visibility, transfer, collaborators,
+      // merging, moving/forcing refs, committing files (see criticalApi).
+      if (criticalApi(method, p)) {
+        await confirmCritical(ctx, `${method} ${p}${a.body ? ` with ${JSON.stringify(a.body).slice(0, 200)}` : ""}`)
       }
       const data = await c.api(method, p, method === "GET" ? undefined : a.body || {})
       return data == null ? `${method} ${p}: done (no content).` : clip(JSON.stringify(data, null, 2))
     }),
 ]
 
-module.exports = { ALL }
+module.exports = { ALL, criticalApi }

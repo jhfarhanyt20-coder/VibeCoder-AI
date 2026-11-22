@@ -30,6 +30,35 @@ function version() {
   try { return require(path.join(__dirname, "..", "..", "package.json")).version } catch { return "" }
 }
 
+/** Common Bangla / Banglish words → the English words the guide is written in. */
+const LOCAL_WORDS = [
+  [/কম্পিউটার|computer|কম্পিউটার ইউজ/, "computer use"],
+  [/ব্রাউজার|browser/, "browser"],
+  [/আপডেট|update/, "update"],
+  [/মডেল|model/, "model"],
+  [/প্রোভাইডার|provider/, "provider"],
+  [/ফেসবুক|facebook|fb\b/, "facebook"],
+  [/গিটহাব|গিট হাব|github/, "github"],
+  [/স্কিল|skill/, "skill"],
+  [/প্লাগ-?ইন|plugin/, "plugin"],
+  [/এমসিপি|mcp/, "mcp"],
+  [/মেমোরি|মেমরি|মনে রাখ/, "memory"],
+  [/শেল|টার্মিনাল|কমান্ড/, "shell terminal command"],
+  [/সেটিং|সেটিংস/, "settings"],
+  [/পারমিশন|অনুমতি/, "permission"],
+  [/ভয়েস|ভয়েস/, "voice"],
+  [/ভিডিও/, "video"],
+  [/সাব-?এজেন্ট/, "subagent"],
+  [/ক্রু/, "crew"],
+  [/লগইন|লগ ইন|সাইন ইন|একাউন্ট|অ্যাকাউন্ট/, "sign in account"],
+  [/রিওয়াইন্ড|আগের অবস্থা|undo/, "rewind"],
+  [/এডিটর|কোড প্যানেল/, "code editor"],
+  [/থিম/, "theme"],
+  [/ছবি|স্ক্রিনশট/, "image screenshot"],
+  [/ইন্সটল|ইনস্টল|install/, "install"],
+  [/সিএলআই|cli\b/, "cli"],
+]
+
 function score(sec, words, raw) {
   let s = 0
   const hay = `${sec.title} ${sec.body}`.toLowerCase()
@@ -64,10 +93,14 @@ const vibecoderHelp = {
     if (!raw) {
       return `${head} Topics: ${all.map((s) => s.title).join(" · ")}.\nCall vibecoder_help again with a topic to read it.\n\n## ${all[0].title}\n${all[0].body}`
     }
-    const words = raw.split(/[^a-z0-9+.#@/$-]+/).filter(Boolean)
-    const ranked = all.map((s) => ({ s, n: score(s, words, raw) })).filter((x) => x.n > 0).sort((x, y) => y.n - x.n).slice(0, 3)
+    // Topics may come in Bangla or Banglish: add the English words the guide uses.
+    const extra = []
+    for (const [re, en] of LOCAL_WORDS) if (re.test(raw)) extra.push(en)
+    const query = extra.length ? `${raw} ${extra.join(" ")}` : raw
+    const words = query.split(/[^\p{L}\p{N}+.#@/$-]+/u).filter(Boolean)
+    const ranked = all.map((s) => ({ s, n: score(s, words, query) })).filter((x) => x.n > 0).sort((x, y) => y.n - x.n).slice(0, 3)
     if (!ranked.length) {
-      return `${head} Nothing in the guide matches "${a.topic}". Do not guess: tell the user you are not sure, and point them to https://vibecoderai.onrender.com or GitHub issues. Topics in the guide: ${all.map((s) => s.title).join(" · ")}.`
+      return `${head} Nothing in the guide matches "${a.topic}". If the topic was not in English, call vibecoder_help again with English keywords (for example "computer use", "update", "provider"). Otherwise: Do not guess. Tell the user you are not sure, and point them to https://vibecoderai.onrender.com or GitHub issues. Topics in the guide: ${all.map((s) => s.title).join(" · ")}.`
     }
     return `${head}\n\n${ranked.map((x) => `## ${x.s.title}\n${x.s.body}`).join("\n\n")}\n\nAnswer from this text only; if it does not cover the question, say so.`
   },

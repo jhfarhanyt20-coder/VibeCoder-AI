@@ -5,6 +5,7 @@ function computerBrief(name, a) {
   switch (String(name)) {
     case "computer_screenshot": return "looking at the screen"
     case "computer_zoom": return "looking closer at part of the screen"
+    case "computer_done": return "done with the computer (Computer Use off)"
     case "computer_steps": return `doing ${Array.isArray(a.steps) ? a.steps.length : 0} steps: ${(Array.isArray(a.steps) ? a.steps : []).map((s) => s && s.action).filter(Boolean).join(" → ")}`
     case "computer_ui": return "reading the window controls"
     case "computer_windows": return "listing open windows"

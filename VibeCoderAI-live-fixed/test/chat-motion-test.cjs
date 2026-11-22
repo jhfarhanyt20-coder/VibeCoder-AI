@@ -124,3 +124,43 @@ console.log("PASS question box: above the composer, one question at a time, butt
   assert(steady.includes("(!live || performance.now() - lastGrowAt > 700)"), "the spare space closes only while nothing arrives")
   console.log("PASS reading while writing: scroll up stays put, no wobble")
 }
+
+// The top-left chip is only for commands (shell / cmd / background), named
+// after the command; a plain agent run or an ordinary tool shows no chip.
+{
+  const chip = app.slice(app.indexOf("const SHELL_TOOL ="), app.indexOf("/** The panel that lists the running jobs. */"))
+  assert(chip.includes("function bgJobActive() {\n  return shellJobs().length > 0\n}") || chip.includes("function bgJobActive() {\r\n  return shellJobs().length > 0\r\n}"), "chip only while a command runs")
+  const SHELL_TOOL = /^(bash|shell|sh|cmd|powershell|pwsh|terminal|command)$/i
+  for (const n of ["bash", "shell", "powershell", "cmd"]) assert(SHELL_TOOL.test(n), n)
+  for (const n of ["read", "grep", "edit", "webfetch"]) assert(!SHELL_TOOL.test(n), n)
+  const render = app.slice(app.indexOf("function renderBgJob() {"), app.indexOf("function markBackgroundJob("))
+  assert(render.includes('const kind = list.every((j) => j.shellId && j.backgrounded) ? "Background" : "Shell"'), "just Shell or Background")
+  console.log("PASS command chip: only for shell / background commands, labelled Shell or Background")
+}
+
+// The Running panel lists each command once (a shell replaces its bare tool
+// row) and is styled in the UI font with a kind label per row.
+{
+  const polish = fs.readFileSync(path.join(root, "renderer/polish.css"), "utf8")
+  const panel = app.slice(app.indexOf("function renderBgJobPanel() {"), app.indexOf("function toggleBgJobPanel("))
+  assert(panel.includes("const shellCalls = new Set(") && panel.includes("!shellCalls.has(key)"), "one row per command")
+  // Only commands: the agent run is not listed (the composer shows it).
+  assert(panel.includes('(j.shellId || (j.kind === "Tool" && SHELL_TOOL.test(String(j.title || ""))))'), "only commands, no Agent run row")
+  // A terminal card per command; the controls keep their old classes and actions.
+  for (const c of ["bji-card", "bji-term", "bji-output", "bji-input-row", "bji-input-eof", "bg-job-move", "bg-job-stop", "bji-time"]) assert(panel.includes(c), c)
+  assert(panel.includes("moveRunningJobToBackground(job.shellId)") && panel.includes("stopRunningJob(key)") && panel.includes("sendRunningShellInput(job.shellId)"))
+  assert(app.includes("stopAllCommands()"), "Stop all stops the commands, not the agent")
+  assert(polish.includes("Running commands panel") && polish.includes("@keyframes vc-cmd-pulse"))
+  console.log("PASS running panel: commands only, terminal cards, same controls")
+}
+
+// Command cards are closed by default (one line); clicking the line opens the
+// terminal and the choice is remembered while the command runs.
+{
+  const polish = fs.readFileSync(path.join(root, "renderer/polish.css"), "utf8")
+  const panel = app.slice(app.indexOf("const bgJobOpen = new Set()"), app.indexOf("function toggleBgJobPanel("))
+  assert(panel.includes('row.classList.toggle("open", bgJobOpen.has(openKey))'), "closed unless opened")
+  assert(panel.includes('if (!event.target.closest(".bji-acts")) toggle()'), "the buttons do not toggle")
+  assert(polish.includes("html[data-theme] .bji-card:not(.open) .bji-term { display: none; }"))
+  console.log("PASS running panel: one line per command, click to open its terminal")
+}

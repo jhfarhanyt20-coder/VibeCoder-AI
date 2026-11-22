@@ -5,7 +5,7 @@
  * automatically. Merges are three-way and never overwrite user edits silently.
  */
 const MAX = 24000
-const clip = (s) => (s.length <= MAX ? s : `${s.slice(0, MAX)}\n… [cut; call crewChanges with files to see less]`)
+const clip = (s) => (s.length <= MAX ? s : `${s.slice(0, MAX)}\n… [cut; call crewChanges with diff: false for the file list only, or read the files you need from the helper workspace]`)
 
 function crew(ctx) {
   const m = ctx && ctx.engine && ctx.engine.subagents

@@ -4,39 +4,123 @@
  * Uses injected element tracking instead of broken __vibeElementRefs.
  */
 
-const MAX_TEXT = 100_000
+// Snapshots of large pages used to reach ~100k chars (~25k tokens). Keep one
+// page snapshot to ~20k chars and tell the model how to read the rest.
+const MAX_TEXT = 20_000
+const MAX_EVAL = 20_000
+const SNAPSHOT_HINT = "Snapshot clipped. Pass a lower depth (e.g. depth: 3 or 4) to see the page outline first, then read one part with browser.evaluate and document.querySelector(...)."
 
-function clip(text, max = MAX_TEXT) {
+function clip(text, max = MAX_TEXT, hint = "") {
   if (text.length <= max) return text
   const half = Math.floor(max / 2)
-  return text.slice(0, half) + `\n\n... [${text.length - max} chars truncated] ...\n\n` + text.slice(-half)
+  return text.slice(0, half) + `\n\n... [${text.length - max} chars truncated] ...\n\n` + text.slice(-half) + (hint ? `\n\n[${hint}]` : "")
+}
+
+function clipSnapshot(text) {
+  return clip(String(text), MAX_TEXT, SNAPSHOT_HINT)
 }
 
 // Browser actions are approved per origin, not blanket per action. A rule saved
 // for "click github.com" must not also allow clicks on a bank tab. The host is
-// learned from explicit URLs and from successful navigations; when it is not
-// known yet the approval stays one-shot (neverPersist).
-const tabHosts = new Map()
-let activeHost = ""
+// tracked PER TAB and refreshed from every result that reports a URL
+// (navigate, tabs.open, tabs.list, browser.current, snapshot and the
+// click/fill/press/scroll results). A tab whose host is unknown never borrows
+// another tab's host: its approval is one-shot (neverPersist) and always asks
+// (forceAsk), so no saved rule can approve it.
+const tabHosts = new Map() // tabID -> host ("" when the page has none, e.g. about:blank)
+const tabUrls = new Map() // tabID -> last known URL
+let activeTabID = ""
 
+function hostOf(url) {
+  try { return new URL(String(url || "")).host || "" } catch { return "" }
+}
+
+function noteTab(tabID, url, { active = false } = {}) {
+  const id = tabID == null ? "" : String(tabID)
+  if (!id) return
+  if (active) activeTabID = id
+  if (url == null || url === "") return
+  tabUrls.set(id, String(url))
+  tabHosts.set(id, hostOf(url))
+}
+
+// Navigations and new tabs make that tab the active one.
 function noteHost(tabID, url) {
-  try {
-    const host = new URL(String(url || "")).host
-    if (!host) return
-    if (tabID) tabHosts.set(String(tabID), host)
-    activeHost = host
-  } catch {}
+  noteTab(tabID, url, { active: true })
+}
+
+function noteTabList(tabs) {
+  if (!Array.isArray(tabs)) return
+  const seen = new Set()
+  for (const tab of tabs) {
+    if (!tab || !tab.id) continue
+    seen.add(String(tab.id))
+    noteTab(tab.id, tab.url, { active: !!tab.active })
+  }
+  // Forget tabs that no longer exist so a reused ID cannot inherit a host.
+  for (const id of [...tabHosts.keys()]) if (!seen.has(id)) { tabHosts.delete(id); tabUrls.delete(id) }
+  if (activeTabID && !seen.has(activeTabID)) activeTabID = ""
+}
+
+function forgetTab(tabID) {
+  const id = String(tabID || "")
+  tabHosts.delete(id)
+  tabUrls.delete(id)
+  if (activeTabID === id) activeTabID = ""
 }
 
 function hostFor(args = {}) {
-  return (args && args.tabID && tabHosts.get(String(args.tabID))) || activeHost
+  const id = args && args.tabID ? String(args.tabID) : activeTabID
+  return (id && tabHosts.get(id)) || ""
 }
 
 function actionPerm(action, args = {}) {
   const host = hostFor(args)
-  const perm = { tool: "browser", subject: host ? `${action} ${host}` : action }
-  if (!host) perm.neverPersist = true
-  return perm
+  if (host) return { tool: "browser", subject: `${action} ${host}` }
+  const which = args && args.tabID ? `tab ${args.tabID}` : "the active tab"
+  return { tool: "browser", subject: `${action} (unknown host: ${which})`, neverPersist: true, forceAsk: true }
+}
+
+/**
+ * Shared post-action report for click / fill / press / scroll. The bridge
+ * returns { result } where result may carry tabID, url, title, urlBefore,
+ * navigated and generation (electron/browser.js). Older bridges return less;
+ * the report then stays as short as before.
+ */
+function actionReport(head, args, res, hostBefore) {
+  const d = res && res.data && typeof res.data === "object" ? res.data : {}
+  const r = d.result && typeof d.result === "object" ? d.result : {}
+  const tabID = String(r.tabID || d.tabID || args.tabID || activeTabID || "")
+  const url = r.url || d.url || ""
+  const title = r.title != null ? r.title : d.title
+  const prevUrl = r.urlBefore || (tabID ? tabUrls.get(tabID) : "") || ""
+  if (tabID && url) noteTab(tabID, url, { active: true })
+  const lines = [head]
+  if (url) {
+    lines.push(`Tab: ${tabID || "(active)"}`)
+    lines.push(`Title: ${title || "(untitled)"}`)
+    lines.push(`URL: ${url}`)
+  }
+  const generation = r.generation != null ? r.generation : d.generation
+  if (generation != null) lines.push(`Snapshot generation: ${generation}`)
+  const navigated = r.navigated === true || (!!url && !!prevUrl && url !== prevUrl)
+  if (navigated) lines.push(`Page navigated to ${url}; element refs from the old snapshot are stale — take a new snapshot (browser.snapshot) before the next click or fill.`)
+  const hostRan = hostOf(r.urlBefore || "")
+  if (hostBefore && hostRan && hostBefore !== hostRan) lines.push(`Note: the approval was for ${hostBefore}, but the tab was on ${hostRan} when the action ran.`)
+  return lines.join("\n")
+}
+
+function formatEvalResult(value) {
+  if (value === undefined) return "(script returned undefined)"
+  if (value === null) return "(script returned null)"
+  let text
+  if (typeof value === "string") text = value === "" ? "(script returned an empty string)" : value
+  else {
+    try { text = JSON.stringify(value, null, 2) } catch { text = String(value) }
+    if (text === undefined) text = String(value)
+  }
+  if (text.length <= MAX_EVAL) return text
+  return text.slice(0, MAX_EVAL) + `\n\n... [${text.length - MAX_EVAL} chars truncated] ...\n[Output clipped at ${MAX_EVAL} chars. Narrow the script: select one element (document.querySelector(...)), return only the fields you need, or slice long text (e.g. .slice(0, 2000)).]`
 }
 
 function createBrowserTools() {
@@ -53,16 +137,19 @@ function createBrowserTools() {
           const res = await engine.browserCurrent({ depth: a.depth || 8 })
           if (!res?.ok) throw new Error(res?.error || "Could not inspect the current browser page")
           const page = res.data || {}
-          return `Active browser page\nTab: ${page.tabID || "(unknown)"}\nTitle: ${page.title || "(untitled)"}\nURL: ${page.url || "(unknown)"}\n\n${clip(String(page.snapshot || "No DOM snapshot available."))}`
+          if (page.tabID) noteTab(page.tabID, page.url, { active: true })
+          return `Active browser page\nTab: ${page.tabID || "(unknown)"}\nTitle: ${page.title || "(untitled)"}\nURL: ${page.url || "(unknown)"}\n\n${clipSnapshot(page.snapshot || "No DOM snapshot available.")}`
         }
         const res = await engine?.browserListTabs?.()
         if (!res?.ok) throw new Error(res?.error || "No browser available")
         const tabs = res.data?.tabs || []
+        noteTabList(tabs)
         const page = tabs.find((tab) => tab.active) || tabs[0]
         if (!page) throw new Error("No in-app browser tab is open. Open a page in the Browser panel first.")
+        noteTab(page.id, page.url, { active: true })
         const snap = await engine.browserSnapshot?.({ tabID: page.id, depth: a.depth || 8 })
         if (!snap?.ok) throw new Error(snap?.error || "Could not read the current page")
-        return `Active browser page\nTab: ${page.id}\nTitle: ${page.title || "(untitled)"}\nURL: ${page.url || "(unknown)"}\n\n${clip(String(snap.data?.snapshot || "No DOM snapshot available."))}`
+        return `Active browser page\nTab: ${page.id}\nTitle: ${page.title || "(untitled)"}\nURL: ${page.url || "(unknown)"}\n\n${clipSnapshot(snap.data?.snapshot || "No DOM snapshot available.")}`
       },
     },
     listTabs: {
@@ -75,6 +162,7 @@ function createBrowserTools() {
         const res = await (c.engine || c.vibe)?.browserListTabs?.()
         if (!res?.ok) return `Failed: ${res?.error || "No browser available. Browser tools only work inside the Electron app (npm run app)."}`
         const tabs = res.data?.tabs || []
+        noteTabList(tabs)
         return tabs.length ? tabs.map(t => `- ${t.id}${t.active ? " [ACTIVE]" : ""}: ${t.title || "Untitled"} (${t.url})`).join("\n") : "No tabs open"
       },
     },
@@ -106,12 +194,13 @@ function createBrowserTools() {
       async run(a, c) {
         const res = await (c.engine || c.vibe)?.browserCloseTab?.({ tabID: a.tabID })
         if (!res?.ok) throw new Error(res?.error || "Failed to close tab")
+        forgetTab(a.tabID)
         return `Closed ${a.tabID}`
       },
     },
     navigate: {
       name: "browser.navigate",
-      description: "Navigate the selected visible in-app browser tab to a URL.",
+      description: "Navigate the selected visible in-app browser tab to a URL. Reports the final URL after redirects.",
       parameters: { type: "object", properties: { tabID: { type: "string", description: "Optional; defaults to the active visible browser tab." }, url: { type: "string" } }, required: ["url"] },
       perm: (a = {}) => {
         let host = ""
@@ -125,12 +214,36 @@ function createBrowserTools() {
         const api = c.engine || c.vibe
         const res = await api?.browserNavigate?.({ tabID: a.tabID, url: a.url })
         if (!res?.ok) throw new Error(res?.error || "Failed to navigate")
-        noteHost(a.tabID, res.data?.url || a.url)
         // V-09: wait for the body instead of guessing with a sleep. The old 1 s
         // pause stays as a fallback only when readiness cannot be confirmed.
-        const waited = await api?.browserWait?.({ tabID: a.tabID, selector: "body", timeoutMs: 5000 })
-        if (!waited?.ok) await new Promise((r) => setTimeout(r, 1000))
-        return `Navigated the ${a.tabID ? `tab ${a.tabID}` : "active browser tab"} to ${a.url}`
+        const canWait = typeof api?.browserWait === "function"
+        const waited = canWait ? await api.browserWait({ tabID: a.tabID, selector: "body", timeoutMs: 5000 }) : null
+        const notes = []
+        let tabID = res.data?.tabID || waited?.data?.tabID || a.tabID || ""
+        let finalUrl = (waited?.ok && waited.data?.url) || res.data?.url || ""
+        let title = (waited?.ok && waited.data?.title) || res.data?.title || ""
+        if (canWait && !waited?.ok) {
+          notes.push(`Timed out waiting for the page body (${waited?.error || "no response"}); the page may still be loading. Use browser.wait or browser.snapshot to check.`)
+          await new Promise((r) => setTimeout(r, 1000))
+          if (!finalUrl && typeof api?.browserListTabs === "function") {
+            try {
+              const listed = await api.browserListTabs()
+              const tabs = listed?.ok ? (listed.data?.tabs || []) : []
+              const tab = (tabID && tabs.find((t) => String(t.id) === String(tabID))) || tabs.find((t) => t.active)
+              if (tab) { tabID = tab.id; finalUrl = tab.url || ""; title = tab.title || "" }
+            } catch {}
+          }
+        }
+        // Learn the host from the FINAL URL (after redirects) when it is known.
+        noteHost(tabID || activeTabID, finalUrl || a.url)
+        const lines = [`Navigated the ${a.tabID ? `tab ${a.tabID}` : "active browser tab"} to ${a.url}`]
+        if (finalUrl) {
+          lines.push(`Final URL: ${finalUrl}`)
+          if (title) lines.push(`Title: ${title}`)
+          if (finalUrl !== a.url) lines.push(`Note: the final URL differs from the requested ${a.url} (redirected or normalized).`)
+        }
+        lines.push(...notes)
+        return lines.join("\n")
       },
     },
     wait: {
@@ -160,21 +273,23 @@ function createBrowserTools() {
         })
         if (!res?.ok) throw new Error(res?.error || "Failed to wait")
         const d = res.data || {}
+        if (d.url) noteTab(d.tabID || a.tabID || activeTabID, d.url, { active: true })
         const what = [d.selector ? `selector ${d.selector}` : "", d.text ? `text ${JSON.stringify(d.text)}` : "", d.networkIdle ? "network idle" : ""].filter(Boolean).join(" / ")
-        return `Wait completed in ${d.elapsedMs} ms${what ? ` (${what})` : ""}`
+        return `Wait completed in ${d.elapsedMs} ms${what ? ` (${what})` : ""}${d.url ? `\nURL: ${d.url}` : ""}`
       },
     },
     snapshot: {
       name: "browser.snapshot",
-      description: "Get an accessibility/DOM snapshot of the visible in-app browser tab with element refs. Use before clicking or filling. The snapshot returns a Generation number: pass the SAME generation back to browser.click / browser.fill so a stale ref is detected.",
+      description: "Get an accessibility/DOM snapshot of the visible in-app browser tab with element refs. Use before clicking or filling. The snapshot returns a Generation number: pass the SAME generation back to browser.click / browser.fill so a stale ref is detected. Large pages are clipped at ~20k chars; pass a lower depth to see the outline.",
       parameters: { type: "object", properties: { tabID: { type: "string", description: "Optional; defaults to the active visible browser tab." }, depth: { type: "integer" } }, required: [] },
       perm: () => ({ tool: "browser", subject: "snapshot" }),
       paths: () => [],
       async run(a, c) {
         const res = await (c.engine || c.vibe)?.browserSnapshot?.({ tabID: a.tabID, depth: a.depth || 8 })
         if (!res?.ok) throw new Error(res?.error || "Failed to snapshot")
+        if (res.data?.url) noteTab(res.data.tabID || a.tabID || activeTabID, res.data.url)
         const gen = res.data.generation != null ? `\nGeneration: ${res.data.generation} (${res.data.refCount || 0} elements)` : ""
-        return `Page: ${res.data.title || "(untitled)"}\nURL: ${res.data.url || "(unknown)"}${gen}\n\n${clip(res.data.snapshot || "Empty")}`
+        return `Page: ${res.data.title || "(untitled)"}\nURL: ${res.data.url || "(unknown)"}${gen}\n\n${clipSnapshot(res.data.snapshot || "Empty")}`
       },
     },
     screenshot: {
@@ -192,6 +307,7 @@ function createBrowserTools() {
         const url = String(res.data?.url || "")
         const title = String(res.data?.title || "")
         const tabID = String(res.data?.tabID || a.tabID || "")
+        if (url && (res.data?.tabID || a.tabID)) noteTab(tabID, url)
         return {
           __vibeStructuredToolResult: "browser-screenshot",
           text: `Captured a screenshot of ${title || "the current browser page"} (${url || tabID || "active tab"}). The screenshot is attached below; use the image to inspect visual layout and use browser.current for readable page content.`,
@@ -201,26 +317,27 @@ function createBrowserTools() {
     },
     evaluate: {
       name: "browser.evaluate",
-      description: "Execute JavaScript in the selected visible in-app browser tab. Use only for the requested browser task.",
+      description: "Execute JavaScript in the selected visible in-app browser tab. Use only for the requested browser task. Output is clipped at ~20k chars; return only what you need.",
       parameters: { type: "object", properties: { tabID: { type: "string", description: "Optional; defaults to the active visible browser tab." }, script: { type: "string" } }, required: ["script"] },
       perm: () => ({ tool: "browser", subject: "evaluate", neverPersist: true }),
       paths: () => [],
       async run(a, c) {
         const res = await (c.engine || c.vibe)?.browserEvaluate?.({ tabID: a.tabID, script: a.script })
         if (!res?.ok) throw new Error(res?.error || "Failed to evaluate")
-        return JSON.stringify(res.data.result, null, 2)
+        return formatEvalResult(res.data?.result)
       },
     },
     click: {
       name: "browser.click",
-      description: "Click an element in the visible in-app browser using a ref from the latest snapshot. Pass the snapshot's Generation to catch stale refs.",
+      description: "Click an element in the visible in-app browser using a ref from the latest snapshot. Pass the snapshot's Generation to catch stale refs. Reports the page URL/title after the click.",
       parameters: { type: "object", properties: { tabID: { type: "string", description: "Optional; defaults to the active visible browser tab." }, ref: { type: "string" }, generation: { type: "integer", description: "The Generation from the latest browser.snapshot; omit to allow any." } }, required: ["ref"] },
       perm: (a = {}) => actionPerm("click", a),
       paths: () => [],
       async run(a, c) {
+        const hostBefore = hostFor(a)
         const res = await (c.engine || c.vibe)?.browserClick?.({ tabID: a.tabID, ref: a.ref, generation: a.generation })
         if (!res?.ok) throw new Error(res?.error || "Failed to click")
-        return `Clicked ${a.ref}`
+        return actionReport(`Clicked ${a.ref}`, a, res, hostBefore)
       },
     },
     fill: {
@@ -230,21 +347,23 @@ function createBrowserTools() {
       perm: (a = {}) => actionPerm("fill", a),
       paths: () => [],
       async run(a, c) {
+        const hostBefore = hostFor(a)
         const res = await (c.engine || c.vibe)?.browserFill?.({ tabID: a.tabID, ref: a.ref, text: a.text, generation: a.generation })
         if (!res?.ok) throw new Error(res?.error || "Failed to fill")
-        return `Filled ${a.ref}`
+        return actionReport(`Filled ${a.ref}`, a, res, hostBefore)
       },
     },
     press: {
       name: "browser.press",
-      description: "Press a keyboard key in the selected visible in-app browser tab.",
+      description: "Press a keyboard key in the selected visible in-app browser tab. Reports the page URL/title after the key press.",
       parameters: { type: "object", properties: { tabID: { type: "string", description: "Optional; defaults to the active visible browser tab." }, key: { type: "string" } }, required: ["key"] },
       perm: (a = {}) => actionPerm("press", a),
       paths: () => [],
       async run(a, c) {
+        const hostBefore = hostFor(a)
         const res = await (c.engine || c.vibe)?.browserPress?.({ tabID: a.tabID, key: a.key })
         if (!res?.ok) throw new Error(res?.error || "Failed to press")
-        return `Pressed ${a.key}`
+        return actionReport(`Pressed ${a.key}`, a, res, hostBefore)
       },
     },
     scroll: {
@@ -254,12 +373,21 @@ function createBrowserTools() {
       perm: (a = {}) => actionPerm("scroll", a),
       paths: () => [],
       async run(a, c) {
+        const hostBefore = hostFor(a)
         const res = await (c.engine || c.vibe)?.browserScroll?.({ tabID: a.tabID, deltaY: a.deltaY })
         if (!res?.ok) throw new Error(res?.error || "Failed to scroll")
-        return "Scrolled"
+        const y = res.data?.result?.scrollY
+        return actionReport(Number.isFinite(y) ? `Scrolled (scrollY ${y})` : "Scrolled", a, res, hostBefore)
       },
     },
   }
 }
 
-module.exports = { createBrowserTools }
+/** Test helper: clear the per-tab host map between test cases. */
+function _resetBrowserToolState() {
+  tabHosts.clear()
+  tabUrls.clear()
+  activeTabID = ""
+}
+
+module.exports = { createBrowserTools, _resetBrowserToolState }

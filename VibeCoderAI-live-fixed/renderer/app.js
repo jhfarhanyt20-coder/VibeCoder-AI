@@ -358,10 +358,19 @@ function jobElapsed(at) {
  * (background or still blocking the agent). OpenCode keeps its running-task chip
  * visible for those, so the user can stop them while they run.
  */
-function bgJobActive() {
-  if (runningJobs.size) return true
-  return !!(state.running && bgJob.startedAt)
+// The chip in the top-left corner is only for commands: a shell / cmd / a
+// background process. That the agent itself is working already shows in the
+// composer (the Stop button), so a plain run or an ordinary tool shows no chip.
+const SHELL_TOOL = /^(bash|shell|sh|cmd|powershell|pwsh|terminal|command)$/i
+function shellJobs() {
+  return [...runningJobs.values()].filter((j) => j.shellId || (j.kind === "Tool" && SHELL_TOOL.test(String(j.title || ""))))
 }
+function bgJobActive() {
+  return shellJobs().length > 0
+}
+
+// Command cards the user opened (closed by default: one line each).
+const bgJobOpen = new Set()
 
 /** The panel that lists the running jobs. */
 function renderBgJobPanel() {
@@ -370,27 +379,37 @@ function renderBgJobPanel() {
   list.textContent = ""
   bgJob.panelSignature = bgJobPanelSignature()
   const now = Date.now()
-  const jobs = [...runningJobs.entries()]
+  // A shell's own row (with its command, output and input) replaces the bare
+  // tool row of the same call, so one command is listed once.
+  const shellCalls = new Set([...runningJobs.values()].filter((j) => j.shellId && j.toolCallId).map((j) => `tool:${j.toolCallId}`))
+  // Only commands are listed (the agent's own run shows in the composer).
+  const jobs = [...runningJobs.entries()].filter(([key, j]) => !shellCalls.has(key) && (j.shellId || (j.kind === "Tool" && SHELL_TOOL.test(String(j.title || "")))))
+  const head = document.querySelector("#bg-job-panel .bg-job-head > span")
+  if (head) head.textContent = jobs.length > 1 ? `Running commands · ${jobs.length}` : "Running command"
   if (!jobs.length) {
     const empty = document.createElement("div")
-    empty.className = "bg-job-item"
-    empty.textContent = "No running job right now."
+    empty.className = "bg-job-item bji-empty"
+    empty.textContent = "No command is running."
     list.appendChild(empty)
     return
   }
+  for (const k of [...bgJobOpen]) if (!jobs.some(([key, j]) => (j.shellId || key) === k)) bgJobOpen.delete(k)
+  const icon = (paths) => `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`
+  // One terminal card per command, IDE style: a header line (status, name,
+  // time, icon buttons), then the command, its live output and an input line.
   for (const [key, job] of jobs) {
     const row = document.createElement("div")
-    row.className = "bg-job-item"
-    const kind = document.createElement("span")
-    kind.className = "bji-kind"
-    kind.textContent = job.kind || "Job"
-    const body = document.createElement("div")
-    body.className = "bji-body"
-    const title = document.createElement("div")
+    row.className = "bg-job-item bji-card"
+    row.dataset.kind = job.shellId && job.backgrounded ? "background" : "shell"
+    const top = document.createElement("div")
+    top.className = "bji-top"
+    const dot = document.createElement("span")
+    dot.className = "bji-dot"
+    const title = document.createElement("span")
     title.className = "bji-title"
-    title.textContent = job.title || key
-    title.title = job.title || key
-    const time = document.createElement("div")
+    title.textContent = job.title || job.command || key
+    title.title = job.title || job.command || key
+    const time = document.createElement("span")
     time.className = "bji-time"
     time.dataset.at = String(job.at || now)
     time.dataset.backgrounded = String(!!(job.shellId && job.backgrounded))
@@ -399,28 +418,82 @@ function renderBgJobPanel() {
     if (job.shellId && job.backgrounded) bits.push("background")
     if (job.shellId && job.waitingForInput) bits.push("waiting for input")
     time.textContent = bits.join(" · ")
-    body.append(title)
-    if (job.shellId && job.command && job.command !== job.title) {
+    const acts = document.createElement("div")
+    acts.className = "bji-acts"
+    // A blocking shell can be sent to the background (Ctrl+B) and keeps running.
+    if (job.shellId && !job.backgrounded) {
+      const mv = document.createElement("button")
+      mv.className = "bg-job-move bji-icon"
+      mv.type = "button"
+      mv.innerHTML = icon('<path d="M8 2.5v8M4.5 7.5 8 11l3.5-3.5M3 13.5h10"/>')
+      mv.title = "Move to the background (Ctrl+B): it keeps running"
+      mv.setAttribute("aria-label", "Move to the background")
+      mv.onclick = () => moveRunningJobToBackground(job.shellId)
+      acts.appendChild(mv)
+    }
+    const stop = document.createElement("button")
+    stop.className = "bg-job-stop bji-icon"
+    stop.type = "button"
+    stop.innerHTML = icon('<rect x="4" y="4" width="8" height="8" rx="1.5"/>')
+    stop.title = "Stop this command (the agent keeps running)"
+    stop.setAttribute("aria-label", "Stop this command")
+    stop.onclick = () => stopRunningJob(key)
+    acts.appendChild(stop)
+    const chev = document.createElement("span")
+    chev.className = "bji-chev"
+    chev.setAttribute("aria-hidden", "true")
+    chev.innerHTML = icon('<path d="m6 4 4 4-4 4"/>')
+    top.prepend(chev)
+    top.append(dot, title, time, acts)
+    row.appendChild(top)
+    // Click the line to see what the command is doing; click again to close.
+    const openKey = job.shellId || key
+    row.classList.toggle("open", bgJobOpen.has(openKey))
+    top.setAttribute("role", "button")
+    top.tabIndex = 0
+    top.setAttribute("aria-expanded", String(bgJobOpen.has(openKey)))
+    const toggle = () => {
+      const open = !row.classList.contains("open")
+      row.classList.toggle("open", open)
+      top.setAttribute("aria-expanded", String(open))
+      if (open) bgJobOpen.add(openKey)
+      else bgJobOpen.delete(openKey)
+      if (open) { const out = row.querySelector(".bji-output"); if (out) out.scrollTop = out.scrollHeight }
+    }
+    top.onclick = (event) => { if (!event.target.closest(".bji-acts")) toggle() }
+    top.onkeydown = (event) => { if ((event.key === "Enter" || event.key === " ") && event.target === top) { event.preventDefault(); toggle() } }
+
+    const term = document.createElement("div")
+    term.className = "bji-term"
+    if (job.command) {
       const command = document.createElement("div")
       command.className = "bji-command"
-      command.textContent = job.command
+      const prompt = document.createElement("span")
+      prompt.className = "bji-prompt"
+      prompt.textContent = "$"
+      const text = document.createElement("span")
+      text.className = "bji-command-text"
+      text.textContent = job.command
       command.title = job.command
-      body.appendChild(command)
+      command.append(prompt, text)
+      term.appendChild(command)
     }
-    body.append(time)
     if (job.shellId) {
       const output = document.createElement("pre")
       output.className = "bji-output"
       output.dataset.shellId = job.shellId
       output.textContent = terminalText(job.output) || "Waiting for output…"
-      body.appendChild(output)
+      term.appendChild(output)
       if (job.writable !== false) {
         const inputRow = document.createElement("div")
         inputRow.className = "bji-input-row"
+        const prompt = document.createElement("span")
+        prompt.className = "bji-prompt"
+        prompt.textContent = "›"
         const field = document.createElement("input")
         field.className = "bji-input"
         field.type = "text"
-        field.placeholder = "Send input to the running process…"
+        field.placeholder = "Type input for the command, Enter to send"
         field.value = shellInputDrafts.get(job.shellId) || ""
         field.oninput = () => shellInputDrafts.set(job.shellId, field.value)
         field.onkeydown = (event) => {
@@ -438,33 +511,13 @@ function renderBgJobPanel() {
         eof.className = "bji-input-eof"
         eof.type = "button"
         eof.textContent = "EOF"
-        eof.title = "Close input for this process"
+        eof.title = "Close input for this command (end of input)"
         eof.onclick = () => { shellInputDrafts.set(job.shellId, field.value); sendRunningShellInput(job.shellId, { eof: true }) }
-        inputRow.append(field, send, eof)
-        body.appendChild(inputRow)
+        inputRow.append(prompt, field, send, eof)
+        term.appendChild(inputRow)
       }
     }
-    const acts = document.createElement("div")
-    acts.className = "bji-acts"
-    // OpenCode's Ctrl+B: a blocking shell can be sent to the background while it
-    // keeps running - only shells that still block the agent offer it.
-    if (job.shellId && !job.backgrounded) {
-      const mv = document.createElement("button")
-      mv.className = "bg-job-move"
-      mv.type = "button"
-      mv.textContent = "Background"
-      mv.title = "Move this command to the background (Ctrl+B) - it keeps running"
-      mv.onclick = () => moveRunningJobToBackground(job.shellId)
-      acts.appendChild(mv)
-    }
-    const stop = document.createElement("button")
-    stop.className = "bg-job-stop"
-    stop.type = "button"
-    stop.textContent = "Stop"
-    stop.title = job.shellId ? "Stop this command (the agent keeps running)" : "Stop this job (it stops the agent run)"
-    stop.onclick = () => stopRunningJob(key)
-    acts.appendChild(stop)
-    row.append(kind, body, acts)
+    if (term.childNodes.length) row.appendChild(term)
     list.appendChild(row)
   }
 }
@@ -553,13 +606,15 @@ function renderBgJob() {
   }
   el.hidden = false
   syncTodoPosition()
-  const jobs = [...runningJobs.values()]
-  const agentRun = jobs.some((j) => j.kind === "Agent")
-  const shells = jobs.filter((j) => j.shellId)
-  let label = "Running"
-  if (!agentRun && shells.length) label = shells.length > 1 ? `Background · ${shells.length}` : "Background"
-  else if (jobs.length > 1) label = `Running · ${jobs.length}`
-  $("bg-job-text").textContent = label
+  // Just "Shell" or "Background" (with a count when several run); the panel
+  // behind the chip still lists every process as before. A shell's own row
+  // wins over the bare tool row of the same call.
+  const shells = shellJobs()
+  const real = shells.filter((j) => j.shellId)
+  const list = real.length ? real : shells
+  const kind = list.every((j) => j.shellId && j.backgrounded) ? "Background" : "Shell"
+  $("bg-job-text").textContent = list.length > 1 ? `${kind} · ${list.length}` : kind
+  $("bg-job-btn").title = list.map((j) => j.command || j.title || "").filter(Boolean).join("\n") || "Show the running commands"
   if (!$("bg-job-panel").hidden) {
     if (bgJob.panelSignature !== bgJobPanelSignature()) renderBgJobPanel()
     else refreshBgJobTimes()
@@ -612,10 +667,17 @@ $("bg-job-close")?.addEventListener("click", (e) => {
   e.stopPropagation()
   toggleBgJobPanel(false)
 })
+// The panel lists commands only, so its button stops the commands; the agent
+// itself is stopped with the composer's Stop button.
 $("bg-job-stop")?.addEventListener("click", (e) => {
   e.stopPropagation()
-  stopAllJobs()
+  stopAllCommands()
 })
+async function stopAllCommands() {
+  const shells = [...runningJobs.values()].filter((j) => j.shellId)
+  for (const j of shells) await moveOrStopShell(j.shellId, false)
+  renderBgJob()
+}
 document.addEventListener("click", (e) => {
   const panel = $("bg-job-panel")
   if (panel && !panel.hidden && !(e.target.closest && e.target.closest(".bg-job"))) {
@@ -8810,6 +8872,7 @@ const TOOL_META = {
   computer_screenshot: { icon: "📸", label: "Screenshot" },
   computer_zoom: { icon: "🔍", label: "Look closer" },
   computer_steps: { icon: "🖱", label: "Several steps" },
+  computer_done: { icon: "✓", label: "Computer Use off" },
   computer_ui: { icon: "🔎", label: "Read screen" },
   computer_windows: { icon: "🪟", label: "Windows" },
   computer_focus: { icon: "🪟", label: "Switch window" },

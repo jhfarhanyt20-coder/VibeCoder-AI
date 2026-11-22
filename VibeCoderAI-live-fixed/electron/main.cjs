@@ -6,7 +6,7 @@
  */
 const path = require("path")
 const { pathToFileURL } = require("node:url")
-const { app, BrowserWindow, Menu, clipboard, shell, nativeImage, session, dialog } = require("electron")
+const { app, BrowserWindow, Menu, Tray, clipboard, shell, nativeImage, session, dialog } = require("electron")
 const { initBackend, shutdownBackend } = require("./backend.cjs")
 const updater = require("./updater.cjs")
 const { setWindowTheme } = require("./window-theme.cjs")
@@ -66,6 +66,69 @@ function transparentTitleBarIcon() {
   )
 }
 
+/* ---------- close to the tray ----------
+   The window's close button hides VibeCoder AI in the Windows tray (notification
+   area) instead of quitting, so a stray click never ends the app or a running
+   agent. Click the tray icon to bring the window back; right-click it and choose
+   "Quit VibeCoder AI" to exit for real. Installing an update and shutting
+   Windows down still quit normally (both go through before-quit). */
+let quitting = false
+let tray = null
+let trayHintShown = false
+app.on("before-quit", () => { quitting = true })
+
+function showMainWindow() {
+  const w = BrowserWindow.getAllWindows()[0]
+  if (!w) return createWindow()
+  if (w.isMinimized()) w.restore()
+  if (!w.isVisible()) w.show()
+  w.focus()
+  return w
+}
+
+function quitFromTray() {
+  quitting = true
+  app.quit()
+}
+
+function createTray() {
+  if (tray) return tray
+  try {
+    const file = appIcon()
+    let img = file ? nativeImage.createFromPath(file) : null
+    if (!img || img.isEmpty()) return null
+    if (process.platform === "win32") img = img.resize({ width: 16, height: 16 })
+    tray = new Tray(img)
+    tray.setToolTip("VibeCoder AI")
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: "Open VibeCoder AI", click: showMainWindow },
+      { type: "separator" },
+      { label: "Quit VibeCoder AI", click: quitFromTray },
+    ]))
+    tray.on("click", showMainWindow)
+    tray.on("double-click", showMainWindow)
+  } catch (e) {
+    console.error("[vibe] tray unavailable:", e && e.message)
+    tray = null
+  }
+  return tray
+}
+
+/** Close button: hide to the tray. Without a tray icon there is no way back, so quit as before. */
+function closeToTray(win) {
+  win.on("close", (e) => {
+    if (quitting || !createTray()) return
+    e.preventDefault()
+    win.hide()
+    if (!trayHintShown && process.platform === "win32") {
+      trayHintShown = true
+      try {
+        tray.displayBalloon({ title: "VibeCoder AI is still running", content: "It is in the tray. Right-click the icon and choose Quit to exit.", iconType: "info" })
+      } catch {}
+    }
+  })
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1360,
@@ -103,6 +166,7 @@ function createWindow() {
   })
   win.loadFile(path.join(__dirname, "..", "renderer", "index.html"))
   attachContextMenu(win)
+  closeToTray(win)
 
   // Markdown links open target=_blank: never spawn an Electron window for them -
   // hand them to the real browser. Same for anything that tries to navigate away
@@ -183,11 +247,8 @@ if (!gotLock) {
   })
 } else {
   app.on("second-instance", () => {
-    const w = BrowserWindow.getAllWindows()[0]
-    if (w) {
-      if (w.isMinimized()) w.restore()
-      w.focus()
-    }
+    // the window may be hidden in the tray: bring it back
+    if (app.isReady()) showMainWindow()
   })
 
   // A crash must say so in the log instead of vanishing (the renderer logs via IPC).
@@ -232,8 +293,10 @@ app.whenReady().then(() => {
   }
 
   createWindow()
+  createTray()
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    else showMainWindow()
   })
 })
 

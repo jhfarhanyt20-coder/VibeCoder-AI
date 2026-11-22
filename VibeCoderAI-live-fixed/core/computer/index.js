@@ -26,6 +26,8 @@ const HELPER_SOURCE = path.join(__dirname, "helper.ps1")
 const RISKY_WORDS = /\b(send|submit|post|publish|tweet|reply|delete|remove|erase|wipe|uninstall|install|buy|purchase|pay|checkout|check out|place order|order now|transfer|donate|subscribe|unsubscribe|confirm|accept|agree|allow|grant|authorize|sign out|log out|logout|factory reset|reset (this )?(pc|computer|device|phone|password|account)|format (the )?(disk|drive|partition|volume|card|usb)|quick format|empty (the )?(recycle bin|trash)|permanently)\b/i
 const RISKY_PROGRAMS = /(^|[\\/\s"])(setup|install(er)?|uninstall|msiexec|regedit|reg|diskpart|format|bcdedit|netsh|sc|gpedit|secpol|taskschd|control|ms-settings:|cmd|powershell|pwsh|wscript|cscript|mmc)(\.exe|\.msc|\.msi|\b)/i
 const RISKY_KEYS = /^(shift\+delete|shift\+del|ctrl\+shift\+delete|ctrl\+shift\+del|alt\+shift\+delete)$/i
+// Windows (title or program) where Enter usually sends a message or an email.
+const SEND_APPS = /whatsapp|messenger|telegram|signal|discord|slack|teams|skype|outlook|thunderbird|gmail|\bmail\b|viber|imo\b|wechat|line\b/i
 
 function helperPath(home) {
   // Inside a packaged app the source sits in app.asar, which PowerShell cannot
@@ -143,7 +145,10 @@ class ComputerExecutor {
     const inputGap = this.baselineInput != null && Number.isFinite(s.lastInput) ? s.lastInput - this.baselineInput : 0
     const distance = this.lastCursor ? Math.hypot(s.x - this.lastCursor.x, s.y - this.lastCursor.y) : 0
     const typed = inputGap > 400
-    const moved = distance > 80
+    // A real hand on the mouse also shows up as new input (inputGap). A cursor
+    // that only drifted (a program or a DPI change moved it, no input at all)
+    // must not pause the task, unless it jumped a long way.
+    const moved = (distance > 80 && inputGap > 0) || distance > 300
     if (typed || moved) {
       const why = moved ? `the mouse moved ${Math.round(distance)} px` : `keyboard or mouse input ${Math.round(inputGap / 100) / 10} s after the agent's last action`
       this.log({ event: "paused", reason: why, cursor: { x: s.x, y: s.y }, last: this.lastCursor, inputGap })
@@ -205,7 +210,12 @@ function riskOf(kind, detail = {}) {
     if (RISKY_PROGRAMS.test(what) || /\.(msi|msix|appx|bat|cmd|ps1|vbs|reg)\b/i.test(what)) return `start "${what.trim()}" (it can install software or change system settings)`
     return ""
   }
-  if (kind === "key") return RISKY_KEYS.test(String(detail.keys || "").replace(/\s+/g, "")) ? `press ${detail.keys} (permanent delete)` : ""
+  if (kind === "key") {
+    if (RISKY_KEYS.test(String(detail.keys || "").replace(/\s+/g, ""))) return `press ${detail.keys} (permanent delete)`
+    // Enter in a chat or mail app sends the message: ask, like clicking "Send".
+    if (/(^|\s)(ctrl\+)?enter$/i.test(String(detail.keys || "").trim()) && SEND_APPS.test(String(detail.window || ""))) return `press Enter in "${detail.window}" (this may send a message)`
+    return ""
+  }
   if (kind === "click") {
     const name = String(detail.name || "")
     return name && RISKY_WORDS.test(name) ? `click "${name}"${detail.window ? ` in "${detail.window}"` : ""}` : ""

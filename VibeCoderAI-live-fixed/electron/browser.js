@@ -159,9 +159,45 @@ class BrowserManager {
     if (/^javascript:/i.test(target)) throw new Error("javascript: URLs are not allowed")
     const { tab, contents } = await this._getTab(tabID)
     await contents.loadURL(target)
-    tab.url = target
+    // Record the final URL after redirects, not just the requested one.
+    let finalUrl = target
+    try { finalUrl = contents.getURL() || target } catch {}
+    tab.url = finalUrl
+    try { tab.title = contents.getTitle() || tab.title || "" } catch {}
     tab.refs.clear()
     return true
+  }
+
+  /** Current URL/title of a tab's page (falls back to the cached values). */
+  _pageInfo(tab, contents) {
+    let url = tab.url || ""
+    let title = tab.title || ""
+    try { url = contents.getURL() || url } catch {}
+    try { title = contents.getTitle() || title } catch {}
+    tab.url = url
+    tab.title = title
+    return { url, title }
+  }
+
+  /**
+   * Additive: decorate an action result with the tab's page state after the
+   * action (tabID, url, title, urlBefore, navigated, generation). When the
+   * action may start a navigation (click / key press), give it a short moment
+   * to begin and then wait (bounded) for the load to settle.
+   */
+  async _afterAction(tab, contents, urlBefore, result, { settleMs = 0, maxMs = 3000 } = {}) {
+    if (settleMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, settleMs))
+      const deadline = Date.now() + maxMs
+      try {
+        while (typeof contents.isLoading === "function" && contents.isLoading() && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 100))
+        }
+      } catch {}
+    }
+    const { url, title } = this._pageInfo(tab, contents)
+    const base = result && typeof result === "object" && !Array.isArray(result) ? result : { value: result }
+    return { ...base, tabID: tab.id, url, title, urlBefore, navigated: !!urlBefore && !!url && url !== urlBefore, generation: tab.generation || 0 }
   }
 
   async captureScreenshot(tabID, options = {}) {
@@ -203,7 +239,7 @@ class BrowserManager {
    * bounded by the same deadline, so a stuck page cannot hang the run.
    */
   async wait(tabID, options = {}) {
-    const { contents } = await this._getTab(tabID)
+    const { tab, contents } = await this._getTab(tabID)
     const selector = options.selector ? String(options.selector) : ""
     const text = options.text ? String(options.text) : ""
     const networkIdle = !!options.networkIdle
@@ -248,10 +284,10 @@ class BrowserManager {
           // race the page probe against the remaining budget
           const found = await withTimeout(contents.executeJavaScript(probe), remaining)
           if (found && idleDone) {
-            return { elapsedMs: Date.now() - started, selector, text, networkIdle }
+            return { elapsedMs: Date.now() - started, selector, text, networkIdle, tabID: tab.id, ...this._pageInfo(tab, contents) }
           }
         } else if (!probe && idleDone) {
-          return { elapsedMs: Date.now() - started, selector, text, networkIdle }
+          return { elapsedMs: Date.now() - started, selector, text, networkIdle, tabID: tab.id, ...this._pageInfo(tab, contents) }
         }
         if (Date.now() >= deadline) {
           const what =
@@ -321,13 +357,15 @@ class BrowserManager {
       throw new Error(`Element ref ${ref} is from an older snapshot (generation ${gen}, current ${curGen}). Call browser.snapshot again.`)
     }
     const safeRef = JSON.stringify(String(ref))
-    return contents.executeJavaScript(`(() => {
+    const urlBefore = this._pageInfo(tab, contents).url
+    const result = await contents.executeJavaScript(`(() => {
       const el = document.querySelector('[data-vibe-ref=' + ${safeRef} + ']');
       if (!el || !el.isConnected) throw new Error('Element ref is stale; take a new snapshot');
       el.scrollIntoView({ block: 'center', inline: 'center' });
       el.click();
       return { clicked: ${safeRef}, tag: el.tagName.toLowerCase(), generation: ${curGen} };
     })()`)
+    return this._afterAction(tab, contents, urlBefore, result, { settleMs: 250 })
   }
 
   async fill(tabID, ref, text, generation) {
@@ -340,7 +378,8 @@ class BrowserManager {
     }
     const safeRef = JSON.stringify(String(ref))
     const safeText = JSON.stringify(String(text ?? ""))
-    return contents.executeJavaScript(`(() => {
+    const urlBefore = this._pageInfo(tab, contents).url
+    const result = await contents.executeJavaScript(`(() => {
       const el = document.querySelector('[data-vibe-ref=' + ${safeRef} + ']');
       if (!el || !el.isConnected) throw new Error('Element ref is stale; take a new snapshot');
       if (el.matches('input,textarea,select')) {
@@ -356,28 +395,34 @@ class BrowserManager {
       el.dispatchEvent(new Event('change', { bubbles: true }));
       return { filled: ${safeRef} };
     })()`)
+    return this._afterAction(tab, contents, urlBefore, result)
   }
 
   async press(tabID, key) {
-    const { contents } = await this._getTab(tabID)
+    const { tab, contents } = await this._getTab(tabID)
     const normalized = String(key || "").trim()
     if (!normalized || normalized.length > 32) throw new Error("A valid key is required")
     const keys = { Enter: "ENTER", Escape: "ESC", Esc: "ESC", Tab: "TAB", Space: "SPACE", Backspace: "BACKSPACE", Delete: "DELETE", ArrowUp: "UP", ArrowDown: "DOWN", ArrowLeft: "LEFT", ArrowRight: "RIGHT", Home: "HOME", End: "END", PageUp: "PAGEUP", PageDown: "PAGEDOWN" }
     const keyCode = keys[normalized] || normalized.toUpperCase()
+    const urlBefore = this._pageInfo(tab, contents).url
+    let result
     try {
       contents.sendInputEvent({ type: "keyDown", keyCode })
       contents.sendInputEvent({ type: "keyUp", keyCode })
-      return { pressed: normalized }
+      result = { pressed: normalized }
     } catch {
       const safeKey = JSON.stringify(normalized)
-      return contents.executeJavaScript(`(() => { const t = document.activeElement || document.body; for (const type of ['keydown','keypress','keyup']) t.dispatchEvent(new KeyboardEvent(type, {key:${safeKey}, bubbles:true, cancelable:true})); return {pressed:${safeKey}} })()`)
+      result = await contents.executeJavaScript(`(() => { const t = document.activeElement || document.body; for (const type of ['keydown','keypress','keyup']) t.dispatchEvent(new KeyboardEvent(type, {key:${safeKey}, bubbles:true, cancelable:true})); return {pressed:${safeKey}} })()`)
     }
+    return this._afterAction(tab, contents, urlBefore, result, { settleMs: 250 })
   }
 
   async scroll(tabID, deltaY) {
-    const { contents } = await this._getTab(tabID)
+    const { tab, contents } = await this._getTab(tabID)
     const amount = Math.max(-10000, Math.min(10000, Math.trunc(Number(deltaY) || 0)))
-    return contents.executeJavaScript(`(() => { window.scrollBy({ top: ${amount}, left: 0, behavior: 'auto' }); return { scrollY: window.scrollY }; })()`)
+    const urlBefore = this._pageInfo(tab, contents).url
+    const result = await contents.executeJavaScript(`(() => { window.scrollBy({ top: ${amount}, left: 0, behavior: 'auto' }); return { scrollY: window.scrollY }; })()`)
+    return this._afterAction(tab, contents, urlBefore, result)
   }
 
   async activateTab(tabID) {

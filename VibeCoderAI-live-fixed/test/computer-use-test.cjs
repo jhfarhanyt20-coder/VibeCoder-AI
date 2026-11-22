@@ -173,6 +173,19 @@ test("the agent pauses when the user types on the keyboard between steps", async
   assert.equal(k.calls.some((c) => c.cmd === "click"), false)
 })
 
+test("a cursor that only drifted (no real input) does not pause the task", async () => {
+  if (process.platform !== "win32") return
+  const drift = fakeExecutor({ cursor: { x: 533, y: 300 }, lastInput: 1000 })
+  drift.ex.noteCursor(400, 300) // 133 px away, but no new keyboard/mouse input
+  drift.ex.baselineInput = 1000
+  await tool("computer_click").run({ element: 1 }, ctxFor(drift.ex))
+  assert.ok(drift.calls.some((c) => c.cmd === "click"), "the click still runs")
+  const hand = fakeExecutor({ cursor: { x: 533, y: 300 }, lastInput: 1200 })
+  hand.ex.noteCursor(400, 300) // same distance with real input: pause
+  hand.ex.baselineInput = 1000
+  await assert.rejects(tool("computer_click").run({ element: 1 }, ctxFor(hand.ex)), /using the computer \(the mouse moved \d+ px/)
+})
+
 test("the agent stops when the user takes the mouse, hits the corner, or presses the kill switch", async () => {
   if (process.platform !== "win32") return
   const moved = fakeExecutor({ cursor: { x: 900, y: 500 } })

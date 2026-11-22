@@ -1,18 +1,28 @@
 # VibeCoder AI — Project Rules (read this first)
 
 Last updated: 2026-11-22
-Current release: **0.3.20** (tag `v0.3.20`, commit `5119d2e`, published 2026-11-22) —
-read the chat while the agent writes (no pull-back, no wobble), the spare space
-closes by itself, full Facebook Page control (edit/delete/hide/photo/Page info,
-Messenger Human Agent replies).
+Current release: **0.3.22** (tag `v0.3.22`, commit `a52b0c8`, published 2026-11-22) —
+close to tray, tool results the model can trust (honest exit codes, redirected
+output shown, shifted Computer Use numbers, browser page reports), safer
+connectors (no tokens to the model, timeouts, github_api asks before
+merge/ref/content writes), Running panel with collapsible command cards.
 Release assets verified (all uploaded by `github-actions[bot]`, workflow run
-`44936878289` succeeded): `VibeCoderAI-v2-0.3.20.exe` (122122916 bytes),
-`VibeCoderAI-v2-0.3.20.exe.blockmap` (129390 bytes), `latest.yml` (`version: 0.3.20`)
-and `VibeCoder-CLI-0.3.20.tgz` (307420 bytes). One release per tag, no duplicates.
-Previous: 0.3.19 (`17bd868`, run `44913166157`, also complete and bot-uploaded).
+`45033548888` succeeded): `VibeCoderAI-v2-0.3.22.exe` (122135396 bytes),
+`VibeCoderAI-v2-0.3.22.exe.blockmap` (129544 bytes), `latest.yml` (`version: 0.3.22`)
+and `VibeCoder-CLI-0.3.22.tgz` (318431 bytes). One release per tag, no duplicates.
+Previous: 0.3.20 (`5119d2e`, run `44936878289`, also complete and bot-uploaded).
 Resolved: the blockmap gap of 0.3.13 (differential updates work again since 0.3.14).
 
 Release history notes (so a fresh session does not misread the feed):
+- **0.3.21 has a tag but no GitHub Release.** Tag `v0.3.21` (commit `bdac845`) exists;
+  its workflow run `45032801303` failed on 2026-11-22 in the test step (two new tests
+  matched `
+}
+` in source read from the runner's CRLF checkout), so nothing was
+  published. 0.3.22 (`a52b0c8`) carries the same features with the tests fixed;
+  users went 0.3.20 → 0.3.22. New tests that read source text must normalise
+  `
+` first.
 - **0.3.15 has a tag but no GitHub Release.** Tag `v0.3.15` (commit `5c14d16`) exists;
   its workflow run `44579360831` failed on 2026-11-19, so nothing was published and
   0.3.16 followed. No patch number was skipped; users went 0.3.14 → 0.3.16.

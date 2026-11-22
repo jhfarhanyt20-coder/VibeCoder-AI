@@ -503,4 +503,48 @@ Thin vertical slice first:
 - [x] VIBE.md "Current release" and this section updated.
 - [x] Website "What's new" updated (website commit `4413ec5`).
 
-### Next release (0.3.21): same checklist, one patch up, never skip.
+## 14. Releases 0.3.21 (not published) and 0.3.22 — 2026-11-22
+
+- **0.3.21** (commit `bdac845`, tag `v0.3.21`, run `45032801303` failed in the test
+  step): no GitHub Release. Cause: `test/tool-audit-fixes-test.cjs` and
+  `test/shell-review-fixes-test.cjs` read `core/tools/index.js` and matched `
+}
+`;
+  the Windows runner checks files out with CRLF. Fixed by normalising `
+`; the
+  whole suite was then run once on a CRLF copy of the tree before tagging again.
+- **0.3.22** (commit `a52b0c8`, tag `v0.3.22`, run `45033548888`, owner approved):
+  - close button hides the app in the Windows tray; tray menu Open / Quit
+    (`electron/main.cjs`, `test/tray-close-test.cjs`);
+  - shell: `exit code N` label, python -c / node -e quoting hint, shellOutput shows
+    a redirected log's tail (UTF-16 aware), no deleting `./.vibe-scratch` while a
+    running shell uses it (`test/shell-review-fixes-test.cjs`);
+  - Computer Use: shifted element numbers reported, Enter in chat/mail apps asks,
+    cursor drift without input does not pause, idle-off and `computer_done`;
+  - browser: per-tab permission host (unknown site always asks, never saved),
+    actions report URL/title/generation, evaluate/snapshot clipped
+    (`test/browser-tools-test.cjs`; `test/core-test.mjs` updated for the new rule);
+  - Facebook/GitHub: tokens redacted, 30 s / 10 min timeouts, `github_api` asks before
+    merge/ref/content writes (query strings no longer bypass), ad money in real
+    units, new insights metrics, `github_files` line ranges and binary detection;
+  - apply_patch reads `patch`/`input`, webfetch head/`<link>` cleanup, Bangla help
+    topics, `memory` asks unless the user asked to remember, clearer hints
+    (`test/tool-audit-fixes-test.cjs`);
+  - Running panel: shell commands only, collapsible terminal cards; Shell chip.
+
+### 0.3.22 release checklist (done)
+- [x] Owner approved the release.
+- [x] `package.json` and both root entries of `package-lock.json` → **0.3.22**.
+- [x] `npm test` green from `VibeCoderAI-live-fixed` (and on a CRLF copy).
+- [x] Only the intended files committed; `master` pushed.
+- [x] Tag `v0.3.22` pushed.
+- [x] Release run `45033548888` succeeded.
+- [x] One release with `.exe` (122135396 bytes), `.exe.blockmap` (129544),
+      `latest.yml` (348) and `VibeCoder-CLI-0.3.22.tgz` (318431), all by
+      `github-actions[bot]`.
+- [x] `releases/latest/download/latest.yml` shows `version: 0.3.22`.
+- [x] VIBE.md "Current release" and this section updated.
+- [x] Website "What's new" updated (website commits `cf3d5fd`, `ac47512`); `/api/release` shows 0.3.22.
+- [x] README (root and engine) updated.
+
+### Next release (0.3.23): same checklist, one patch up, never skip.

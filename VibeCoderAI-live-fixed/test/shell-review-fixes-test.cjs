@@ -8,7 +8,7 @@ const os = require("node:os")
 const path = require("node:path")
 const tools = require("../core/tools")
 const jobs = require("../core/jobs")
-const src = fs.readFileSync(path.join(__dirname, "..", "core", "tools", "index.js"), "utf8")
+const src = fs.readFileSync(path.join(__dirname, "..", "core", "tools", "index.js"), "utf8").replace(/\r\n/g, "\n") // CI checks files out with CRLF
 const T = tools._internal
 
 // 1) python -c with quotes/backslashes is recognised; plain one-liners are not

@@ -8,7 +8,7 @@ const path = require("node:path")
 const tools = require("../core/tools")
 const toolargs = require("../core/agent/toolargs")
 const T = (n) => tools.ALL.find((t) => t.name === n)
-const src = fs.readFileSync(path.join(__dirname, "..", "core", "tools", "index.js"), "utf8")
+const src = fs.readFileSync(path.join(__dirname, "..", "core", "tools", "index.js"), "utf8").replace(/\r\n/g, "\n") // CI checks files out with CRLF
 
 ;(async () => {
   // apply_patch: "patch" / "input" are read as patchText; an empty patch says what is missing

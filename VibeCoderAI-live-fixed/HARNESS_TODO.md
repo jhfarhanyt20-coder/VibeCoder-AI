@@ -547,4 +547,43 @@ Thin vertical slice first:
 - [x] Website "What's new" updated (website commits `cf3d5fd`, `ac47512`); `/api/release` shows 0.3.22.
 - [x] README (root and engine) updated.
 
-### Next release (0.3.23): same checklist, one patch up, never skip.
+## 15. Release 0.3.23 — 2026-11-23
+
+- **0.3.23** (commit `a89caf9`, tag `v0.3.23`, run `45154487271`, owner approved):
+  - security audit fixes: `core/perm/builtin.js` (anchored built-in bash rules,
+    scratch-clean), `core/agent/loop.js` (`checkPermissions`: flags per segment,
+    one prompt per compound command via engine `precheck`/`persistAs`, block-aware
+    `splitCommand`), `core/agents` + `core/plugins` + `core/harness/trust.js`
+    (repo files confined until trusted), `core/computer` + `core/tools/computer.js`
+    (Win+R/console/launch/unnamed-click checks), `core/tools/browser.js` (risky
+    clicks, secret fields), `core/store/secrets.js` (stdin), `core/harness/guard.js`
+    (redaction), `core/llm/*` (no key on redirect/origin change, http only for
+    LAN), `electron/vibecoder-account.cjs` (gateway allow-list),
+    `renderer/markdown.js` + `electron/main.cjs` (no //host or file: URLs);
+  - Electron 45.4.1, electronFuses (runAsNode kept: diagnostics uses
+    ELECTRON_RUN_AS_NODE; cookie encryption NOT enabled: one-way), dev scripts
+    excluded from the installer; release.yml least privilege, persist-credentials
+    false, actions pinned to SHAs;
+  - `renderer/chat-steady.js`: peakTotal is the real height (a big fold no longer
+    leaves the chat stuck at the top);
+  - `test/renderer-app-source.cjs`: tests read the renderer source through it
+    (prepares splitting `renderer/app.js` into ordered parts).
+- Verified before tagging: `npm test` green, the suite on a CRLF copy, a local
+  installer build started with the fuses, and the dev app driven with a scripted
+  local model (one prompt per command, risky delete asked, //host image dropped).
+- Open: old PowerShell 4104 events from before 0.3.23 may still hold key
+  material; clearing that log needs the owner's approval.
+
+### 0.3.23 release checklist (done)
+- [x] Owner approved the release.
+- [x] `package.json` and both root entries of `package-lock.json` → **0.3.23**.
+- [x] `npm test` green (and on a CRLF copy); local installer build OK.
+- [x] Only the intended files committed; `master` pushed.
+- [x] Tag `v0.3.23` pushed; release run `45154487271` succeeded.
+- [x] One release with `.exe` (122168389), `.exe.blockmap` (129114), `latest.yml`
+      (348) and `VibeCoder-CLI-0.3.23.tgz` (340716), all by `github-actions[bot]`.
+- [x] `releases/latest/download/latest.yml` shows `version: 0.3.23`.
+- [x] VIBE.md "Current release" and this section updated; README (root + engine).
+- [x] Website "What's new" (`0ed96e6`) and sign-in page (`3e1ecca`) updated.
+
+### Next release (0.3.24): same checklist, one patch up, never skip.

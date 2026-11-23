@@ -1,16 +1,18 @@
 # VibeCoder AI — Project Rules (read this first)
 
-Last updated: 2026-11-22
-Current release: **0.3.22** (tag `v0.3.22`, commit `a52b0c8`, published 2026-11-22) —
-close to tray, tool results the model can trust (honest exit codes, redirected
-output shown, shifted Computer Use numbers, browser page reports), safer
-connectors (no tokens to the model, timeouts, github_api asks before
-merge/ref/content writes), Running panel with collapsible command cards.
+Last updated: 2026-11-23
+Current release: **0.3.23** (tag `v0.3.23`, commit `a89caf9`, published 2026-11-23) —
+security hardening from a full prompt-injection audit (anchored built-in shell
+rules, forceAsk per segment, repo agents/plugins confined until trusted,
+Computer Use and browser risk checks, secrets via stdin, more redaction, no key
+on redirects or changed base URLs, UNC/file: image block), Electron 45.4.1 with
+fuses, CI least privilege + pinned actions, one prompt per compound command,
+steady chat on long runs.
 Release assets verified (all uploaded by `github-actions[bot]`, workflow run
-`45033548888` succeeded): `VibeCoderAI-v2-0.3.22.exe` (122135396 bytes),
-`VibeCoderAI-v2-0.3.22.exe.blockmap` (129544 bytes), `latest.yml` (`version: 0.3.22`)
-and `VibeCoder-CLI-0.3.22.tgz` (318431 bytes). One release per tag, no duplicates.
-Previous: 0.3.20 (`5119d2e`, run `44936878289`, also complete and bot-uploaded).
+`45154487271` succeeded): `VibeCoderAI-v2-0.3.23.exe` (122168389 bytes),
+`VibeCoderAI-v2-0.3.23.exe.blockmap` (129114 bytes), `latest.yml` (`version: 0.3.23`)
+and `VibeCoder-CLI-0.3.23.tgz` (340716 bytes). One release per tag, no duplicates.
+Previous: 0.3.22 (`a52b0c8`, run `45033548888`, also complete and bot-uploaded).
 Resolved: the blockmap gap of 0.3.13 (differential updates work again since 0.3.14).
 
 Release history notes (so a fresh session does not misread the feed):

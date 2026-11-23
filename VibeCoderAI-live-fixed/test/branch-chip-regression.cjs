@@ -6,7 +6,7 @@ const fs = require("node:fs")
 const path = require("node:path")
 const vm = require("node:vm")
 
-const source = fs.readFileSync(path.join(__dirname, "..", "renderer", "app.js"), "utf8")
+const source = require("./renderer-app-source.cjs")()
 const start = source.indexOf("function hideBranchChip()")
 const end = source.indexOf("/* Git subcommands that only READ the repo")
 assert(start > 0 && end > start, "branch chip functions exist")

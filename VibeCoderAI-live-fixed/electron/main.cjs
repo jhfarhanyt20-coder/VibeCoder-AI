@@ -13,6 +13,14 @@ const { setWindowTheme } = require("./window-theme.cjs")
 
 const APP_ENTRY = pathToFileURL(path.join(__dirname, "..", "renderer", "index.html")).href
 const WEBVIEW_URL = /^(https?|about|file|data):/i
+/** true for a file: URL that names a host (Windows UNC / SMB) - never load it.
+ *  file:///C:/... (empty host) is the app itself and stays allowed. */
+function isUncFileUrl(url) {
+  const raw = String(url || "")
+  if (!/^file:/i.test(raw)) return false
+  if (/^file:[\\/]{3}[\\/]/i.test(raw)) return true // file:////host/share
+  try { return !!new URL(raw).hostname } catch { return true }
+}
 
 /* The native menu bar (File/Edit/View/Window) is not wanted - the app has its own
    UI. Copy/paste keeps working through the right-click menu and Ctrl+C/Ctrl+V
@@ -291,6 +299,20 @@ app.whenReady().then(() => {
     updater.startPeriodicCheck()
     setTimeout(() => updater.checkForUpdates({ silent: true }).catch(() => {}), 4000)
   }
+
+  // file://HOST/... is a UNC path on Windows: loading it (a model-written
+  // <img src="//host/x.png"> on this file:// page resolves to file://host/...)
+  // makes Windows try SMB and leak the user's NTLM hash. Cancel every file:
+  // request that names a host; the app's own file:///C:/... loads stay allowed.
+  const blockUncFileRequests = (ses) => {
+    try {
+      ses.webRequest.onBeforeRequest({ urls: ["file://*/*"] }, (details, callback) => {
+        callback({ cancel: isUncFileUrl(details.url) })
+      })
+    } catch {}
+  }
+  blockUncFileRequests(session.defaultSession)
+  try { blockUncFileRequests(session.fromPartition("persist:vibecoder-browser")) } catch {}
 
   createWindow()
   createTray()

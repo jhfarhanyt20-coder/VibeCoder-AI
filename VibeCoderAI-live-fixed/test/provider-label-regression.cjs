@@ -3,7 +3,7 @@ const assert = require("node:assert/strict")
 const fs = require("node:fs")
 const path = require("node:path")
 const vm = require("node:vm")
-const app = fs.readFileSync(path.join(__dirname, "..", "renderer", "app.js"), "utf8")
+const app = require("./renderer-app-source.cjs")()
 const labelCode = app.slice(app.indexOf("function modelDisplayLabel("), app.indexOf("\nfunction applyProviderCatalog"))
 const listCode = app.slice(app.indexOf("function renderModelList("), app.indexOf("\nconst modelMenu ="))
 class Element {

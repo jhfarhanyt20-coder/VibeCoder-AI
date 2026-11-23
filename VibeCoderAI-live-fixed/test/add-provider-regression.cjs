@@ -6,7 +6,7 @@ const fs = require("node:fs")
 const path = require("node:path")
 const vm = require("node:vm")
 
-const source = fs.readFileSync(path.join(__dirname, "..", "renderer", "app.js"), "utf8").replace(/\r\n/g, "\n")
+const source = require("./renderer-app-source.cjs")().replace(/\r\n/g, "\n")
 const pick = (from, to) => {
   const a = source.indexOf(from)
   const b = source.indexOf(to, a + from.length)

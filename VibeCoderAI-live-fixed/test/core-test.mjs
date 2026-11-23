@@ -2316,13 +2316,14 @@ test("V-05: compound bash command is split and a denied tail blocks the whole ca
   const unsub = vibe.event.subscribe((ev) => {
     if (ev.type === "permission.ask" && ev.tool === "bash") {
       asked.push(ev.subject)
-      void vibe.permission.reply(ev.permissionId, ev.subject.startsWith("echo") ? "once" : "deny")
+      // The user sees the WHOLE command in one prompt and refuses the touch.
+      void vibe.permission.reply(ev.permissionId, ev.subject.includes("touch") ? "deny" : "once")
     }
   })
   const types = []
   for await (const ev of vibe.session.prompt(s.id, "run a compound command")) types.push(ev.type)
   unsub()
-  assert.deepEqual(asked, ["echo hi", `touch "${marker}"`], "compound command is split into its segments")
+  assert.deepEqual(asked, [`echo hi && touch "${marker}"`], "a compound command is asked once, showing every segment")
   assert.equal(fs.existsSync(marker), false, "a denied command must never execute")
   m.close()
 })

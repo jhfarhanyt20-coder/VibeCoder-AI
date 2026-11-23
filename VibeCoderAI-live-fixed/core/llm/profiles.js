@@ -8,7 +8,6 @@
  */
 const fs = require("fs")
 const path = require("path")
-const { spawnSync } = require("child_process")
 const { homeDir } = require("../util")
 const { repairProfile } = require("./provider-meta")
 const secrets = require("../store/secrets")
@@ -78,6 +77,66 @@ const BUILTIN = [
   },
 ]
 
+/* ---- provider endpoint safety ----------------------------------------- */
+
+/** env var names a profile may read its key from: *KEY / *TOKEN / *SECRET only,
+ *  so a profile can never point apiKeyEnv at PATH, USERPROFILE, ... and ship it. */
+const API_KEY_ENV_RE = /^[A-Z0-9_]*(?:KEY|TOKEN|SECRET)$/
+const validApiKeyEnv = (name) => typeof name === "string" && API_KEY_ENV_RE.test(name)
+
+/** loopback / private-LAN hosts where cleartext http is acceptable */
+function isPrivateHost(hostname) {
+  let h = String(hostname || "").toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "")
+  if (!h) return false
+  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local")) return true
+  if (h === "::1" || h === "0:0:0:0:0:0:0:1") return true
+  const mapped = h.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
+  if (mapped) h = mapped[1]
+  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (!m) return false
+  const [a, b] = [Number(m[1]), Number(m[2])]
+  if ([m[1], m[2], m[3], m[4]].some((x) => Number(x) > 255)) return false
+  return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+}
+
+/**
+ * Validate a provider base URL. https always; http only for loopback / private
+ * LAN hosts (a local model server), because the API key travels in a header.
+ * Returns the parsed URL; throws a clear error otherwise.
+ */
+function checkProviderURL(value) {
+  let url
+  try {
+    url = new URL(String(value || "").trim())
+  } catch {
+    throw new Error("Provider API base URL is not a valid URL")
+  }
+  if (url.protocol === "https:") return url
+  if (url.protocol === "http:") {
+    if (isPrivateHost(url.hostname)) return url
+    throw new Error(
+      `Provider API base URL must use https:// for ${url.hostname}. Plain http:// is only allowed for localhost or a private network address (127.x, 10.x, 172.16-31.x, 192.168.x, *.local) because the API key would be sent unencrypted.`,
+    )
+  }
+  throw new Error("Provider API base URL must use http or https")
+}
+
+const originOf = (value) => {
+  try {
+    return new URL(String(value || "").trim()).origin.toLowerCase()
+  } catch {
+    return ""
+  }
+}
+
+/** true when a saved profile's endpoint ORIGIN differs from the new base URL */
+function originChanged(prev, nextBaseURL) {
+  if (!prev || !prev.baseURL || !nextBaseURL) return false
+  const a = originOf(prev.baseURL)
+  const b = originOf(nextBaseURL)
+  return !!a && !!b && a !== b
+}
+
 const read = (f, fallback) => {
   try {
     return JSON.parse(fs.readFileSync(f, "utf8"))
@@ -128,23 +187,19 @@ function upsertProfile(profile, home) {
   if (i >= 0) user[i] = { ...user[i], ...clean }
   else user.push(clean)
   fs.mkdirSync(path.dirname(f), { recursive: true })
-  fs.writeFileSync(f, JSON.stringify(user, null, 2))
+  fs.writeFileSync(f, JSON.stringify(user, null, 2), { mode: 0o600 })
+  // custom headers may carry credentials: same owner-only hardening as auth.json
+  try {
+    fs.chmodSync(f, 0o600)
+  } catch {}
+  hardenFileAcl(f)
   return { id: clean.id, baseURL: clean.baseURL, format: clean.format, hints }
 }
 
 /* chmod 0600 is a no-op on Windows; icacls pins the file to the current user.
-   Runs once per file per process (the ACL survives later writes to the same file). */
-const aclDone = new Set()
-function hardenFileAcl(f) {
-  if (aclDone.has(f)) return
-  aclDone.add(f)
-  if (process.platform !== "win32") return
-  const user = process.env.USERNAME || process.env.USER
-  if (!user) return
-  try {
-    spawnSync("icacls", [f, "/inheritance:r", "/grant:r", `${user}:F`], { windowsHide: true, timeout: 15000, stdio: "ignore" })
-  } catch {}
-}
+   Runs once per file per process (the ACL survives later writes to the same file).
+   Shared helper: core/store/private-file.js */
+const { hardenFileAcl } = require("../store/private-file")
 
 function setKey(id, key, home) {
   const normalized = String(key == null ? "" : key).trim()
@@ -166,7 +221,7 @@ function setKey(id, key, home) {
 
 function getKey(profile, home) {
   if (profile.noAuth) return ""
-  if (profile.apiKeyEnv && process.env[profile.apiKeyEnv]) {
+  if (validApiKeyEnv(profile.apiKeyEnv) && process.env[profile.apiKeyEnv]) {
     const key = String(process.env[profile.apiKeyEnv]).trim().replace(/^bearer\s+/i, "")
     if (!/^[\x20-\x7E]*$/.test(key)) throw new Error(`The API key in ${profile.apiKeyEnv} contains non-ASCII characters; correct that environment variable.`)
     return key
@@ -182,7 +237,7 @@ function getKey(profile, home) {
     return key.trim().replace(/^bearer\s+/i, "")
   }
   // Never borrow credentials from another profile just because the host matches.
-  throw new Error(`No API key for "${profile.id}". Run: vibe auth add ${profile.id}` + (profile.apiKeyEnv ? ` (or set ${profile.apiKeyEnv})` : ""))
+  throw new Error(`No API key for "${profile.id}". Run: vibe auth add ${profile.id}` + (validApiKeyEnv(profile.apiKeyEnv) ? ` (or set ${profile.apiKeyEnv})` : ""))
 }
 
 /**
@@ -240,11 +295,28 @@ const warmAuthCache = (home) => migrateAuthKeys(home)
  *  runs for every profile on every list, the UI only needs the badge. */
 const hasKey = (profile, home) => {
   if (profile.noAuth) return true
-  if (profile.apiKeyEnv && process.env[profile.apiKeyEnv]) return true
+  if (validApiKeyEnv(profile.apiKeyEnv) && process.env[profile.apiKeyEnv]) return true
   const auth = read(authFile(home), {})
   if (typeof auth[profile.id] === "string" && auth[profile.id]) return true
   // A different profile's credential does not count as configured for this one.
   return false
 }
 
-module.exports = { BUILTIN, listProfiles, getProfile, upsertProfile, setKey, getKey, hasKey, copyKey, migrateAuthKeys, warmAuthCache }
+module.exports = {
+  BUILTIN,
+  listProfiles,
+  getProfile,
+  upsertProfile,
+  setKey,
+  getKey,
+  hasKey,
+  copyKey,
+  migrateAuthKeys,
+  warmAuthCache,
+  hardenFileAcl,
+  isPrivateHost,
+  checkProviderURL,
+  originChanged,
+  validApiKeyEnv,
+  API_KEY_ENV_RE,
+}

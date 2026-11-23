@@ -16,6 +16,7 @@ const playbookStore = require("../harness/playbooks")
 const forms = require("../forms")
 const { applyEdit, fileGuard } = require("./editkit")
 const { isSecretFile, redactText } = require("../harness/guard")
+const { hasDynamicShell } = require("../perm/builtin")
 const snapshots = require("../store/snapshots")
 const { diagnose, inspect: inspectDiagnostics, format: formatDiagnostics } = require("./diagnostics")
 
@@ -312,7 +313,10 @@ const bash = {
     const command = String(a.command || "")
     // Dynamic command substitution can hide a second command after an
     // allow-listed prefix. Ask even when a loose allow rule matches.
-    const dynamic = /\$\(|`|\$\{|(?:^|[\s;|])iex(?:\s|$)|Invoke-Expression/i.test(command)
+    // PowerShell sub-expressions / script blocks (`(calc)`, `@(..)`, `& {..}`),
+    // Start-Process and nested shells (`cmd /c`, `powershell -enc`) count too.
+    // The loop carries this flag into every split segment.
+    const dynamic = /\$\(|`|\$\{|(?:^|[\s;|])iex(?:\s|$)|Invoke-Expression/i.test(command) || hasDynamicShell(command)
     return { tool: "bash", subject: command, ...(dynamic ? { forceAsk: true } : {}) }
   },
   paths: () => [],
@@ -479,13 +483,43 @@ const shellInput = {
     },
     required: ["shellId"],
   },
-  perm: (a) => ({ tool: "bash", subject: `input ${a.shellId}` }),
+  // The prompt shows WHAT will be typed (secret-looking values redacted,
+  // truncated), and the approval is never saved: an "always" for
+  // `input sh_x` used to let every later keystroke into that job through unseen.
+  perm: (a) => ({ tool: "bash", subject: shellInputSubject(a), neverPersist: true }),
   paths: () => [],
   run(a, c) {
     if (!c.engine || typeof c.engine.shellInput !== "function") throw new Error("Live shell input is unavailable in this context.")
+    // Never type a secret for the user: a job stopped at a password / code
+    // prompt gets only Enter/EOF from the agent; the user answers it themselves.
+    if (a.text && secretPromptWaiting(a.shellId)) throw new Error(`Not sent: ${a.shellId} is waiting for a password, passphrase or verification code. Never enter secrets yourself - ask the user to type it into the shell.`)
     const result = c.engine.shellInput(c.session && c.session.id, a.shellId, a.text || "", { newline: a.enter !== false, eof: a.eof === true })
     return `Sent ${result.bytes} byte${result.bytes === 1 ? "" : "s"} to ${a.shellId}${result.eof ? " and closed stdin" : ""}.`
   },
+}
+
+// The last line of the prompt names a secret ("Enter passphrase for key 'x':").
+const SECRET_PROMPT = /\b(?:password|passphrase|passcode|pin|verification code|one[- ]time (?:code|password)|otp|2fa|mfa|api[- ]?key|token|secret)\b[^\n]*[:?]\s*$/i
+function secretPromptWaiting(shellId) {
+  try {
+    const job = jobs.get(shellId)
+    const last = String((job && job.waitingPrompt) || "").trimEnd().split("\n").pop()
+    return !!(job && job.waitingForInput && SECRET_PROMPT.test(last))
+  } catch {
+    return false
+  }
+}
+
+/** `input sh_1: "y" + Enter` - visible, redacted and bounded. */
+function shellInputSubject(a) {
+  const raw = String((a && a.text) || "")
+  const max = 120
+  let shown = redactText(raw)
+  if (shown.length > max) shown = `${shown.slice(0, max)}… (${raw.length} chars)`
+  const keys = [a && a.enter === false ? "" : "Enter", a && a.eof === true ? "EOF" : ""].filter(Boolean)
+  // JSON.stringify makes newlines / control characters visible (\n, \u0003).
+  const what = raw ? JSON.stringify(shown) : "(no text)"
+  return `input ${a && a.shellId}: ${what}${keys.length ? ` + ${keys.join(" + ")}` : ""}`
 }
 
 function describeShell(shell) {
@@ -893,23 +927,104 @@ async function trySearchFetch(u, ctl) {
 }
 
 /** Check if URL is a private/internal address */
-const PRIVATE_V4 = /^(0\.|10\.|127\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/
+const PRIVATE_V4 = /^(0\.|10\.|127\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|22[4-9]\.|2[3-5]\d\.)/
 function isPrivateAddr(ip) {
   const a = String(ip).toLowerCase().replace(/^\[|\]$/g, "")
-  if (a.startsWith("::ffff:")) return isPrivateAddr(a.slice(7))
-  if (a === "::1" || a === "::" || /^f[cd]/.test(a) || /^fe[89ab]/.test(a)) return true
+  if (a.startsWith("::ffff:")) return isPrivateAddr(mappedV4(a))
+  if (a === "::1" || a === "::" || /^f[cd]/.test(a) || /^fe[89ab]/.test(a) || /^ff/.test(a)) return true
   return PRIVATE_V4.test(a)
 }
-async function assertPublicHost(host) {
-  const h = String(host).toLowerCase()
-  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local") || h.endsWith(".internal")) throw new Error(`Redirect to a private host (${host}) was blocked`)
+/** localhost / *.localhost / a loopback IP written in the URL itself. */
+function isExplicitLocalHost(hostname) {
+  const h = String(hostname || "").toLowerCase().replace(/^\[|\]$/g, "")
+  if (h === "localhost" || h.endsWith(".localhost")) return true
+  if (!require("net").isIP(h)) return false
+  if (/^127\./.test(h) || h === "::1") return true
+  return /^::ffff:/.test(h) && /^127\./.test(mappedV4(h))
+}
+/** `::ffff:127.0.0.1` / `::ffff:7f00:1` (how the URL parser writes it) -> `127.0.0.1`. */
+function mappedV4(a) {
+  const rest = a.slice(7)
+  const hex = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(rest)
+  if (!hex) return rest
+  const hi = parseInt(hex[1], 16), lo = parseInt(hex[2], 16)
+  return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`
+}
+const privateHostError = (what, host) => {
+  const e = new Error(`${what} a private network address (${host}) was blocked`)
+  e.code = "EVIBEPRIVATE"
+  return e
+}
+async function assertPublicHost(host, what = "Redirect to") {
+  const h = String(host).toLowerCase().replace(/^\[|\]$/g, "")
+  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local") || h.endsWith(".internal")) throw new Error(`${what} a private host (${host}) was blocked`)
+  if (require("net").isIP(h)) {
+    if (isPrivateAddr(h)) throw privateHostError(what, host)
+    return
+  }
   let addrs
   try {
     addrs = await require("dns").promises.lookup(h, { all: true })
   } catch {
-    return // cannot resolve: fetch itself will fail with a clear error
+    return // cannot resolve: the request itself fails with a clear error
   }
-  if (addrs.some((x) => isPrivateAddr(x.address))) throw new Error(`Redirect to a private network address (${host}) was blocked`)
+  if (addrs.some((x) => isPrivateAddr(x.address))) throw privateHostError(what, host)
+}
+
+/**
+ * One GET over node:http(s) whose DNS answer is checked inside the socket's
+ * own lookup: the address we validated is the address we connect to, so a
+ * DNS-rebinding host cannot pass the check with a public IP and then connect
+ * to 127.0.0.1. Returns a small fetch-like response.
+ */
+function pinnedGet(url, { signal, headers, allowPrivate }) {
+  const mod = url.protocol === "https:" ? require("https") : require("http")
+  const lookup = (hostname, options, cb) => {
+    if (typeof options === "function") { cb = options; options = {} }
+    const opts = options || {}
+    require("dns").lookup(hostname, { all: true, family: opts.family || 0, ...(opts.hints ? { hints: opts.hints } : {}) }, (err, addrs) => {
+      if (err) return cb(err)
+      const list = Array.isArray(addrs) ? addrs : []
+      if (!list.length) {
+        const e = new Error(`getaddrinfo ENOTFOUND ${hostname}`)
+        e.code = "ENOTFOUND"
+        return cb(e)
+      }
+      if (!allowPrivate && list.some((x) => isPrivateAddr(x.address))) return cb(privateHostError("Request to", hostname))
+      if (opts.all) return cb(null, list)
+      cb(null, list[0].address, list[0].family)
+    })
+  }
+  return new Promise((resolve, reject) => {
+    const req = mod.request(url, { method: "GET", headers: { ...headers, "accept-encoding": "gzip, deflate, br" }, lookup, signal }, (res) => {
+      const zlib = require("zlib")
+      const enc = String(res.headers["content-encoding"] || "").trim().toLowerCase()
+      let stream = res
+      if (enc === "gzip" || enc === "x-gzip") stream = res.pipe(zlib.createGunzip())
+      else if (enc === "deflate") stream = res.pipe(zlib.createInflate())
+      else if (enc === "br") stream = res.pipe(zlib.createBrotliDecompress())
+      if (stream !== res) res.on("error", (e) => stream.destroy(e))
+      resolve({
+        status: res.statusCode,
+        ok: res.statusCode >= 200 && res.statusCode < 300,
+        headers: {
+          get: (name) => {
+            const v = res.headers[String(name).toLowerCase()]
+            return v == null ? null : Array.isArray(v) ? v.join(", ") : String(v)
+          },
+        },
+        body: {
+          [Symbol.asyncIterator]: () => stream[Symbol.asyncIterator](),
+          cancel: async () => {
+            res.destroy()
+            if (stream !== res) stream.destroy()
+          },
+        },
+      })
+    })
+    req.on("error", reject)
+    req.end()
+  })
 }
 
 const webfetch = {
@@ -926,10 +1041,15 @@ const webfetch = {
   },
   perm: (a) => {
     let host = ""
+    let local = false
     try {
-      host = new URL(webUrl(a.url)).host
+      const u = new URL(webUrl(a.url))
+      host = u.host
+      local = isExplicitLocalHost(u.hostname)
     } catch {}
-    return { tool: "webfetch", subject: host }
+    // A localhost / loopback target is allowed only after the user clicks it:
+    // critical (Full Access does not auto-approve it), forced, never saved.
+    return { tool: "webfetch", subject: host, ...(local ? { forceAsk: true, critical: true, neverPersist: true } : {}) }
   },
   paths: () => [],
   async run(a, c) {
@@ -952,24 +1072,33 @@ const webfetch = {
         if (ctl.signal.aborted) throw e
       }
       
-      // Follow redirects manually
+      // Follow redirects manually. Every hop - the first one too - must reach a
+      // public address. The one exception is the explicit localhost/loopback
+      // URL the user approved (perm() made that a critical prompt), and only
+      // for that same host. The DNS answer is checked inside the connection's
+      // own lookup (pinnedGet), so a rebinding DNS name cannot switch to a
+      // private address between the check and the connect.
+      const approvedLocal = isExplicitLocalHost(u.hostname)
       let cur = u
       let res
       for (let hop = 0; ; hop++) {
+        const allowPrivate = approvedLocal && cur.host === u.host
+        if (!allowPrivate) await assertPublicHost(cur.hostname, hop === 0 ? "Request to" : "Redirect to")
         try {
-          res = await fetch(cur, { signal: ctl.signal, headers: FETCH_HEADERS, redirect: "manual" })
+          res = await pinnedGet(cur, { signal: ctl.signal, headers: FETCH_HEADERS, allowPrivate })
         } catch (e) {
           if (ctl.signal.aborted) throw new Error(`${cur.host} did not answer within ${Math.round(timeout / 1000)} s. Nothing was fetched; try again or raise timeout.`)
-          const code = (e && e.cause && (e.cause.code || e.cause.name)) || ""
+          if (e && e.code === "EVIBEPRIVATE") throw new Error(e.message)
+          const code = (e && (e.code || (e.cause && (e.cause.code || e.cause.name)))) || ""
           const why = code === "ENOTFOUND" ? "the address does not exist (DNS lookup failed)" : code === "ECONNREFUSED" ? "the server refused the connection" : /CERT|SSL|TLS/i.test(code) ? "its HTTPS certificate is not valid" : code === "ECONNRESET" ? "the connection was reset" : (e && e.message) || "network error"
           throw new Error(`Could not reach ${cur.host}: ${why}${code ? ` (${code})` : ""}. Nothing was fetched; check the URL or try another source.`)
         }
         const loc = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null
         if (!loc) break
+        try { await res.body.cancel() } catch {}
         if (hop >= 5) throw new Error("Too many redirects")
         const next = new URL(loc, cur)
         if (!/^https?:$/.test(next.protocol)) throw new Error("Redirect to a non-http URL was blocked")
-        if (next.host !== u.host) await assertPublicHost(next.hostname)
         cur = next
       }
       
@@ -1438,6 +1567,19 @@ function applyHunks(src, hunks, label) {
   return cur
 }
 
+/** Distinct absolute paths a patch touches, in patch order (move targets included). */
+function patchTargets(patchText, cwd) {
+  const out = []
+  for (const op of parsePatch(patchText)) {
+    for (const p of [op.path, op.move]) {
+      if (!p) continue
+      const abs = resolvePath(cwd, p)
+      if (!out.includes(abs)) out.push(abs)
+    }
+  }
+  return out
+}
+
 const apply_patch = {
   name: "apply_patch",
   description:
@@ -1449,9 +1591,14 @@ const apply_patch = {
     properties: { patchText: { type: "string", description: "The full patch, from '*** Begin Patch' to '*** End Patch'" } },
     required: ["patchText"],
   },
+  // Every distinct file the patch touches (Update/Add/Delete targets and Move
+  // destinations) gets its own permission check: `subject` is the first one
+  // (unchanged shape), `more` lists the rest and the loop asks for each before
+  // anything runs. Asking only for ops[0] let a patch whose first file was in
+  // an allowed folder write anywhere else unasked.
   perm: (a, c) => {
-    const ops = parsePatch(a.patchText)
-    return { tool: "edit", subject: resolvePath(c.cwd, ops[0].path) }
+    const targets = patchTargets(a.patchText, c.cwd)
+    return { tool: "edit", subject: targets[0], ...(targets.length > 1 ? { more: targets.slice(1).map((subject) => ({ tool: "edit", subject })) } : {}) }
   },
   paths: (a, c) => {
     const out = []
@@ -1464,13 +1611,19 @@ const apply_patch = {
   async run(a, c) {
     const ops = parsePatch(a.patchText)
     const plan = [] // { abs, before, after|null, move }
+    // Paths the loop already approved (perm().subject + perm().more). A direct
+    // caller without that set still gets one check per extra file here.
+    const granted = c.grantedPaths instanceof Set ? c.grantedPaths : new Set(ops.length ? [resolvePath(c.cwd, ops[0].path)] : [])
+    const ensure = async (abs) => {
+      if (granted.has(abs) || typeof c.askPermission !== "function") return true
+      if (!(await c.askPermission({ tool: "edit", subject: abs }))) return false
+      granted.add(abs)
+      return true
+    }
     // 1) validate + compute everything in memory (no writes yet)
     for (const [idx, op] of ops.entries()) {
       const abs = resolvePath(c.cwd, op.path)
-      if (idx > 0 && typeof c.askPermission === "function") {
-        // the loop already asked for the first file; the others need their own check
-        if (!(await c.askPermission({ tool: "edit", subject: abs }))) throw new Error(`The user denied permission to change ${abs}. Nothing was written.`)
-      }
+      if (idx > 0 && !(await ensure(abs))) throw new Error(`The user denied permission to change ${abs}. Nothing was written.`)
       if (op.type === "add") {
         if (fs.existsSync(abs)) fileGuard.assertReadable(c, abs)
         plan.push({ abs, before: fs.existsSync(abs) ? fs.readFileSync(abs, "utf8") : null, after: op.content })
@@ -1484,7 +1637,7 @@ const apply_patch = {
         const before = fs.readFileSync(abs, "utf8")
         const after = applyHunks(before, op.hunks, op.path)
         const target = op.move ? resolvePath(c.cwd, op.move) : null
-        if (target && typeof c.askPermission === "function" && !(await c.askPermission({ tool: "edit", subject: target })))
+        if (target && !(await ensure(target)))
           throw new Error(`The user denied permission to write ${target}. Nothing was written.`)
         plan.push({ abs, before, after, move: target })
       }

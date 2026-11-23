@@ -166,9 +166,24 @@ async function listRemoteModels({ baseURL, apiKey, format = "chat", headers: cus
     url = base + "/models"
     headers = { ...listHeaders(format, apiKey, base), ...customHeaders }
   }
-  const get = (h) => fetch(url, { headers: h, signal: AbortSignal.timeout(15000) }).catch((e) => {
-    throw new Error(`Could not reach ${url} (${e.name === "TimeoutError" ? "timeout" : e.message})`)
-  })
+  // The API key travels in headers (Authorization, x-api-key, api-key). Follow
+  // a redirect only to the same origin, so no key is ever sent to another host.
+  const get = async (h) => {
+    let target = url
+    for (let hop = 0; hop < 4; hop++) {
+      let res
+      try {
+        res = await fetch(target, { headers: h, redirect: "manual", signal: AbortSignal.timeout(15000) })
+      } catch (e) {
+        throw new Error(`Could not reach ${url} (${e.name === "TimeoutError" ? "timeout" : e.message})`)
+      }
+      if (res.status < 300 || res.status >= 400 || !res.headers.get("location")) return res
+      const next = new URL(res.headers.get("location"), target)
+      if (next.origin !== new URL(target).origin) throw new Error(`${url} redirected to another host (${next.origin}); the API key was not sent there. Use the provider's real API URL.`)
+      target = next.href
+    }
+    throw new Error(`${url} redirected too many times`)
+  }
   let res = await get(headers)
   if (res.status === 401 || res.status === 403) {
     // Same compatibility fallback as the chat adapters: identity first, the

@@ -7,7 +7,7 @@ const fs = require("node:fs")
 const path = require("node:path")
 const vm = require("node:vm")
 
-const source = fs.readFileSync(path.join(__dirname, "..", "renderer", "app.js"), "utf8")
+const source = require("./renderer-app-source.cjs")()
 const start = source.indexOf("function applyProviderCatalog(data) {")
 const end = source.indexOf("async function loadModels()", start)
 assert(start > 0 && end > start, "applyProviderCatalog exists")

@@ -5,7 +5,9 @@
  * an array of them, optionally wrapped: module.exports = { tools: [...] }.
  * Discovered from:
  *   global : ~/.vibe/plugins/*.js
- *   project: <workspace>/.vibe/plugins/*.js
+ *   project: <workspace>/.vibe/plugins/*.js (only after the workspace is trusted)
+ * Only regular files count (no folders named *.js, no symbolic links), and a
+ * listing never executes a plugin: code runs only when tools are loaded.
  * "Install" for a registry entry copies its JS into one of those folders
  * (npm/git specs are fetched with the npm CLI that is already installed).
  */
@@ -26,32 +28,74 @@ const slug = (s) =>
     .replace(/^-+|-+$/g, "")
     .slice(0, 80) || "plugin"
 
-/** [{file,name,scope,ok,error}] */
+const MAX_PLUGIN_BYTES = 2 * 1024 * 1024
+
+/** True when child is inside parent (both already resolved). */
+const inside = (parent, child) => {
+  const rel = path.relative(parent, child)
+  return !!rel && !rel.startsWith("..") && !path.isAbsolute(rel)
+}
+
+/**
+ * Security: only a real regular file directly inside the plugins folder counts.
+ * Directories that merely end in ".js", symbolic links, and anything whose real
+ * path leaves the folder are skipped.
+ */
+function pluginFiles(dir) {
+  let realDir
+  try {
+    realDir = fs.realpathSync(dir)
+  } catch {
+    return []
+  }
+  let entries = []
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return []
+  }
+  const out = []
+  for (const entry of entries.sort((x, y) => x.name.localeCompare(y.name))) {
+    if (!/\.js$/i.test(entry.name)) continue
+    if (!entry.isFile() || entry.isSymbolicLink()) continue
+    const file = path.join(dir, entry.name)
+    try {
+      const st = fs.lstatSync(file)
+      if (!st.isFile() || st.isSymbolicLink()) continue
+      if (!inside(realDir, fs.realpathSync(file))) continue
+      out.push({ file, size: st.size })
+    } catch {}
+  }
+  return out
+}
+
+/** Static check of a plugin file: it is read as text, never executed. */
+function inspectPlugin(file, size) {
+  if (size > MAX_PLUGIN_BYTES) return { ok: false, error: "plugin file is too large" }
+  let text = ""
+  try {
+    text = fs.readFileSync(file, "utf8")
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || String(e) }
+  }
+  if (!/\bexports\b/.test(text)) return { ok: false, error: "exports neither a tool, an array, nor {tools}" }
+  // Optional header comment: "// description: what this plugin does"
+  const header = /^\s*\/\/\s*@?description\s*:\s*(.+)$/im.exec(text.slice(0, 4000))
+  return { ok: true, error: "", description: header ? header[1].trim().slice(0, 200) : "" }
+}
+
+/**
+ * [{file,name,scope,ok,error}] -- listing never require()s a plugin; metadata is
+ * read statically. Code only runs when the engine loads the tools (toolObjects),
+ * and project plugins only after the workspace is trusted.
+ */
 function listPlugins(directory, home) {
   const out = []
   const projectTrusted = !directory || trust.isProjectTrusted(directory, home || homeDir())
   const scan = (dir, scope) => {
-    let files = []
-    try {
-      files = fs.readdirSync(dir).filter((f) => f.endsWith(".js"))
-    } catch {
-      return
-    }
-    for (const f of files) {
-      const file = path.join(dir, f)
-      let ok = true
-      let error = ""
-      try {
-        const m = require(file)
-        if (!m || (!m.tools && !m.name && !Array.isArray(m))) {
-          ok = false
-          error = "exports neither a tool, an array, nor {tools}"
-        }
-      } catch (e) {
-        ok = false
-        error = (e && e.message) || String(e)
-      }
-      out.push({ file, name: f.replace(/\.js$/, ""), scope, ok, error })
+    for (const { file, size } of pluginFiles(dir)) {
+      const info = inspectPlugin(file, size)
+      out.push({ file, name: path.basename(file).replace(/\.js$/i, ""), scope, ok: info.ok, error: info.error, description: info.description || "" })
     }
   }
   scan(globalDir(home), "global")
@@ -67,6 +111,8 @@ function toolObjects(directory, ctx = {}) {
     if (!row.ok) continue
     let mod
     try {
+      const st = fs.lstatSync(row.file)
+      if (!st.isFile() || st.isSymbolicLink()) continue
       delete require.cache[require.resolve(row.file)]
       mod = require(row.file)
     } catch {
@@ -170,4 +216,4 @@ function removePlugin({ name, global, directory }) {
   }
 }
 
-module.exports = { globalDir, projectDir, listPlugins, toolObjects, installPlugin, removePlugin }
+module.exports = { globalDir, projectDir, pluginFiles, inspectPlugin, listPlugins, toolObjects, installPlugin, removePlugin }

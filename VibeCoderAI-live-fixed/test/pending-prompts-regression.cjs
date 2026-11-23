@@ -58,7 +58,7 @@ async function main() {
     }), /disk full/)
     assert.equal(failed.pendingPrompts.length, 1, "failed persistence retains the pending attachment")
     assert.equal(failed.messages.length, 0, "failed persistence rolls back history")
-    const source = require("node:fs").readFileSync(path.join(__dirname, "../renderer/app.js"), "utf8")
+    const source = require("./renderer-app-source.cjs")()
     const queueSource = source.slice(source.indexOf("const queuedPrompts ="), source.indexOf("let sendInFlight =", source.indexOf("const queuedPrompts =")))
     const composer = { value: "", selectionStart: 0, selectionEnd: 0 }
     const submitted = { kind: "image", name: "queued.png", dataUrl: "data:image/png;base64,cXVldWVk" }

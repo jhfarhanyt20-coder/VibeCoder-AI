@@ -144,8 +144,37 @@ class NonApiResponseError extends Error {
 const CONNECT_TIMEOUT_MS = 120000
 
 /** POST JSON, return the streaming Response. Retries 429/5xx/network errors before the first byte. */
+/**
+ * Credentials (authorization / x-api-key / api-key) must never follow a
+ * redirect to another host. Redirects are handled MANUALLY: a 307/308 to the
+ * SAME origin is followed (method and body preserved, at most 3 hops); any
+ * other redirect fails with a clear error and the key is not re-sent.
+ */
+const MAX_REDIRECTS = 3
+function redirectTarget(res, from) {
+  if (![301, 302, 303, 307, 308].includes(res.status)) return null
+  const loc = res.headers && res.headers.get("location")
+  let next
+  try {
+    next = new URL(loc || "", from)
+  } catch {
+    next = null
+  }
+  const src = new URL(from)
+  if (!loc || !next || next.origin !== src.origin || ![307, 308].includes(res.status)) {
+    const where = next ? next.origin : "an unknown location"
+    throw new ApiError(
+      res.status,
+      `The provider redirected the request (${res.status}) to ${where}. VibeCoder does not send API keys across redirects - set the provider base URL to the final API address.`,
+    )
+  }
+  return next.toString()
+}
+
 async function postStream(url, { headers = {}, body, signal, retries = 2, connectMs = CONNECT_TIMEOUT_MS } = {}) {
   let attempt = 0
+  let target = String(url)
+  let hops = 0
   for (;;) {
     const ctl = new AbortController()
     let stalled = false
@@ -158,13 +187,26 @@ async function postStream(url, { headers = {}, body, signal, retries = 2, connec
       ctl.abort(new Error("connect-timeout"))
     }, connectMs)
     try {
-      const res = await fetch(url, {
+      const res = await fetch(target, {
         method: "POST",
         headers: { "content-type": "application/json", accept: "text/event-stream", ...PRODUCT_HEADERS, ...headers },
         body: JSON.stringify(body),
         signal: ctl.signal,
+        redirect: "manual",
       })
       clearTimeout(timer) // headers arrived: the idle watchdog takes over from here
+      if (res.status >= 300 && res.status < 400) {
+        if (signal) signal.removeEventListener("abort", onAbort)
+        try {
+          await res.body?.cancel?.()
+        } catch {}
+        const next = redirectTarget(res, target)
+        if (!next) throw new ApiError(res.status, `The provider answered with an unexpected ${res.status} status.`)
+        if (hops >= MAX_REDIRECTS) throw new ApiError(res.status, `Too many redirects from the provider (${res.status}).`)
+        hops++
+        target = next
+        continue
+      }
       if (!res.ok) {
         if (signal) signal.removeEventListener("abort", onAbort)
         const text = await res.text().catch(() => "")
@@ -241,4 +283,4 @@ function parseRawBody(text) {
   return j
 }
 
-module.exports = { ApiError, NonApiResponseError, postStream, postStreamAdaptive, parseRawBody, streamError, PRODUCT_HEADERS, authHeaders, COMPAT_CLIENT_HEADERS, prefersCompatClient, rememberCompatClient, VIBE_VERSION }
+module.exports = { ApiError, NonApiResponseError, postStream, redirectTarget, postStreamAdaptive, parseRawBody, streamError, PRODUCT_HEADERS, authHeaders, COMPAT_CLIENT_HEADERS, prefersCompatClient, rememberCompatClient, VIBE_VERSION }

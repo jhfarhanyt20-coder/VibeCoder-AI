@@ -58,7 +58,7 @@ function noteTabList(tabs) {
     noteTab(tab.id, tab.url, { active: !!tab.active })
   }
   // Forget tabs that no longer exist so a reused ID cannot inherit a host.
-  for (const id of [...tabHosts.keys()]) if (!seen.has(id)) { tabHosts.delete(id); tabUrls.delete(id) }
+  for (const id of [...tabHosts.keys()]) if (!seen.has(id)) { tabHosts.delete(id); tabUrls.delete(id); tabRefs.delete(id) }
   if (activeTabID && !seen.has(activeTabID)) activeTabID = ""
 }
 
@@ -66,12 +66,105 @@ function forgetTab(tabID) {
   const id = String(tabID || "")
   tabHosts.delete(id)
   tabUrls.delete(id)
+  tabRefs.delete(id)
   if (activeTabID === id) activeTabID = ""
 }
 
 function hostFor(args = {}) {
   const id = args && args.tabID ? String(args.tabID) : activeTabID
   return (id && tabHosts.get(id)) || ""
+}
+
+// ---- dangerous clicks and secret fields ----
+// A saved "always allow click <host>" rule covers ordinary clicks only. A
+// button whose name deletes, pays, transfers, sends, revokes … asks every time
+// (critical, never saved), and fields for passwords, one-time codes or card
+// numbers are never filled by the agent.
+const { RISKY_WORDS } = require("../computer")
+const tabRefs = new Map() // tabID -> Map(ref -> { role, name })
+const SENSITIVE_FIELD = /\b(password|passwd|passphrase|passcode|pin( ?code)?|otp|one[- ]?time|verification code|verify code|security code|auth(entication)? code|2fa|mfa|totp|cvv2?|cvc2?|csc|card ?number|card ?no|cc-?(number|num|csc|cvc|exp\w*)|credit ?card|debit ?card|iban|routing( number)?|account ?number|ssn|social security)\b/i
+const SENSITIVE_AUTOCOMPLETE = /\b(current-password|new-password|one-time-code|cc-number|cc-csc|cc-exp|cc-exp-month|cc-exp-year)\b/i
+const SENSITIVE_PAGE = /\b(pay|payment|payments|checkout|billing|bank|banking|wallet|transfer|purchase|order|delete|danger|security|password|account|settings)\b/i
+
+/** Remember the names of the refs of a snapshot, per tab. */
+function noteRefs(tabID, snapshot) {
+  const id = String(tabID || activeTabID || "")
+  if (!id || typeof snapshot !== "string") return
+  const refs = new Map()
+  for (const line of snapshot.split("\n")) {
+    const m = /^\s*\[([^\]]*)\]\s?(.*?)\s@(e\d+)\s*$/.exec(line)
+    if (!m) continue
+    let name = m[2]
+    const eq = name.indexOf(" = ")
+    if (eq >= 0) name = name.slice(0, eq)
+    refs.set(m[3], { role: m[1], name: name.trim() })
+  }
+  tabRefs.set(id, refs)
+}
+
+const describeScript = (ref) => `(() => {
+  const el = document.querySelector('[data-vibe-ref=' + ${JSON.stringify(JSON.stringify(String(ref)))} + ']');
+  if (!el) return null;
+  const clean = (s) => String(s || '').replace(/\\s+/g, ' ').trim();
+  const labels = el.labels && el.labels.length ? Array.from(el.labels).map((l) => l.innerText).join(' ') : '';
+  const by = (el.getAttribute('aria-labelledby') || '').split(/\\s+/).filter(Boolean).map((id) => document.getElementById(id)).filter(Boolean).map((n) => n.innerText).join(' ');
+  const tag = el.tagName.toLowerCase();
+  const type = String(tag === 'input' ? el.type : (el.getAttribute('type') || '')).toLowerCase();
+  const btnValue = tag === 'input' && /^(submit|button|reset|image)$/.test(type) ? (el.value || el.getAttribute('alt') || '') : '';
+  const name = clean(el.getAttribute('aria-label') || by || btnValue || labels || el.innerText || el.textContent || el.getAttribute('title') || el.getAttribute('alt') || '').slice(0, 160);
+  return { tag, type, name, label: clean(labels + ' ' + by).slice(0, 160), autocomplete: el.getAttribute('autocomplete') || '', id: el.id || '', fieldName: el.getAttribute('name') || '', placeholder: el.getAttribute('placeholder') || '', title: el.getAttribute('title') || '' };
+})()`
+
+/**
+ * What is this ref? Read from the page itself when the engine's browser is at
+ * hand (or when this tab has no snapshot of ours, through the bridge), else
+ * from the latest snapshot this tool saw.
+ */
+async function describeRef(api, a) {
+  const id = String(a.tabID || activeTabID || "")
+  const cached = (id && tabRefs.get(id) && tabRefs.get(id).get(String(a.ref))) || null
+  let live = null
+  try {
+    const bm = api && typeof api._browserManager === "function" ? api._browserManager() : null
+    if (bm && typeof bm.evaluate === "function") live = await bm.evaluate(a.tabID, describeScript(a.ref))
+    else if (!(id && tabRefs.has(id)) && typeof api?.browserEvaluate === "function") {
+      const res = await api.browserEvaluate({ tabID: a.tabID, script: describeScript(a.ref) })
+      live = res && res.ok ? res.data && res.data.result : null
+    }
+  } catch {}
+  const info = live && typeof live === "object" ? { ...live } : {}
+  if (!info.name && cached) info.name = cached.name
+  if (!info.role && cached) info.role = cached.role
+  return info
+}
+
+const pageOf = (a) => { const id = String(a.tabID || activeTabID || ""); return (id && tabUrls.get(id)) || "" }
+
+/** Why clicking this element needs a fresh OK, or "". */
+function dangerousClick(info, a) {
+  const name = String(info.name || "").trim()
+  if (!name) return ""
+  if (!RISKY_WORDS.test(name)) return ""
+  // A bare "Submit" is the generic form button; it asks only on pages about
+  // money, accounts or security.
+  if (/^submit[.!]?$/i.test(name) && !SENSITIVE_PAGE.test(pageOf(a))) return ""
+  return `click "${name.slice(0, 100)}"`
+}
+
+/** Why the agent must never fill this field, or "". */
+function secretField(info, text) {
+  if (String(info.type || "").toLowerCase() === "password") return "a password field"
+  if (SENSITIVE_AUTOCOMPLETE.test(String(info.autocomplete || ""))) return "a password, one-time code or card field"
+  const words = [info.name, info.label, info.id, info.fieldName, info.placeholder, info.title].filter(Boolean).join(" ").replace(/[_-]+/g, " ")
+  if (SENSITIVE_FIELD.test(words) || SENSITIVE_FIELD.test(String(info.autocomplete || ""))) return "a password, one-time code or card field"
+  if (/\b(\d[ -]?){13,19}\b/.test(String(text || ""))) return "what looks like a card or account number"
+  return ""
+}
+
+async function confirmDangerous(c, a, reason) {
+  const host = hostFor(a) || "this page"
+  const ok = typeof c?.askPermission === "function" && await c.askPermission({ tool: "browser", subject: `Allow the agent to ${reason} on ${host}?`, forceAsk: true, neverPersist: true, critical: true })
+  if (!ok) throw new Error(`The user did not allow this: ${reason} on ${host}. Nothing was clicked. Do not retry it; ask the user what to do.`)
 }
 
 function actionPerm(action, args = {}) {
@@ -138,6 +231,7 @@ function createBrowserTools() {
           if (!res?.ok) throw new Error(res?.error || "Could not inspect the current browser page")
           const page = res.data || {}
           if (page.tabID) noteTab(page.tabID, page.url, { active: true })
+          if (page.tabID && typeof page.snapshot === "string") noteRefs(page.tabID, page.snapshot)
           return `Active browser page\nTab: ${page.tabID || "(unknown)"}\nTitle: ${page.title || "(untitled)"}\nURL: ${page.url || "(unknown)"}\n\n${clipSnapshot(page.snapshot || "No DOM snapshot available.")}`
         }
         const res = await engine?.browserListTabs?.()
@@ -149,6 +243,7 @@ function createBrowserTools() {
         noteTab(page.id, page.url, { active: true })
         const snap = await engine.browserSnapshot?.({ tabID: page.id, depth: a.depth || 8 })
         if (!snap?.ok) throw new Error(snap?.error || "Could not read the current page")
+        if (typeof snap.data?.snapshot === "string") noteRefs(page.id, snap.data.snapshot)
         return `Active browser page\nTab: ${page.id}\nTitle: ${page.title || "(untitled)"}\nURL: ${page.url || "(unknown)"}\n\n${clipSnapshot(snap.data?.snapshot || "No DOM snapshot available.")}`
       },
     },
@@ -288,6 +383,7 @@ function createBrowserTools() {
         const res = await (c.engine || c.vibe)?.browserSnapshot?.({ tabID: a.tabID, depth: a.depth || 8 })
         if (!res?.ok) throw new Error(res?.error || "Failed to snapshot")
         if (res.data?.url) noteTab(res.data.tabID || a.tabID || activeTabID, res.data.url)
+        if (typeof res.data?.snapshot === "string") noteRefs(res.data.tabID || a.tabID || activeTabID, res.data.snapshot)
         const gen = res.data.generation != null ? `\nGeneration: ${res.data.generation} (${res.data.refCount || 0} elements)` : ""
         return `Page: ${res.data.title || "(untitled)"}\nURL: ${res.data.url || "(unknown)"}${gen}\n\n${clipSnapshot(res.data.snapshot || "Empty")}`
       },
@@ -335,7 +431,10 @@ function createBrowserTools() {
       paths: () => [],
       async run(a, c) {
         const hostBefore = hostFor(a)
-        const res = await (c.engine || c.vibe)?.browserClick?.({ tabID: a.tabID, ref: a.ref, generation: a.generation })
+        const api = c.engine || c.vibe
+        const danger = dangerousClick(await describeRef(api, a), a)
+        if (danger) await confirmDangerous(c, a, danger)
+        const res = await api?.browserClick?.({ tabID: a.tabID, ref: a.ref, generation: a.generation })
         if (!res?.ok) throw new Error(res?.error || "Failed to click")
         return actionReport(`Clicked ${a.ref}`, a, res, hostBefore)
       },
@@ -348,7 +447,10 @@ function createBrowserTools() {
       paths: () => [],
       async run(a, c) {
         const hostBefore = hostFor(a)
-        const res = await (c.engine || c.vibe)?.browserFill?.({ tabID: a.tabID, ref: a.ref, text: a.text, generation: a.generation })
+        const api = c.engine || c.vibe
+        const secret = secretField(await describeRef(api, a), a.text)
+        if (secret) throw new Error(`Refused: ${a.ref} is ${secret === "what looks like a card or account number" ? "being filled with " + secret : secret}. The agent never fills passwords, one-time codes or card numbers. Nothing was filled. Ask the user to type it themselves in the browser.`)
+        const res = await api?.browserFill?.({ tabID: a.tabID, ref: a.ref, text: a.text, generation: a.generation })
         if (!res?.ok) throw new Error(res?.error || "Failed to fill")
         return actionReport(`Filled ${a.ref}`, a, res, hostBefore)
       },
@@ -387,6 +489,7 @@ function createBrowserTools() {
 function _resetBrowserToolState() {
   tabHosts.clear()
   tabUrls.clear()
+  tabRefs.clear()
   activeTabID = ""
 }
 

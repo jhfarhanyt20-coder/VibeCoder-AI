@@ -15,6 +15,7 @@ const { homeDir } = require("../util")
 const { McpClient } = require("./client")
 const oauth = require("../harness/connectors/oauth")
 const trust = require("../harness/trust")
+const { writePrivateFile } = require("../store/private-file")
 
 const globalFile = (home) => path.join(home || homeDir(), "mcp.json")
 const projectFile = (dir) => path.join(dir || "", ".vibe", "mcp.json")
@@ -27,9 +28,11 @@ const readJson = (f, fb) => {
     return fb
   }
 }
+// mcp.json can hold remote headers and server env values (tokens): write it
+// owner-only (0600 + Windows ACL pinned to the current user), like auth.json.
 const writeJson = (f, v) => {
   fs.mkdirSync(path.dirname(f), { recursive: true })
-  fs.writeFileSync(f, JSON.stringify(v, null, 2))
+  writePrivateFile(f, JSON.stringify(v, null, 2))
 }
 const sanitize = (e) => {
   const out = { type: e.type === "remote" ? "remote" : "local" }

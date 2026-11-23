@@ -5,6 +5,9 @@
  * Discovery (project overrides global, later wins):
  *   global:  <VIBE_HOME>/agents/<id>.md
  *   project: <dir>/.vibe/agents/<id>.md
+ * A project (repository) file never replaces a built-in id ("general", "plan",
+ * ...): it is loaded as "project/<id>". Until the workspace is trusted its
+ * permission rules can only narrow access ("allow" rules are dropped).
  * Nested folders become part of the id: team/reviewer -> "team/reviewer".
  *
  * A markdown file is frontmatter + a body. The body is the extra system prompt.
@@ -211,14 +214,72 @@ function withRules(agent, scope = "builtin") {
   }
 }
 
-/** All agents: built-ins first, then global files, then project files (later wins). */
+const BUILTIN_IDS = new Set(BUILTIN.map((agent) => agent.id))
+/** Namespace for repository agents whose file name collides with a built-in id. */
+const PROJECT_NAMESPACE = "project/"
+
+function workspaceTrusted(dir, home) {
+  if (!dir) return false
+  try {
+    return require("../harness/trust").isProjectTrusted(dir, home || homeDir())
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Security: a repository's agent file may only NARROW permissions until the
+ * user trusts the workspace. "allow" rules are dropped; "deny"/"ask" stay.
+ * When it shadows one of the user's own global agents, the global rules stay
+ * in force first so the repo copy cannot loosen them either.
+ */
+function confineProjectAgent(agent, base) {
+  const rules = Array.isArray(agent.rules) ? agent.rules : []
+  const kept = rules.filter((rule) => rule.action !== "allow")
+  const dropped = rules.length - kept.length
+  const permissions = (agent.permissions || []).filter((p) => normalizeRule(p).action !== "allow")
+  const baseRules = base && Array.isArray(base.rules) ? base.rules : []
+  const baseAllow = base && Array.isArray(base.permissions) ? base.permissions : []
+  const out = {
+    ...agent,
+    permissions: [...baseAllow, ...permissions],
+    rules: [...baseRules, ...kept],
+    untrusted: true,
+  }
+  if (dropped) out.warnings = [...(agent.warnings || []), `Ignored ${dropped} "allow" permission rule(s) from an untrusted project agent.`]
+  return out
+}
+
+/**
+ * All agents: built-ins first, then global files, then project files (later
+ * wins). Project files can never replace a built-in id: such a file is kept
+ * under "project/<id>" with a warning.
+ */
 function listAgents({ home, dir } = {}) {
   const all = new Map()
   for (const builtin of BUILTIN) all.set(builtin.id, withRules(builtin))
-  const found = new Map()
-  scan(globalDir(home), "global", found)
-  scan(projectDir(dir), "project", found)
-  for (const [id, agent] of found) all.set(id, agent)
+  const globals = new Map()
+  scan(globalDir(home), "global", globals)
+  // The user's own global agents keep today's behaviour (they may replace a built-in).
+  for (const [id, agent] of globals) all.set(id, agent)
+  const project = new Map()
+  scan(projectDir(dir), "project", project)
+  if (!project.size) return [...all.values()].sort((a, b) => a.id.localeCompare(b.id))
+  const trusted = workspaceTrusted(dir, home)
+  for (const [id, found] of project) {
+    let agent = found
+    if (BUILTIN_IDS.has(id)) {
+      const namespaced = PROJECT_NAMESPACE + id
+      agent = {
+        ...agent,
+        id: namespaced,
+        shadowed: id,
+        warnings: [...(agent.warnings || []), `Project agent "${id}" cannot replace the built-in agent; loaded as "${namespaced}".`],
+      }
+    }
+    if (!trusted) agent = confineProjectAgent(agent, globals.get(agent.id) || null)
+    all.set(agent.id, agent)
+  }
   return [...all.values()].sort((a, b) => a.id.localeCompare(b.id))
 }
 
@@ -242,5 +303,7 @@ module.exports = {
   normalizeRule,
   listAgents,
   getAgent,
+  confineProjectAgent,
+  PROJECT_NAMESPACE,
   MAX_AGENT_BODY_CHARS,
 }

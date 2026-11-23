@@ -1094,14 +1094,25 @@ const handlers = {
     let parsedBase
     try { parsedBase = new URL(String(a.baseURL).trim()) } catch { throw new Error("Provider API base URL is not a valid URL") }
     if (!/^https?:$/.test(parsedBase.protocol)) throw new Error("Provider API base URL must use http or https")
+    // https everywhere; plain http only for localhost / private LAN model servers
+    profileStore.checkProviderURL(parsedBase.href)
     const profile = { ...(current || {}), id, label: name, name, baseURL: String(a.baseURL).trim(), format: profileFormat(a.apiFormat), model, models, contextLimit: models[0]?.context || Number(a.contextLimit) || 128000, maxOutput: models[0]?.output || Number(a.maxOutput) || 8192, scope: a.scope === "project" ? "project" : "global", disabled: !!a.disabled, noAuth: false, headers, quirks: { ...(current?.quirks || {}), extraBody } }
+    // The saved key belongs to its endpoint: a base URL ORIGIN change without a
+    // new key clears the old one so it is never sent to the new host.
+    const movedOrigin = !a.apiKey && profileStore.originChanged(current, profile.baseURL)
     const result = engine.upsertProfile(profile)
     if (a.apiKey) engine.setKey(id, String(a.apiKey))
     if (a.apiKey) scheduleProviderRefresh("provider-key-saved")
+    let keyCleared = false
+    if (movedOrigin && profileStore.hasKey({ id }, home)) {
+      engine.setKey(id, "")
+      keyCleared = true
+      if (result) result.hints = [...(result.hints || []), "The base URL moved to a different host, so the saved API key was removed. Enter the API key for the new endpoint."]
+    }
     const saved = engine.listProfiles().find((p) => p.id === id)
     if (!saved) throw new Error("Provider save did not persist a profile")
     scheduleProviderRefresh("provider-saved")
-    return { id, name, warning: result?.hints?.filter(Boolean).join("\n") || "", scope: saved.scope || profile.scope }
+    return { id, name, warning: result?.hints?.filter(Boolean).join("\n") || "", scope: saved.scope || profile.scope, ...(keyCleared ? { keyCleared: true } : {}) }
   },
   providerRemove: async (a = {}) => { const result = deleteCustomProfile(String(a.id || "")); scheduleProviderRefresh("provider-removed"); return result },
   providerDraftSave: async (a = {}) => saveProviderDraft(a),

@@ -226,6 +226,131 @@ test("snapshot and current are clipped to ~20k chars with a depth/selector hint"
   assert.doesNotMatch(small, /truncated|lower depth/)
 })
 
+// ---- 5. dangerous clicks and secret fields ask / refuse even after "always allow" ----
+function riskyBridge(snapshot, extra = {}) {
+  const calls = []
+  const engine = {
+    async browserCreateTab(a) { return { ok: true, data: { tabID: "gh", url: a.url, title: "GitHub" } } },
+    async browserSnapshot(a) { calls.push(["snapshot", a]); return { ok: true, data: { snapshot, generation: 1, refCount: 9, tabID: "gh", url: extra.url || "https://github.com/me/repo/settings" } } },
+    async browserClick(a) { calls.push(["click", a]); return { ok: true } },
+    async browserFill(a) { calls.push(["fill", a]); return { ok: true } },
+    ...extra.engine,
+  }
+  return { engine, calls }
+}
+function askingCtx(engine, answer = true) {
+  const asks = []
+  return { asks, ctx: { ...ctxWith(engine), askPermission: async (p) => { asks.push(p); return answer } } }
+}
+const SNAP = [
+  "[main] main",
+  "  [button] Delete this repository @e1",
+  "  [button] Save changes @e2",
+  "  [a] Delete account @e3",
+  "  [button] Pay $20 @e4",
+  "  [button] Transfer ownership @e5",
+  "  [button] Revoke all user tokens @e6",
+  "  [input] Password @e7",
+  "  [input] One-time code @e8",
+  "  [input] Repository name = repo @e9",
+  "  [button] Star @e10",
+  "  [button] Remove @e11",
+  "  [button] Confirm purchase @e12",
+  "  [button] Submit @e13",
+].join("\n")
+
+test("after 'always allow click github.com', dangerous buttons still ask (critical, never saved)", async () => {
+  _resetBrowserToolState()
+  const { engine, calls } = riskyBridge(SNAP)
+  await t.openTab.run({ url: "https://github.com/me/repo/settings" }, ctxWith(engine))
+  const perm = t.click.perm({ tabID: "gh", ref: "e1" })
+  assert.equal(perm.subject, "click github.com")
+  assert.ok(!perm.neverPersist, "the host rule itself may still be saved")
+  await t.snapshot.run({ tabID: "gh" }, ctxWith(engine))
+  for (const ref of ["e1", "e3", "e4", "e5", "e6", "e11", "e12"]) {
+    const { asks, ctx } = askingCtx(engine)
+    await t.click.run({ tabID: "gh", ref }, ctx)
+    assert.equal(asks.length, 1, `${ref} asks`)
+    assert.equal(asks[0].critical, true)
+    assert.equal(asks[0].forceAsk, true)
+    assert.equal(asks[0].neverPersist, true)
+    assert.match(asks[0].subject, /github\.com/)
+  }
+  // Denied: nothing is clicked.
+  const before = calls.filter((c) => c[0] === "click").length
+  const denied = askingCtx(engine, false)
+  await assert.rejects(t.click.run({ tabID: "gh", ref: "e1" }, denied.ctx), /did not allow.*Delete this repository/)
+  assert.equal(calls.filter((c) => c[0] === "click").length, before, "no click after a denial")
+  // No permission system at all: refused, not silently clicked.
+  await assert.rejects(t.click.run({ tabID: "gh", ref: "e3" }, ctxWith(engine)), /did not allow/)
+  // Ordinary buttons: no extra prompt.
+  const ok = askingCtx(engine)
+  for (const ref of ["e2", "e10"]) await t.click.run({ tabID: "gh", ref }, ok.ctx)
+  assert.equal(ok.asks.length, 0, "Save / Star do not ask")
+  // A bare Submit on this settings page asks.
+  await t.click.run({ tabID: "gh", ref: "e13" }, ok.ctx)
+  assert.equal(ok.asks.length, 1)
+})
+
+test("a bare Submit asks on payment or account pages, not on an ordinary page", async () => {
+  _resetBrowserToolState()
+  const plain = riskyBridge("[button] Submit @e1", { url: "https://example.test/search" })
+  await t.snapshot.run({ tabID: "gh" }, ctxWith(plain.engine))
+  const p = askingCtx(plain.engine)
+  await t.click.run({ tabID: "gh", ref: "e1" }, p.ctx)
+  assert.equal(p.asks.length, 0)
+  _resetBrowserToolState()
+  const { engine } = riskyBridge("[button] Submit @e1", { url: "https://bank.example/transfer" })
+  await t.snapshot.run({ tabID: "gh" }, ctxWith(engine))
+  const { asks, ctx } = askingCtx(engine)
+  await t.click.run({ tabID: "gh", ref: "e1" }, ctx)
+  assert.equal(asks.length, 1)
+})
+
+test("the live element name from the page is used (and the bridge when the tab has no snapshot)", async () => {
+  _resetBrowserToolState()
+  // Engine with its browser manager: the name is read from the page itself.
+  const scripts = []
+  const live = { async browserClick() { return { ok: true } }, _browserManager: () => ({ async evaluate(tabID, script) { scripts.push(script); return { tag: "button", type: "submit", name: "Delete account" } } }) }
+  const a = askingCtx(live)
+  await t.click.run({ tabID: "x", ref: "e5" }, a.ctx)
+  assert.equal(a.asks.length, 1)
+  assert.match(a.asks[0].subject, /Delete account/)
+  assert.match(scripts[0], /data-vibe-ref/)
+  // Bridge only, no snapshot of this tab yet: read through browserEvaluate.
+  const calls = []
+  const bridge = {
+    async browserEvaluate(x) { calls.push("evaluate"); return { ok: true, data: { result: { tag: "button", name: "Confirm purchase" } } } },
+    async browserClick() { calls.push("click"); return { ok: true } },
+  }
+  const b = askingCtx(bridge)
+  await t.click.run({ tabID: "y", ref: "e1" }, b.ctx)
+  assert.deepEqual(calls, ["evaluate", "click"])
+  assert.equal(b.asks.length, 1)
+})
+
+test("fill never types into password, one-time-code or card fields", async () => {
+  _resetBrowserToolState()
+  const { engine, calls } = riskyBridge(SNAP)
+  await t.snapshot.run({ tabID: "gh" }, ctxWith(engine))
+  const c = askingCtx(engine).ctx
+  await assert.rejects(t.fill.run({ tabID: "gh", ref: "e7", text: "hunter2" }, c), /never fills passwords.*Ask the user/)
+  await assert.rejects(t.fill.run({ tabID: "gh", ref: "e8", text: "123456" }, c), /Refused/)
+  await assert.rejects(t.fill.run({ tabID: "gh", ref: "e9", text: "4111 1111 1111 1111" }, c), /card or account number/)
+  // Live field facts: type=password, autocomplete=cc-number / one-time-code, name=cvv.
+  for (const info of [{ tag: "input", type: "password", name: "" }, { tag: "input", type: "text", autocomplete: "cc-number" }, { tag: "input", type: "text", autocomplete: "one-time-code" }, { tag: "input", type: "tel", fieldName: "card_cvv" }, { tag: "input", type: "text", label: "Verification code" }]) {
+    const fills = []
+    const live = { async browserFill() { fills.push(1); return { ok: true } }, _browserManager: () => ({ async evaluate() { return info } }) }
+    await assert.rejects(t.fill.run({ tabID: "z", ref: "e1", text: "x" }, askingCtx(live).ctx), /Refused/, JSON.stringify(info))
+    assert.equal(fills.length, 0)
+  }
+  assert.equal(calls.filter((x) => x[0] === "fill").length, 0, "nothing was filled")
+  // An ordinary field fills without a prompt.
+  const ok = askingCtx(engine)
+  assert.match(await t.fill.run({ tabID: "gh", ref: "e9", text: "new-repo-name" }, ok.ctx), /Filled e9/)
+  assert.equal(ok.asks.length, 0)
+})
+
 ;(async () => {
   let failed = 0
   for (const [name, fn] of tests) {

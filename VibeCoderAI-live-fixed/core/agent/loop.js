@@ -194,6 +194,12 @@ function splitCommand(cmd) {
   let cur = ""
   let q = null
   let i = 0
+  // Inside a script block or sub-expression ({ … }, ( … ), $( … ), @( … ))
+  // the separators belong to that block: `ForEach-Object { "a"; Start-Sleep 1 }`
+  // is one command. Cutting there showed the user half a command. A command
+  // with such a block always asks anyway (bash.perm sets forceAsk), and deny
+  // rules still match the whole segment's text.
+  let depth = 0
   const s = String(cmd || "")
   while (i < s.length) {
     const ch = s[i]
@@ -212,6 +218,13 @@ function splitCommand(cmd) {
     if (ch === "\\") {
       cur += ch + (s[i + 1] || "")
       i += 2
+      continue
+    }
+    if (ch === "{" || ch === "(") depth++
+    else if ((ch === "}" || ch === ")") && depth > 0) depth--
+    if (depth > 0) {
+      cur += ch
+      i++
       continue
     }
     const two = s.slice(i, i + 2)
@@ -241,6 +254,101 @@ function splitCommand(cmd) {
   }
   if (cur.trim()) out.push(cur.trim())
   return out.length ? out : [s.trim()]
+}
+
+/**
+ * Ask for one tool call's permission(s).
+ *
+ * - bash: the command is split on top-level separators (V-05) and every
+ *   segment is checked on its own. Each segment keeps the flags of the whole
+ *   command (`forceAsk`, `neverPersist`, `critical`, ...): dropping them let
+ *   `npm test $(calc)` ride the `npm test` allow rule.
+ * - `perm.more`: extra subjects the same call touches (apply_patch lists every
+ *   file it writes); each one must be granted too. The granted subjects are
+ *   left on `ctx.grantedPaths` so the tool does not ask for them again.
+ * A lock on any part marks `perm.locked`.
+ */
+async function checkPermissions(ask, perm, ctx) {
+  if (!perm || typeof perm !== "object") return !!(await ask(perm))
+  const { more, ...base } = perm
+  const one = async (p) => {
+    let ok = false
+    if (p.tool === "bash" && typeof p.subject === "string") {
+      const subs = splitCommand(p.subject)
+      const { locked: _l, ...shared } = p
+      // One prompt per command, not per segment: first ask the rules about
+      // every segment without prompting. Any deny/lock refuses; all allowed
+      // runs; otherwise the user sees the WHOLE command once. forceAsk keeps a
+      // wildcard allow rule from approving the joined text; "always" saves one
+      // exact rule per segment that needed asking.
+      let legacyFirst = null // a host without precheck already answered segment 1
+      if (subs.length > 1) {
+        const verdicts = []
+        for (const sub of subs) {
+          const pre = { ...shared, subject: sub, precheck: true }
+          const v = await ask(pre)
+          if (typeof v !== "string") {
+            // This host has no precheck: its answer is a real one for this
+            // segment. Continue one prompt per segment, as before.
+            if (!v) {
+              if (pre.locked) perm.locked = true
+              return false
+            }
+            legacyFirst = sub
+            verdicts.length = 0
+            break
+          }
+          if (v === "deny" || pre.locked) {
+            if (pre.locked) perm.locked = true
+            return false
+          }
+          verdicts.push({ sub, v })
+        }
+        if (verdicts.length === subs.length) {
+          const needAsk = verdicts.filter((x) => x.v !== "allow").map((x) => x.sub)
+          if (!needAsk.length) return true
+          const whole = { ...shared, subject: p.subject, forceAsk: true, persistAs: needAsk }
+          ok = await ask(whole)
+          if (!ok && whole.locked) perm.locked = true
+          return !!ok
+        }
+      }
+      for (const sub of subs) {
+        if (legacyFirst !== null && sub === legacyFirst) { legacyFirst = null; ok = true; continue }
+        const { locked, ...flags } = p
+        const subPerm = { ...flags, subject: sub }
+        ok = await ask(subPerm)
+        if (!ok) {
+          if (subPerm.locked) perm.locked = true
+          return false
+        }
+      }
+      return ok
+    }
+    // The tool's own object is passed for a plain check so `locked` set by the
+    // engine stays visible to the caller (and existing tools see no change).
+    ok = await ask(p)
+    if (!ok && p.locked) perm.locked = true
+    return !!ok
+  }
+  if (!Array.isArray(more) || !more.length) return one(perm)
+  if (!(await one(base))) {
+    if (base.locked) perm.locked = true
+    return false
+  }
+  const granted = new Set([base.subject])
+  for (const extra of more) {
+    if (!extra || typeof extra !== "object" || granted.has(extra.subject)) continue
+    // Extras inherit the call's flags unless they set their own.
+    const p = { ...base, ...extra }
+    if (!(await one(p))) {
+      if (p.locked) perm.locked = true
+      return false
+    }
+    granted.add(extra.subject)
+  }
+  if (ctx && typeof ctx === "object") ctx.grantedPaths = granted
+  return true
 }
 
 /**
@@ -317,6 +425,8 @@ async function runLoop({ session, store, profile, apiKey, emit, signal, askPermi
 ${toolName}${what} has failed ${n} times in a row. Stop retrying the same way: ${toolName === "edit" || toolName === "multiedit" ? "read the exact lines again (read with offset/limit), then edit a smaller unique piece, or rewrite the file with write." : toolName === "bash" ? "read the error above, check the command on its own, and try a different command." : "check the error above and change the arguments or the approach."}`
   }
 
+  const askAll = (perm, ctx) => checkPermissions(askPermission, perm, ctx)
+
   // Pulse: pure reads can run together. Side-effect tools stay serial below.
   const READ_ONLY = new Set(["read", "list", "grep", "glob", "diagnostics"])
   const isReadOnly = (call) => {
@@ -340,7 +450,7 @@ ${toolName}${what} has failed ${n} times in a row. Stop retrying the same way: $
         }
       }
       const perm = tool.perm(call.args, ctx)
-      if (!(await askPermission(perm))) {
+      if (!(await askAll(perm, ctx))) {
         throw new Error(perm.locked ? "Blocked by a hard lock. Do not retry this action; explain the limitation to the user and choose a safe alternative." : "The user denied permission for this action. Do not retry the same action; ask how to proceed.")
       }
       return { call, tool, shown, ctx, result, ready: true, elapsed }
@@ -705,19 +815,7 @@ ${toolName}${what} has failed ${n} times in a row. Stop retrying the same way: $
         // V-05: for shell commands, split on top-level separators and check each
         // sub-command separately, so a dangerous tail can't hide behind a benign
         // head (e.g. `echo ok && rm -rf /`). Deny rules are matched per segment.
-        let granted = false
-        if (perm.tool === "bash" && typeof perm.subject === "string") {
-          for (const sub of splitCommand(perm.subject)) {
-            const subPerm = { tool: "bash", subject: sub }
-            granted = await askPermission(subPerm)
-            if (!granted) {
-              if (subPerm.locked) perm.locked = true
-              break
-            }
-          }
-        } else {
-          granted = await askPermission(perm)
-        }
+        const granted = await askAll(perm, ctx)
         if (!granted) throw new Error(perm.locked ? "Blocked by a hard lock. Do not retry this action; explain the limitation to the user and choose a safe alternative." : "The user denied permission for this action. Do not retry the same action; ask how to proceed.")
         const toolValue = await abortable(Promise.resolve().then(() => tool.run(c.args, ctx)), signal)
         if (toolValue && (toolValue.__vibeStructuredToolResult === "browser-screenshot" || toolValue.__vibeStructuredToolResult === "computer-screenshot")) {
@@ -771,4 +869,4 @@ ${toolName}${what} has failed ${n} times in a row. Stop retrying the same way: $
   emit({ type: "done", reason: "max_steps", ...(finalized ? { summarized: true } : {}) })
 }
 
-module.exports = { modelSeesImages, recentScreenshotsOnly, runLoop, repairHistory, abortable, splitCommand, isFailoverError }
+module.exports = { modelSeesImages, recentScreenshotsOnly, runLoop, repairHistory, abortable, splitCommand, checkPermissions, isFailoverError }

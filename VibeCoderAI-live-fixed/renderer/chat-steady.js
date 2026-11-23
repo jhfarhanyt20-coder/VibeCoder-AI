@@ -93,7 +93,12 @@
     // Undo the browser's clamp after a fold — only then: a scroll the user made
     // is never put back.
     if (shrank && m.scrollTop < lastTop) m.scrollTop = lastTop
-    peakTotal = Math.max(peakTotal, m.scrollHeight)
+    // The height being held is what is really there now. A fold bigger than
+    // maxGap is only partly held (the rest is a small move); remembering the
+    // old, taller height would keep the spare space at its maximum until new
+    // content grew all the way back - the text sat at the top of the screen
+    // with blank space below for the rest of a long run.
+    peakTotal = m.scrollHeight
     remember()
   }
 

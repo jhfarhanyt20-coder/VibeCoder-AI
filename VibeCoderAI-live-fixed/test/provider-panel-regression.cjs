@@ -7,7 +7,7 @@ const fs = require("node:fs")
 const path = require("node:path")
 const vm = require("node:vm")
 
-const source = fs.readFileSync(path.join(__dirname, "..", "renderer", "app.js"), "utf8")
+const source = require("./renderer-app-source.cjs")()
 const start = source.indexOf("function showProviderFormPanel()")
 const end = source.indexOf("function selectProvider(id)", start)
 assert(start > 0 && end > start, "one shared helper decides the visible panel")

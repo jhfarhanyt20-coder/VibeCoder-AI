@@ -94,15 +94,38 @@ async function resolvePoint(ex, a) {
     const el = await ex.call("element", { id: Number(a.element) })
     let win = null
     if (ex.elementsWindow) win = await ex.ensureFront(ex.elementsWindow.hwnd, `"${ex.elementsWindow.title}"`)
-    return { x: el.cx, y: el.cy, name: el.name, type: el.type, password: el.password, window: win || ex.elementsWindow, label: `${el.type}${el.name ? ` "${el.name}"` : ""} (element ${el.id})` }
+    // The risk rules need to know the window even when the list's window is unknown.
+    else { try { win = await ex.call("foreground", {}, 5000) } catch {} }
+    const ancestor = el.name ? "" : nearestNamed(ex.lastElementsList, el.cx, el.cy, el.id)
+    return { x: el.cx, y: el.cy, name: el.name, ancestor, type: el.type, password: el.password, window: win || ex.elementsWindow, label: `${el.type}${el.name ? ` "${el.name}"` : ""} (element ${el.id})` }
   }
   if (!Number.isFinite(Number(a.x)) || !Number.isFinite(Number(a.y))) throw new Error("Give element (a number from the latest screenshot) or x and y.")
   if (!ex.lastShot) throw new Error("Take computer_screenshot first so x/y can be matched to the screen.")
   const p = ex.toScreen(Number(a.x), Number(a.y))
   let info = {}
   try { info = await ex.call("point_info", p, 4000) } catch {}
-  return { ...p, name: info.name || "", type: info.type || "", password: !!info.password, window: info.window, label: info.name ? `${info.type || "item"} "${info.name}" at (${a.x}, ${a.y})` : `(${a.x}, ${a.y})` }
+  // No accessible name at the point: use the helper's named ancestor when it
+  // reports one, else the smallest named control of the latest scan that
+  // contains the point.
+  const ancestor = info.name ? "" : String(info.ancestor || info.parent || info.container || "") || nearestNamed(ex.lastElementsList, p.x, p.y)
+  return { ...p, name: info.name || "", ancestor, type: info.type || "", password: !!info.password, window: info.window || ex.elementsWindow, label: info.name ? `${info.type || "item"} "${info.name}" at (${a.x}, ${a.y})` : `(${a.x}, ${a.y})` }
 }
+
+/** Smallest named control (latest scan, screen pixels) whose box contains x/y. */
+function nearestNamed(list, x, y, exceptId) {
+  let best = null
+  for (const e of Array.isArray(list) ? list : []) {
+    const r = e && e.rect
+    if (!e || !e.name || !r || !Number.isFinite(r.w) || !Number.isFinite(r.h)) continue
+    if (exceptId != null && String(e.id) === String(exceptId)) continue
+    if (x < r.x || y < r.y || x > r.x + r.w || y > r.y + r.h) continue
+    if (!best || r.w * r.h < best.rect.w * best.rect.h) best = e
+  }
+  return best ? String(best.name) : ""
+}
+
+/** Window facts for the risk rules. */
+const winDetail = (w) => ({ window: (w && w.title) || "", title: (w && w.title) || "", process: (w && w.process) || "" })
 
 /** Typing and keys go only to the window the agent is working in, and only when it is in front. */
 async function requireTargetInFront(ex, ctx) {
@@ -353,7 +376,7 @@ const launch = tool(
   ["program"],
   "act",
   async (ex, a, ctx) => {
-    await confirmRisky(ctx, riskOf("launch", { file: a.program, args: a.args }))
+    await confirmRisky(ctx, riskOf("launch", { file: a.program, args: a.args, workspace: ctx.cwd || (ctx.session && ctx.session.dir) || "" }))
     const r = await ex.call("launch", { file: String(a.program), args: a.args ? String(a.args) : "" }, 30000)
     if (r.pid) ex.launched.add(r.pid)
     if (!r.window) return `Started "${a.program}"${r.pid ? ` (process ${r.pid})` : ""}, but no window appeared within 12 seconds. Take computer_screenshot or computer_windows to check.`
@@ -377,7 +400,7 @@ const click = tool(
   "act",
   async (ex, a, ctx) => {
     const p = await resolvePoint(ex, a)
-    await confirmRisky(ctx, riskOf("click", { name: p.name, window: p.window && p.window.title }))
+    await confirmRisky(ctx, riskOf("click", { name: p.name, ancestor: p.ancestor, button: a.button || "left", ...winDetail(p.window) }))
     await ex.call("click", { x: p.x, y: p.y, button: a.button || "left", double: !!a.double })
     await new Promise((r) => setTimeout(r, 350))
     try { const clicked = await ex.call("root_at", { x: p.x, y: p.y }, 4000); if (clicked && clicked.hwnd) ex.target = clicked } catch {}
@@ -403,8 +426,10 @@ const type = tool(
     }
     const fg = await requireTargetInFront(ex, ctx)
     if (await ex.call("focused_password")) throw new Error("The focused field is a password field. Never type passwords; ask the user to type it themselves.")
-    await confirmRisky(ctx, riskOf("type", { text: a.text }))
-    if (a.enter) await confirmRisky(ctx, riskOf("key", { keys: "enter", window: fg ? `${fg.title || ""} ${fg.process || ""}`.trim() : "" }))
+    // One question for "type this command and press Enter", not two.
+    const typeRisk = riskOf("type", { text: a.text, ...winDetail(fg) })
+    const enterRisk = a.enter ? riskOf("key", { keys: "enter", ...winDetail(fg) }) : ""
+    await confirmRisky(ctx, typeRisk && enterRisk ? `${typeRisk}, then ${enterRisk}` : typeRisk || enterRisk)
     await ex.call("type", { text: String(a.text) }, 60000)
     if (a.enter) await ex.call("keys", { keys: "enter" })
     await ex.noteAction()
@@ -422,7 +447,7 @@ const key = tool(
   "act",
   async (ex, a, ctx) => {
     const fg = await requireTargetInFront(ex, ctx)
-    await confirmRisky(ctx, riskOf("key", { keys: a.keys, window: fg ? `${fg.title || ""} ${fg.process || ""}`.trim() : "" }))
+    await confirmRisky(ctx, riskOf("key", { keys: a.keys, ...winDetail(fg) }))
     await ex.call("keys", { keys: String(a.keys) })
     await ex.noteAction()
     await new Promise((r) => setTimeout(r, 300))

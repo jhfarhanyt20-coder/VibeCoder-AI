@@ -94,7 +94,9 @@ test("sign-in opens the browser with the code and finishes after Allow", async (
 
 test("a gateway named by the website is used; the website naming itself keeps the built-in gateway", async () => {
   const { createVibecoderAccount: create } = require("../electron/vibecoder-account.cjs")
-  for (const [announced, expected] of [["https://other-gateway.example.test", "https://other-gateway.example.test"], [BASE, GW], ["http://evil.example", GW]]) {
+  // Only allow-listed gateways are accepted: a compromised website must not be
+  // able to send the account token and every chat to a host of its choosing.
+  for (const [announced, expected] of [["https://other-gateway.example.test", GW], [GW, GW], [BASE, GW], ["http://evil.example", GW]]) {
     let profile = null
     const acct = create({
       baseUrl: BASE, gatewayUrl: GW, openExternal: async () => {}, emit: () => {},

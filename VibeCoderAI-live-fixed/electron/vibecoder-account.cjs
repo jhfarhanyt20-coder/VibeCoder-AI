@@ -68,6 +68,15 @@ function createVibecoderAccount(deps) {
   const baseUrl = deps.baseUrl || accountBaseUrl()
   const defaultGateway = deps.gatewayUrl || gatewayBaseUrl()
   let gateway = defaultGateway
+  // The app token is sent to the gateway, so the website may only pick a gateway
+  // from this allow-list: the built-in gateway, the configured/validated
+  // override (VIBECODER_GATEWAY_URL or deps.gatewayUrl) and any origins the host
+  // passes explicitly. Any other announced origin is ignored.
+  const allowedGateways = new Set(
+    [DEFAULT_GATEWAY_URL, defaultGateway, ...(Array.isArray(deps.allowedGateways) ? deps.allowedGateways : [])]
+      .map((u) => safeOrigin(u, ""))
+      .filter(Boolean),
+  )
   const now = deps.now || Date.now
   const wait = deps.setTimeout || setTimeout
   const emit = deps.emit || (() => {})
@@ -112,7 +121,7 @@ function createVibecoderAccount(deps) {
         // A website that names only itself has no separate gateway configured:
         // keep the built-in gateway then.
         const named = safeOrigin(acct.data.gateway_url, "")
-        gateway = named && named !== baseUrl ? named : defaultGateway
+        gateway = named && named !== baseUrl && allowedGateways.has(named) ? named : defaultGateway
       }
     } catch {}
     const res = await request("/v1/models", { token: t, base: gateway })
@@ -218,4 +227,4 @@ function createVibecoderAccount(deps) {
   }
 }
 
-module.exports = { createVibecoderAccount, profileFromModels, accountBaseUrl, gatewayBaseUrl, PROFILE_ID, PROVIDER_NAME, DEFAULT_ACCOUNT_URL, DEFAULT_GATEWAY_URL }
+module.exports = { createVibecoderAccount, profileFromModels, accountBaseUrl, gatewayBaseUrl, safeOrigin, PROFILE_ID, PROVIDER_NAME, DEFAULT_ACCOUNT_URL, DEFAULT_GATEWAY_URL }

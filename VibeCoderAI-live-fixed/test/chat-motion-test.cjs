@@ -6,7 +6,7 @@ const fs = require("node:fs")
 const path = require("node:path")
 const vm = require("node:vm")
 const root = path.join(__dirname, "..")
-const app = fs.readFileSync(path.join(root, "renderer/app.js"), "utf8")
+const app = require("./renderer-app-source.cjs")()
 const steady = fs.readFileSync(path.join(root, "renderer/chat-steady.js"), "utf8")
 const css = fs.readFileSync(path.join(root, "renderer/theme.css"), "utf8")
 
@@ -123,6 +123,17 @@ console.log("PASS question box: above the composer, one question at a time, butt
   assert(steady.includes("if (shrank && m.scrollTop < lastTop) m.scrollTop = lastTop"), "only a fold's clamp is undone")
   assert(steady.includes("(!live || performance.now() - lastGrowAt > 700)"), "the spare space closes only while nothing arrives")
   console.log("PASS reading while writing: scroll up stays put, no wobble")
+}
+
+{
+  // A fold bigger than one screen (a long step list) left the spare space at
+  // its maximum for the rest of the run: settle() remembered the old, taller
+  // height, so new text never filled the space and the frame loop never closed
+  // it (settled() stayed false). Measured offscreen: 480 of 600 px stayed blank.
+  // The held height is now always the real one.
+  assert(/peakTotal = m\.scrollHeight\r?\n/.test(steady), "settle keeps the real height, not the old peak")
+  assert.doesNotMatch(steady, /peakTotal = Math\.max\(peakTotal, m\.scrollHeight\)/, "no ratchet to an old peak")
+  console.log("PASS long runs: a big fold never leaves the text stuck at the top")
 }
 
 // The top-left chip is only for commands (shell / cmd / background), named

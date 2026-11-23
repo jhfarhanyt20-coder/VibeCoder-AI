@@ -89,6 +89,12 @@ console.log("PASS computer smart: change reports, hidden controls, zoom, vision 
   t = make({ elementName: "Delete selected" })
   out = await steps.run({ steps: [{ action: "click", element: 2 }] }, t.ctx)
   assert(t.asks.some((a) => a.critical && /Delete selected/.test(a.subject)), "risky click asks even inside computer_steps")
+  // The Win+R → type command → Enter chain inside one batch asks before Win+R.
+  t = make()
+  t.ctx.askPermission = async (p) => { t.asks.push(p); return false }
+  out = await steps.run({ steps: [{ action: "key", keys: "win+r" }, { action: "type", text: "powershell -c calc" }, { action: "key", keys: "enter" }] }, t.ctx)
+  assert.match(out, /Stopped: step 1 \(key\) failed: .*did not allow/)
+  assert.equal(t.calls.includes("keys") || t.calls.includes("type"), false, "nothing pressed or typed after the denial")
   // Unknown action.
   out = await steps.run({ steps: [{ action: "fly" }] }, make().ctx)
   assert.match(out, /unknown action "fly"/)

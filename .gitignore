@@ -19,6 +19,9 @@ npm-debug.log*
 # local env / secrets
 .env
 .env.local
+.env*
+!.env.example
+!.env.sample
 *client_secret_*
 **/*client_secret_*
 
@@ -38,3 +41,6 @@ VibeCoderAI-live-fixed/renderer/renderer.zip
 
 # local notes
 New Text Document.txt
+
+# local copy of the website (the live site source is a separate private repo)
+/website/

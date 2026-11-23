@@ -18,32 +18,56 @@ const { execFile } = require("child_process")
 const PREFIX = "vibe-dpapi-v1:"
 const WIN = process.platform === "win32"
 
-const PS_HEAD = "$ErrorActionPreference='Stop';Add-Type -AssemblyName System.Security;"
+/*
+ * The PowerShell scripts are CONSTANTS: they never contain a key, a blob or any
+ * other data. Items travel through STDIN (one base64 line per item), so nothing
+ * secret appears in the process command line or in PowerShell script-block
+ * logging (event 4104 records the -Command text, readable by local users).
+ * JSON/ConvertFrom-Json is deliberately NOT used: Windows PowerShell 5.1
+ * flattens JSON string arrays - a plain line protocol has no such trap.
+ */
+const PS_HEAD =
+  "$ErrorActionPreference='Stop';Add-Type -AssemblyName System.Security;" +
+  "$arr=New-Object System.Collections.Generic.List[string];" +
+  "while($null -ne ($l=[Console]::In.ReadLine())){$arr.Add([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($l.Trim())))};"
 const UNPROTECT =
   `$out=@();foreach($v in $arr){if($null -eq $v){$out+=,'';continue};try{$b=[Convert]::FromBase64String($v);$out+=,[Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Unprotect($b,$null,'CurrentUser'))}catch{$out+=,''}};[string]::Join([char]10,$out)`
 const PROTECT =
   `$out=@();foreach($v in $arr){if($null -eq $v){$out+=,'';continue};try{$out+=,[Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes($v),$null,'CurrentUser'))}catch{$out+=,''}};[string]::Join([char]10,$out)`
+const SCRIPTS = Object.freeze({ protect: PS_HEAD + PROTECT, unprotect: PS_HEAD + UNPROTECT })
 
-function script(items, mode) {
-  // One base64-encoded item per line, the whole payload base64-wrapped again so
-  // no quoting hazard reaches -Command. JSON/ConvertFrom-Json is deliberately
-  // NOT used: Windows PowerShell 5.1 flattens JSON string arrays (2 keys came
-  // back as ONE space-joined string) - a plain line protocol has no such trap.
-  const payload = items.map((x) => Buffer.from(String(x == null ? "" : x), "utf8").toString("base64")).join("\n")
-  const b64 = Buffer.from(payload, "utf8").toString("base64")
-  const inner = "[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + b64 + "'))"
-  const split = `$arr=@();$lines=(${inner}) -split [char]10; foreach($l in $lines){$arr+=,[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($l))};`
-  return `${PS_HEAD}${split}${mode === "protect" ? PROTECT : UNPROTECT}`
+/** constant script for a mode - carries no data */
+function script(mode) {
+  return mode === "protect" ? SCRIPTS.protect : SCRIPTS.unprotect
 }
 
-function run(script) {
+/** stdin payload: one base64(UTF-8) line per item, newline-terminated */
+function stdinPayload(items) {
+  return items.map((x) => Buffer.from(String(x == null ? "" : x), "utf8").toString("base64")).join("\n") + "\n"
+}
+
+/** argv handed to powershell.exe (exported for tests: it must never hold data) */
+function psArgs(mode) {
+  return ["-NoProfile", "-NonInteractive", "-Command", script(mode)]
+}
+
+function run(mode, items) {
   return new Promise((resolve) => {
-    execFile(
-      "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-Command", script],
-      { windowsHide: true, timeout: 30000, maxBuffer: 8 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] },
-      (err, stdout) => resolve(err ? null : String(stdout || "")),
-    )
+    let child
+    try {
+      child = execFile(
+        "powershell.exe",
+        psArgs(mode),
+        { windowsHide: true, timeout: 30000, maxBuffer: 8 * 1024 * 1024 },
+        (err, stdout) => resolve(err ? null : String(stdout || "")),
+      )
+    } catch {
+      resolve(null)
+      return
+    }
+    if (!child.stdin) return resolve(null)
+    child.stdin.on("error", () => {})
+    child.stdin.end(stdinPayload(items), "utf8")
   })
 }
 
@@ -72,13 +96,13 @@ function parseLines(out, n, mode = "text") {
 /** decrypt a whole list of vibe-dpapi blobs in ONE powershell call (null per failed item) */
 async function unprotectBatch(blobs) {
   if (!WIN || !blobs.length) return blobs.map(() => null)
-  return parseLines(await run(script(blobs.map((b) => String(b).slice(PREFIX.length)), "unprotect")), blobs.length)
+  return parseLines(await run("unprotect", blobs.map((b) => String(b).slice(PREFIX.length))), blobs.length)
 }
 
 /** encrypt a whole list of plaintexts in ONE powershell call (null per failed item) */
 async function protectBatch(plaintexts) {
   if (!WIN || !plaintexts.length) return plaintexts.map(() => null)
-  const got = await run(script(plaintexts, "protect"))
+  const got = await run("protect", plaintexts)
   const lines = parseLines(got, plaintexts.length, "raw-b64")
   return lines ? lines.map((v) => (v ? PREFIX + v : null)) : null
 }
@@ -96,20 +120,21 @@ const available = () => WIN
 function encrypt(plain) {
   const s = String(plain == null ? "" : plain)
   if (!WIN || !s || s.startsWith(PREFIX)) return s
-  const lines = parseLines(runSync(script([s], "protect")), 1, "raw-b64")
+  const lines = parseLines(runSync("protect", [s]), 1, "raw-b64")
   const v = lines && lines[0]
   if (!v) throw new Error("Could not encrypt the API key (DPAPI failed) - the key was not saved.")
   return PREFIX + v
 }
 
-function runSync(psScript) {
+function runSync(mode, items) {
   try {
     const { spawnSync } = require("child_process")
-    const r = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", psScript], {
+    const r = spawnSync("powershell.exe", psArgs(mode), {
       windowsHide: true,
       timeout: 30000,
       maxBuffer: 8 * 1024 * 1024,
-      stdio: ["ignore", "pipe", "ignore"],
+      input: stdinPayload(items),
+      stdio: ["pipe", "pipe", "ignore"],
       encoding: "utf8",
     })
     return r.status === 0 ? r.stdout : null
@@ -123,7 +148,7 @@ function decrypt(stored) {
   if (!s.startsWith(PREFIX)) return s // legacy plaintext value
   const hit = cache.get(s)
   if (hit !== undefined) return hit
-  const lines = parseLines(runSync(script([s.slice(PREFIX.length)], "unprotect")), 1)
+  const lines = parseLines(runSync("unprotect", [s.slice(PREFIX.length)]), 1)
   if (!lines || !lines[0])
     throw new Error("The saved API key could not be decrypted on this Windows account - re-add it (vibe auth add <profile>).")
   cachePut(s, lines[0])
@@ -145,4 +170,4 @@ async function warm(blobs) {
   return n
 }
 
-module.exports = { available, encrypt, decrypt, warm, protectBatch, unprotectBatch, PREFIX }
+module.exports = { available, encrypt, decrypt, warm, protectBatch, unprotectBatch, PREFIX, _internal: { script, psArgs, stdinPayload } }

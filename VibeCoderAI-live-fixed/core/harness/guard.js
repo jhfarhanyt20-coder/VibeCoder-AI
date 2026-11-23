@@ -94,10 +94,25 @@ const SECRET_TEXT_PATTERNS = [
   // Authorization: Bearer <token> (before the key=value rule, which would only
   // eat the word "Bearer")
   [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/g, "$1 [redacted]"],
+  // secret query parameters in URLs: ?access_token=... &token=... &api_key=...
+  [/([?&](?:access[-_]?token|refresh[-_]?token|id[-_]?token|auth[-_]?token|token|api[-_]?key|apikey|key|client[-_]?secret|secret|password|sig|signature)=)[^&\s#"'<>]+/gi, "$1[redacted]"],
+  // JSON-style "api_key": "..." / "access_token":"..."
+  [/("(?:api[-_]?key|apikey|access[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|auth[-_]?token|token|secret|client[-_]?secret|password|passwd|authorization|private[-_]?key|x-api-key)"\s*:\s*)"(?:[^"\\]|\\.)*"/gi, '$1"[redacted]"'],
+  // ENV-style OPENAI_API_KEY=... / *_API_KEY= / *_TOKEN= / *_SECRET= / *_PASSWORD=
+  [/\b([A-Z][A-Z0-9_]*(?:API_KEY|_KEY|_TOKEN|_SECRET|_PASSWORD|_PASSWD))(\s*=\s*)("[^"]*"|'[^']*'|[^\s,;]+)/g, "$1$2[redacted]"],
   // key = value / key: value for obviously secret names
-  [/\b(api[-_]?key|access[-_]?key|secret|client[-_]?secret|password|passwd|token|authorization|private[-_]?key)\b(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;]+)/gi, "$1$2[redacted]"],
+  [/\b(api[-_]?key|access[-_]?key|access[-_]?token|refresh[-_]?token|auth[-_]?token|secret|client[-_]?secret|password|passwd|token|authorization|private[-_]?key)\b(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;]+)/gi, "$1$2[redacted]"],
   // well-known token prefixes
+  [/\bgithub_pat_[A-Za-z0-9_]{20,}/g, "github_pat_[redacted]"],
+  [/\bsk-or-[A-Za-z0-9_-]{16,}/g, "sk-or-[redacted]"],
   [/\bsk-[A-Za-z0-9_-]{16,}/g, "sk-[redacted]"],
+  [/\bglpat-[A-Za-z0-9_-]{20,}/g, "glpat-[redacted]"],
+  [/\bnpm_[A-Za-z0-9]{30,}/g, "npm_[redacted]"],
+  [/\bhf_[A-Za-z0-9]{30,}/g, "hf_[redacted]"],
+  [/\bgsk_[A-Za-z0-9]{30,}/g, "gsk_[redacted]"],
+  [/\bxai-[A-Za-z0-9]{30,}/g, "xai-[redacted]"],
+  [/\br8_[A-Za-z0-9]{30,}/g, "r8_[redacted]"],
+  [/\bEAA[A-Za-z0-9]{40,}/g, "EAA[redacted]"],
   [/\bgh[pousr]_[A-Za-z0-9]{20,}/g, "gh[redacted]"],
   [/\bxox[baprs]-[A-Za-z0-9-]{10,}/g, "xox[redacted]"],
   [/\bAKIA[0-9A-Z]{16}\b/g, "AKIA[redacted]"],

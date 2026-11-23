@@ -461,6 +461,10 @@ class Engine {
       // Dynamic shell syntax must not ride an allow-list prefix. Keep an
       // explicit user denial, but downgrade an automatic allow to a prompt.
       const action = perm?.forceAsk === true && decision.action === "allow" ? "ask" : decision.action
+      // precheck: report what the rules decide without prompting or logging.
+      // A compound shell command checks every segment this way first, then
+      // shows ONE prompt for the whole command instead of one per segment.
+      if (perm && perm.precheck === true) return action
       const source = decision.source
       // Durable audit: which layer decided, without leaking the subject value.
       this.trail.append(session && session.id, {
@@ -477,7 +481,8 @@ class Engine {
       if (signal.aborted) return false // the run was stopped: never wait for an answer nobody can give
       const permissionId = newId("perm")
       return new Promise((resolve) => {
-        this.pending.set(permissionId, { resolve, session, inherits, tool, subject, neverPersist, ...(critical ? { critical: true } : {}) })
+        const persistAs = Array.isArray(perm?.persistAs) ? perm.persistAs.map(String).filter(Boolean) : null
+        this.pending.set(permissionId, { resolve, session, inherits, tool, subject, neverPersist, ...(persistAs && persistAs.length ? { persistAs } : {}), ...(critical ? { critical: true } : {}) })
         signal.addEventListener("abort", () => this.replyPermission(permissionId, "deny"), { once: true })
         emit({ type: "permission.ask", permissionId, tool, subject, ...(critical ? { critical: true } : {}) })
       })
@@ -492,7 +497,10 @@ class Engine {
       // V-04: tools that declare neverPersist (e.g. browser.evaluate runs
       // arbitrary JS in the user's page) never save an "always" allow rule.
       const exact = !["edit", "write"].includes(p.tool)
-      p.session.rules.push({ tool: p.tool, pattern: exact ? p.subject : "*", exact, action: "allow" })
+      // A combined shell prompt saves one exact rule per segment that needed
+      // asking, the same rules separate prompts would have saved.
+      if (p.persistAs) for (const s of p.persistAs) p.session.rules.push({ tool: p.tool, pattern: s, exact: true, action: "allow" })
+      else p.session.rules.push({ tool: p.tool, pattern: exact ? p.subject : "*", exact, action: "allow" })
       this.store.save(p.session)
     }
     this._emit(p.inherits?.id || p.session.parentId || p.session.id, {

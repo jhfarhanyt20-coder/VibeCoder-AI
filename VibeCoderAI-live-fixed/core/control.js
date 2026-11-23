@@ -418,6 +418,9 @@ function createControl(engine) {
       if (!["openai-chat", "openai-responses", "anthropic"].includes(p.format)) throw new Error("Choose openai-chat, openai-responses or anthropic format.")
       const url = new URL(String(p.baseURL || ""))
       if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error("Use an HTTP(S) API URL without embedded credentials.")
+      profiles.checkProviderURL(url.href) // http only for localhost / private LAN
+      if (p.apiKeyEnv != null && p.apiKeyEnv !== "" && !profiles.validApiKeyEnv(p.apiKeyEnv))
+        throw new Error("apiKeyEnv must be an environment variable name ending in KEY, TOKEN or SECRET (for example MYPROVIDER_API_KEY).")
       if (!String(p.model || "").trim()) throw new Error("A model ID is required.")
       for (const key of Object.keys(p)) if (SECRET_KEY.test(key) && key !== "headers") throw new Error("Save credentials with vibe auth, not in a profile.")
       if (p.headers && Object.keys(p.headers).some((k) => /authorization|auth|cookie|key|token|secret|password/i.test(k))) throw new Error("Credentials belong in vibe auth, not profile headers.")
@@ -429,7 +432,17 @@ function createControl(engine) {
         }
       }
       checkBody(p.quirks?.extraBody)
-      return engine.upsertProfile(p)
+      // A saved key belongs to its endpoint: when the base URL ORIGIN changes the
+      // old key is cleared so it is never sent to the new host (re-add it with
+      // vibe auth / profiles.key). Same-origin edits keep the key.
+      const prev = engine.listProfiles().find((x) => x.id === p.id)
+      const moved = profiles.originChanged(prev, url.href)
+      const result = engine.upsertProfile(p)
+      if (moved && profiles.hasKey({ id: p.id }, home)) {
+        engine.setKey(p.id, "")
+        return { ...result, keyCleared: true, hints: [...(result?.hints || []), "The base URL moved to a different host, so the saved API key was removed. Add the key again for the new endpoint."] }
+      }
+      return result
     },
     "profiles.remove": (a) => {
       if (profiles.BUILTIN.some((p) => p.id === a.id)) throw new Error("Built-in providers cannot be removed.")

@@ -586,4 +586,45 @@ Thin vertical slice first:
 - [x] VIBE.md "Current release" and this section updated; README (root + engine).
 - [x] Website "What's new" (`0ed96e6`) and sign-in page (`3e1ecca`) updated.
 
-### Next release (0.3.24): same checklist, one patch up, never skip.
+## 16. Release 0.3.24 — 2026-11-23
+
+- **0.3.24** (commit `9229f7e`, tag `v0.3.24`, run `45167261565`, owner approved):
+  - `core/llm/cache.js`: caching rules by API format only (no provider/model
+    names). Anthropic (`anthropic.js`: tools, system, newest block) and OpenAI
+    Chat (`openai-chat.js`: system, newest message) send `cache_control`; a 400
+    while marked is retried once without marks unless it is clearly a
+    context/rate/key/model error (`mayBeAboutMarks`), and an endpoint that
+    only works without marks is remembered for the app session. Responses:
+    automatic prefix caching. `quirks.promptCache: false` opts a profile out.
+  - `core/agent/loop.js`: the final step keeps system prompt and tools, sends no
+    tool_choice (measured: it breaks Gemini's cache; Anthropic documents the
+    same) and adds the closing note at the end of the request only
+    (`withFinalNote`). Adapters still accept `toolChoice` for callers.
+  - Real-endpoint check of the final step: AMD Anthropic 8448/8578, AMD OpenAI
+    8448/8580, Agnes 8960/9065, AgentRouter Responses 6105/6108, Gemini 3987
+    (implicit, partial). A reasoning model needs a normal output limit for the
+    closing summary (a 400-token test limit gave empty replies).
+  - `core/perm/remember.js`: "Always allow" remembers command families
+    (`prefix` rules, matched on clean tokens via core/perm/builtin.js tokenize);
+    the prompt carries `remembers` (app card + CLI dialog).
+  - `core/tools/editkit.js`: typography-normalized matcher (1:1 char map).
+  - `renderer/app.js` split into `renderer/app/*.js` (same code, load order in
+    index.html; `startNewProvider` listener looked up on click);
+    `test/renderer-app-source.cjs` joins the parts for tests.
+- Verified before tagging: `npm test` green and on a CRLF copy; local installer
+  build contains renderer/app/* and core/llm/cache.js and starts with no
+  startup errors.
+
+### 0.3.24 release checklist (done)
+- [x] Owner approved the release.
+- [x] `package.json` and both root entries of `package-lock.json` → **0.3.24**.
+- [x] `npm test` green (and on a CRLF copy); local installer build OK.
+- [x] Only the intended files committed; `master` pushed.
+- [x] Tag `v0.3.24` pushed; release run `45167261565` succeeded.
+- [x] One release with `.exe` (122172965), `.exe.blockmap` (129270), `latest.yml`
+      (348) and `VibeCoder-CLI-0.3.24.tgz` (346092), all by `github-actions[bot]`.
+- [x] `releases/latest/download/latest.yml` shows `version: 0.3.24`.
+- [x] VIBE.md "Current release" and this section updated; README (root + engine).
+- [x] Website "What's new" updated.
+
+### Next release (0.3.25): same checklist, one patch up, never skip.

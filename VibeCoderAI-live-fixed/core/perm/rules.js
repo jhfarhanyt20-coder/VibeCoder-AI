@@ -151,7 +151,11 @@ function decide(rules, tool, subject) {
     // substring; they only ever apply to bash.
     let hit = r.builtin
       ? r.tool === "bash" && tool === "bash" && matchBuiltin(r.builtin, s)
-      : r.exact ? s === toPosix(r.pattern) : r.pattern === "*" || matcher(r.pattern).test(s)
+      : r.prefix
+        // "Always allow" for a command family (core/perm/remember.js): matched
+        // on clean tokens only, never by substring.
+        ? r.tool === "bash" && tool === "bash" && require("./remember").matchPrefix(r.pattern, subject == null ? "" : subject)
+        : r.exact ? s === toPosix(r.pattern) : r.pattern === "*" || matcher(r.pattern).test(s)
     // OpenCode's "git *" also matches the bare "git" command.
     if (!hit && !r.builtin && r.tool === "bash" && typeof r.pattern === "string" && r.pattern.endsWith(" *")) {
       hit = s === toPosix(r.pattern.slice(0, -2).trim())

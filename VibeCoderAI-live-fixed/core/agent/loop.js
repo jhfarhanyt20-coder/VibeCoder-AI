@@ -357,6 +357,21 @@ async function checkPermissions(ask, perm, ctx) {
  * newest views. Older ones stay in the history (and in the UI) but go to the
  * model as a short note. The saved session is not changed.
  */
+/**
+ * The request-only final-step note, added after the whole history so nothing
+ * before it changes. A trailing user message (usually tool results) gets the
+ * note as one more text part; otherwise a new user message is appended.
+ * The session itself is never modified.
+ */
+function withFinalNote(messages, note) {
+  const list = Array.isArray(messages) ? messages.slice() : []
+  const last = list[list.length - 1]
+  const part = { type: "text", text: note }
+  if (last && last.role === "user") list[list.length - 1] = { ...last, parts: [...(last.parts || []), part] }
+  else list.push({ role: "user", parts: [part] })
+  return list
+}
+
 const KEEP_SCREENSHOTS = 2
 // Trim in steps of 4: a trimmed history changes the request prefix and so
 // breaks the provider's prompt cache; moving the cut only every 4 screenshots
@@ -629,14 +644,18 @@ ${toolName}${what} has failed ${n} times in a row. Stop retrying the same way: $
     // Explicit /compact and overflow recovery still run.
     if (compactionConfig?.auto !== false && compaction.needsCompaction({ system, messages: session.messages, toolSpecs, lastInput: session.usage.lastInput, profile, config: compactionConfig })) await doCompact("auto")
 
-    // V-06: on the final step we drop the tools and ask the model to write a
-    // closing summary in plain text, instead of ending with a silent max_steps.
+    // V-06: on the final step the model is asked for a closing summary in plain
+    // text, instead of ending with a silent max_steps. The note goes at the END
+    // of the conversation (request only, never saved), not into the system
+    // prompt: the system prompt, tools and history stay byte-for-byte the same,
+    // so the provider's prompt cache still covers everything before the note.
     const finalStep = step === maxSteps - 1
-    const reqSystem = finalStep
-      ? system + "\n\n# Final step\nYou are at the last step of this run. Do not call any tools. Write a concise closing summary of what you changed, what you verified, and what is still pending."
-      : system
-    const reqTools = finalStep ? [] : toolSpecs
-    emit({ type: "step.start", step: step + 1, maxSteps, tools: reqTools.map((tool) => tool.name) })
+    const reqSystem = system
+    const finalNote = "# Final step\nYou are at the last step of this run. Do not call any tools. Write a concise closing summary of what you changed, what you verified, and what is still pending."
+    // The tool list stays the same on the final step: a changed tool list breaks
+    // the provider's prompt cache.
+    const reqTools = toolSpecs
+    emit({ type: "step.start", step: step + 1, maxSteps, tools: finalStep ? [] : reqTools.map((tool) => tool.name) })
 
     let text = ""
     const calls = []
@@ -644,7 +663,11 @@ ${toolName}${what} has failed ${n} times in a row. Stop retrying the same way: $
     let sawReasoning = false
     let stepUsage = null // last usage event of THIS request -> stored on the message
     try {
-      const request = { apiKey, system: reqSystem, messages: recentScreenshotsOnly(session.messages), tools: reqTools, signal }
+      const history = recentScreenshotsOnly(session.messages)
+      // No tool_choice on the final step: measured on real providers, changing
+      // tool_choice drops the prompt cache on some of them (Anthropic documents
+      // it too). The note at the end is what asks for the closing summary.
+      const request = { apiKey, system: reqSystem, messages: finalStep ? withFinalNote(history, finalNote) : history, tools: reqTools, signal }
       const stream = profile.group
         ? streamWithFallback(profile, request, { home: engine?.home, signal })
         : llm.stream(profile, request)
@@ -869,4 +892,4 @@ ${toolName}${what} has failed ${n} times in a row. Stop retrying the same way: $
   emit({ type: "done", reason: "max_steps", ...(finalized ? { summarized: true } : {}) })
 }
 
-module.exports = { modelSeesImages, recentScreenshotsOnly, runLoop, repairHistory, abortable, splitCommand, checkPermissions, isFailoverError }
+module.exports = { modelSeesImages, recentScreenshotsOnly, runLoop, repairHistory, abortable, splitCommand, checkPermissions, isFailoverError, withFinalNote }

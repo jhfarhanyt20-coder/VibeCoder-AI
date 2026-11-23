@@ -39,7 +39,7 @@ function toWire(messages) {
   return input
 }
 
-async function* stream({ profile, apiKey, system, messages, tools, signal }) {
+async function* stream({ profile, apiKey, system, messages, tools, signal, toolChoice = null }) {
   const q = profile.quirks || {}
   const body = {
     model: profile.model,
@@ -51,6 +51,8 @@ async function* stream({ profile, apiKey, system, messages, tools, signal }) {
   }
   if (system) body.instructions = system
   if (tools && tools.length) body.tools = tools.map((t) => ({ type: "function", name: t.name, description: t.description, parameters: t.parameters }))
+  // Final step: same tools (the cached prefix still matches), but no calls.
+  if (toolChoice === "none" && body.tools) body.tool_choice = "none"
   if (q.reasoningEffort) body.reasoning = { effort: q.reasoningEffort, summary: "auto" }
 
   const headers = { ...authHeaders(profile.baseURL, apiKey), ...(profile.headers || {}) }
@@ -58,6 +60,7 @@ async function* stream({ profile, apiKey, system, messages, tools, signal }) {
     const t = err.body
     if (b.reasoning && /reasoning/i.test(t) && /unsupported|unknown|not support|unrecognized|invalid/i.test(t)) return delete b.reasoning
     if (b.store === false && /\bstore\b/i.test(t)) return delete b.store
+    if (b.tool_choice && /tool_choice/i.test(t)) return delete b.tool_choice
     return false
   }
   const url = profile.baseURL.replace(/\/+$/, "") + "/responses"

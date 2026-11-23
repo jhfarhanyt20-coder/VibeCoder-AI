@@ -3,11 +3,13 @@ import fs from "node:fs"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
+import { createRequire } from "node:module"
+const rendererAppSource = createRequire(import.meta.url)("./renderer-app-source.cjs")
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8")
 const html = read("renderer/index.html")
-const app = read("renderer/app.js")
+const app = rendererAppSource()
 const css = read("renderer/theme.css")
 const skin = read("renderer/skin.css")
 const obsidian = read("renderer/obsidian.css")
@@ -166,7 +168,14 @@ assert.match(app, /vibe\.shellInput\(/)
 assert.match(css, /\.bji-output/)
 assert.match(css, /\.bji-input-row/)
 
-const syntax = spawnSync(process.execPath, ["--check", path.join(root, "renderer", "app.js")], { encoding: "utf8" })
+const syntax = (() => {
+  // every renderer app part must parse (app.js and app/*.js)
+  for (const f of rendererAppSource.appScriptFiles()) {
+    const r = spawnSync(process.execPath, ["--check", path.join(root, "renderer", f)], { encoding: "utf8" })
+    if (r.status !== 0) return r
+  }
+  return { status: 0, stdout: "", stderr: "" }
+})()
 assert.equal(syntax.status, 0, syntax.stderr || syntax.stdout)
 
 console.log("PASS harness UI regression: Pulse, permissions, Rewind and live shell controls are wired end-to-end")

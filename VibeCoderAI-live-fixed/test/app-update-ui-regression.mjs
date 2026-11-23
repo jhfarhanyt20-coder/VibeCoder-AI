@@ -3,11 +3,13 @@ import fs from "node:fs"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
+import { createRequire } from "node:module"
+const rendererAppSource = createRequire(import.meta.url)("./renderer-app-source.cjs")
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8")
 const html = read("renderer/index.html")
-const app = read("renderer/app.js")
+const app = rendererAppSource()
 const updater = read("electron/updater.cjs")
 
 for (const id of [
@@ -43,7 +45,14 @@ assert.match(updater, /const previousAutoDownload = au\.autoDownload/)
 assert.doesNotMatch(updater, /prefs\.autoDownload = true/, "manual download must not change the saved preference")
 assert.match(updater, /au\.autoDownload = previousAutoDownload/)
 
-const syntax = spawnSync(process.execPath, ["--check", path.join(root, "renderer", "app.js")], { encoding: "utf8" })
+const syntax = (() => {
+  // every renderer app part must parse (app.js and app/*.js)
+  for (const f of rendererAppSource.appScriptFiles()) {
+    const r = spawnSync(process.execPath, ["--check", path.join(root, "renderer", f)], { encoding: "utf8" })
+    if (r.status !== 0) return r
+  }
+  return { status: 0, stdout: "", stderr: "" }
+})()
 assert.equal(syntax.status, 0, syntax.stderr || syntax.stdout)
 
 console.log("PASS app update UI regression: manual check, in-app Update Now download and Install & Restart are wired")

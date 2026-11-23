@@ -86,7 +86,9 @@ async function askPermission(rl, ev, state, log = console.log, signal) {
     log(c.dim(`(no terminal to ask, denied: ${ev.tool}) use --yes to allow`))
     return "deny"
   }
-  rl.setDialog?.({ kind: "permission", title: "Approve action", body: `${ev.tool}\n${subject}`, hint: "y once   a always   N deny   Esc cancel" })
+  // "always" may remember a command family (git commit …) rather than this exact text.
+  const remembers = Array.isArray(ev.remembers) && ev.remembers.some((r) => String(r).endsWith(" …")) ? `\nAlways remembers: ${ev.remembers.join(", ")}` : ""
+  rl.setDialog?.({ kind: "permission", title: "Approve action", body: `${ev.tool}\n${subject}${remembers}`, hint: "y once   a always   N deny   Esc cancel" })
   const answer = String(await ask(rl, `Allow ${ev.tool}: ${subject}? [y]es / [a]lways / [N]o `, signal) || "")
     .trim()
     .toLowerCase()

@@ -968,7 +968,7 @@ const handlers = {
     s.rules = permissions.map((p) => ({ tool: String(p.action || "*"), pattern: String(p.resource || "*"), action: ["allow", "ask", "deny"].includes(String(p.effect)) ? String(p.effect) : "ask", exact: false }))
     engine.store.save(s); return { updated: s.rules.length }
   },
-  listPermissionRequests: async () => [...engine.pending.entries()].map(([id, p]) => ({ id, permissionId: id, sessionID: p.session?.parentId || p.session?.id, subagentSessionID: p.session?.parentId ? p.session.id : undefined, action: p.tool, tool: p.tool, resource: p.subject, resources: p.subject ? [p.subject] : [], neverPersist: !!p.neverPersist, ...(p.critical ? { critical: true } : {}) })),
+  listPermissionRequests: async () => [...engine.pending.entries()].map(([id, p]) => ({ id, permissionId: id, sessionID: p.session?.parentId || p.session?.id, subagentSessionID: p.session?.parentId ? p.session.id : undefined, action: p.tool, tool: p.tool, resource: p.subject, resources: p.subject ? [p.subject] : [], neverPersist: !!p.neverPersist, ...(p.remembers ? { remembers: p.remembers } : {}), ...(p.critical ? { critical: true } : {}) })),
   replyPermission: async (a = {}) => { const id = a.requestID || a.permissionId || a.id; const decision = a.decision === "reject" ? "deny" : a.decision; if (!engine.replyPermission(id, decision)) throw new Error("Permission request is no longer pending."); emitUI("session.permissions", a.sessionID, { resolved: true, requestID: id, decision }); return { replied: true } },
   listForms: async (a = {}) => engine.listForms(a.sessionID || a.sessionId || null),
   replyForm: async (a = {}) => {

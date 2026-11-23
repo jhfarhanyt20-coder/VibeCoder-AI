@@ -82,7 +82,53 @@ function withGeminiSignatures(wire) {
   return wire
 }
 
-async function* stream({ profile, apiKey, system, messages, tools, signal }) {
+/**
+ * Prompt caching on OpenAI-compatible endpoints (core/llm/cache.js), the same
+ * for every provider: providers that cache a repeated prefix by themselves get
+ * a stable prefix from the agent, and the system prompt and newest message
+ * also carry `cache_control` marks for providers that cache only on request
+ * (Claude or Gemini behind OpenRouter-style gateways, and others). An endpoint
+ * that refuses the marks is retried once without them and then left alone.
+ */
+const CHAT_CACHE = { type: "ephemeral" }
+const promptCache = require("./cache")
+const wantsChatCacheMarks = (profile) => promptCache.useMarks(profile)
+/** Mark one message; returns true when its string content was turned into parts. */
+function markChatPart(msg) {
+  if (!msg) return false
+  if (typeof msg.content === "string") {
+    if (!msg.content) return false
+    msg.content = [{ type: "text", text: msg.content, cache_control: CHAT_CACHE }]
+    return true
+  }
+  if (Array.isArray(msg.content) && msg.content.length) {
+    const last = msg.content[msg.content.length - 1]
+    if (last && typeof last === "object") last.cache_control = CHAT_CACHE
+  }
+  return false
+}
+/** Adds the marks; returns the messages whose string content became parts (to undo exactly). */
+function addChatCacheMarks(body) {
+  const converted = new Set()
+  const list = Array.isArray(body.messages) ? body.messages : []
+  const sys = list.find((m) => m.role === "system")
+  if (markChatPart(sys)) converted.add(sys)
+  const last = list[list.length - 1]
+  if (last && last !== sys && markChatPart(last)) converted.add(last)
+  return converted
+}
+/** Undo addChatCacheMarks for a server that rejects cache_control. */
+function dropChatCacheMarks(body, converted = new Set()) {
+  let changed = false
+  for (const m of Array.isArray(body.messages) ? body.messages : []) {
+    if (!Array.isArray(m.content)) continue
+    for (const p of m.content) if (p && p.cache_control) { delete p.cache_control; changed = true }
+    if (converted.has(m)) m.content = m.content.map((p) => p.text || "").join("")
+  }
+  return changed
+}
+
+async function* stream({ profile, apiKey, system, messages, tools, signal, toolChoice = null }) {
   const q = profile.quirks || {}
   const gemini = isGemini(profile)
   const body = {
@@ -95,7 +141,10 @@ async function* stream({ profile, apiKey, system, messages, tools, signal }) {
   }
   if (tools && tools.length)
     body.tools = tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }))
+  // Final step: same tools (the cached prefix still matches), but no calls.
+  if (toolChoice === "none" && body.tools) body.tool_choice = "none"
   if (q.reasoningEffort) body.reasoning_effort = q.reasoningEffort
+  const cacheConverted = wantsChatCacheMarks(profile) ? addChatCacheMarks(body) : null
 
   // Auth + identification the provider expects (Bearer, Azure api-key, OpenRouter attribution); profile headers win.
   const headers = { ...authHeaders(profile.baseURL, apiKey), ...(profile.headers || {}) }
@@ -103,6 +152,7 @@ async function* stream({ profile, apiKey, system, messages, tools, signal }) {
   const adapt = (err, b) => {
     const t = err.body
     if (b.stream_options && /stream_options|include_usage/i.test(t)) return delete b.stream_options
+    if (b.tool_choice && /tool_choice/i.test(t)) return delete b.tool_choice
     if (b.max_tokens != null && /max_completion_tokens/i.test(t)) {
       b.max_completion_tokens = b.max_tokens
       return delete b.max_tokens
@@ -112,8 +162,12 @@ async function* stream({ profile, apiKey, system, messages, tools, signal }) {
       return delete b.max_completion_tokens
     }
     if (b.reasoning_effort && /reasoning_effort|reasoning/i.test(t) && /unsupported|unknown|not support|unrecognized|invalid/i.test(t)) return delete b.reasoning_effort
+    // Any other 400 while the request carries cache marks: try once without
+    // them, whatever the endpoint's error text says (no provider-specific rules).
+    if (cacheConverted && !droppedMarks && promptCache.mayBeAboutMarks(t) && dropChatCacheMarks(b, cacheConverted)) { droppedMarks = true; return true }
     return false
   }
+  let droppedMarks = false
   const url = profile.baseURL.replace(/\/+$/, "") + "/chat/completions"
   const compat = prefersCompatClient(profile.id)
   let res
@@ -125,6 +179,8 @@ async function* stream({ profile, apiKey, system, messages, tools, signal }) {
     res = await postStreamAdaptive(url, { headers: { ...headers, ...COMPAT_CLIENT_HEADERS }, body, signal }, adapt)
     rememberCompatClient(profile.id)
   }
+  // The request only went through without the marks: do not send them to this endpoint again.
+  if (droppedMarks) promptCache.rememberRejected(profile)
 
   const calls = new Map()
   let finish = "stop"
@@ -197,4 +253,4 @@ function* fromJson(j) {
   yield { type: "finish", reason: n ? "tool_calls" : (ch && ch.finish_reason) || "stop" }
 }
 
-module.exports = { stream, toWire, fromJson, isGemini, geminiModel, withGeminiSignatures }
+module.exports = { stream, toWire, fromJson, isGemini, geminiModel, withGeminiSignatures, wantsChatCacheMarks, addChatCacheMarks, dropChatCacheMarks }

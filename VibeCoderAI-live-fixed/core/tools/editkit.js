@@ -57,6 +57,24 @@ function exactMatcher(src, oldS) {
   return out
 }
 
+/**
+ * Typographic look-alikes: models often write “smart” quotes, en/em dashes or
+ * a non-breaking space where the file has plain ASCII (or the other way
+ * round). Each look-alike maps to ONE ASCII character, so positions found in
+ * the normalized text are exact positions in the original file.
+ */
+const TYPO = /[‘’‚‛′‵“”„‟″‶‐‑‒–—―−    ]/g
+const TYPO_MAP = { "‘": "'", "’": "'", "‚": "'", "‛": "'", "′": "'", "‵": "'", "“": '"', "”": '"', "„": '"', "‟": '"', "″": '"', "‶": '"', "‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-", "―": "-", "−": "-", " ": " ", " ": " ", " ": " ", " ": " " }
+const plainTypography = (s) => String(s).replace(TYPO, (ch) => TYPO_MAP[ch] || ch)
+
+/** exact match after mapping typographic look-alikes to ASCII on both sides */
+function typographyMatcher(src, oldS) {
+  const a = plainTypography(src)
+  const b = plainTypography(oldS)
+  if (a === src && b === oldS) return [] // nothing to normalize: exact already decided
+  return exactMatcher(a, b)
+}
+
 /** every line equal after trim() */
 function lineTrimmedMatcher(src, oldS) {
   const want = wantedLines(oldS).map((l) => l.trim())
@@ -158,6 +176,7 @@ function blockAnchorMatcher(src, oldS) {
 
 const MATCHERS = [
   ["exact", exactMatcher],
+  ["typography-normalized", typographyMatcher],
   ["line-trimmed", lineTrimmedMatcher],
   ["whitespace-normalized", whitespaceMatcher],
   ["indentation-flexible", indentFlexMatcher],

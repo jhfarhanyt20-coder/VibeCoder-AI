@@ -835,3 +835,6 @@ html[data-theme] .bji-chev { display: inline-grid; place-items: center; width: 1
 html[data-theme] .bji-card.open .bji-chev { transform: rotate(90deg); color: var(--text); }
 html[data-theme] .bji-card:not(.open) .bji-term { display: none; }
 html[data-theme] .bji-top { padding-left: 10px; }
+
+/* Permission card: what "Always allow" remembers (a command family such as "git commit …"). */
+.perm-remember { margin-top: 8px; font-size: 11.5px; line-height: 1.5; color: var(--muted); opacity: .85; word-break: break-word; }

@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { createRequire } from "node:module"
+const rendererAppSource = createRequire(import.meta.url)("./renderer-app-source.cjs")
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8")
@@ -9,7 +11,7 @@ const read = (file) => fs.readFileSync(path.join(root, file), "utf8")
 const loop = read("core/agent/loop.js")
 const engine = read("core/engine.js")
 const backend = read("electron/backend.cjs")
-const renderer = read("renderer/app.js")
+const renderer = rendererAppSource()
 const markdown = read("renderer/markdown.js")
 const html = read("renderer/index.html")
 const preload = read("electron/preload.cjs")

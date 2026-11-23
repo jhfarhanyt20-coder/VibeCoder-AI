@@ -5,6 +5,7 @@ const { SessionStore } = require("./store/sessions")
 const profiles = require("./llm/profiles")
 const groups = require("./llm/groups")
 const { DEFAULT_RULES, normalizeRules } = require("./perm/rules")
+const { rememberRule, rememberLabel } = require("./perm/remember")
 const { runLoop, repairHistory } = require("./agent/loop")
 const compaction = require("./agent/compaction")
 const agents = require("./agents")
@@ -482,9 +483,11 @@ class Engine {
       const permissionId = newId("perm")
       return new Promise((resolve) => {
         const persistAs = Array.isArray(perm?.persistAs) ? perm.persistAs.map(String).filter(Boolean) : null
-        this.pending.set(permissionId, { resolve, session, inherits, tool, subject, neverPersist, ...(persistAs && persistAs.length ? { persistAs } : {}), ...(critical ? { critical: true } : {}) })
+        // What "Always allow" would remember, so the prompt can show it.
+        const remembers = !neverPersist && tool === "bash" ? (persistAs && persistAs.length ? persistAs : [String(subject)]).map(rememberLabel) : null
+        this.pending.set(permissionId, { resolve, session, inherits, tool, subject, neverPersist, ...(persistAs && persistAs.length ? { persistAs } : {}), ...(remembers ? { remembers } : {}), ...(critical ? { critical: true } : {}) })
         signal.addEventListener("abort", () => this.replyPermission(permissionId, "deny"), { once: true })
-        emit({ type: "permission.ask", permissionId, tool, subject, ...(critical ? { critical: true } : {}) })
+        emit({ type: "permission.ask", permissionId, tool, subject, ...(remembers ? { remembers } : {}), ...(critical ? { critical: true } : {}) })
       })
     }
   }
@@ -499,8 +502,15 @@ class Engine {
       const exact = !["edit", "write"].includes(p.tool)
       // A combined shell prompt saves one exact rule per segment that needed
       // asking, the same rules separate prompts would have saved.
-      if (p.persistAs) for (const s of p.persistAs) p.session.rules.push({ tool: p.tool, pattern: s, exact: true, action: "allow" })
-      else p.session.rules.push({ tool: p.tool, pattern: exact ? p.subject : "*", exact, action: "allow" })
+      // Shell commands from a known family (git commit, npm run build, ...)
+      // are remembered as that family; anything else exactly (core/perm/remember.js).
+      if (p.tool === "bash") {
+        for (const s of p.persistAs || [String(p.subject)]) {
+          const rule = rememberRule(s)
+          const dup = p.session.rules.some((r) => r.tool === "bash" && r.action === "allow" && r.pattern === rule.pattern && !!r.prefix === !!rule.prefix)
+          if (!dup) p.session.rules.push(rule)
+        }
+      } else p.session.rules.push({ tool: p.tool, pattern: exact ? p.subject : "*", exact, action: "allow" })
       this.store.save(p.session)
     }
     this._emit(p.inherits?.id || p.session.parentId || p.session.id, {

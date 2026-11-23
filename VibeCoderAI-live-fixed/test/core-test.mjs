@@ -17,6 +17,11 @@ const test = (name, fn) => tests.push([name, fn])
 
 // ---------- mock LLM server ----------
 const sse = (o) => `data: ${JSON.stringify(o)}\n\n`
+// Message content as plain text: a string, or the text of content parts
+// (the system prompt carries a prompt-cache mark, so it is sent as parts).
+const contentText = (c) => (typeof c === "string" ? c : Array.isArray(c) ? c.map((p) => (p && p.text) || "").join("") : "")
+// A wire message with cache marks removed and content as text, to compare prefixes.
+const plainMsg = (m) => JSON.stringify({ ...m, content: contentText(m.content) })
 const chat = {
   text: (t) => [sse({ choices: [{ delta: { content: t } }] })],
   reasoning: (t) => [sse({ choices: [{ delta: { reasoning: t } }] })],
@@ -212,10 +217,58 @@ test("anthropic adapter", async () => {
   assert.equal(evs.find((e) => e.type === "finish").reason, "tool_calls")
   const r = m.requests[0]
   assert.equal(r.headers["x-api-key"], "AK")
-  assert.equal(r.body.system, "S")
+  // Prompt caching: the system prompt is one text block with a cache mark,
+  // and so are the last tool definition and the newest message block.
+  assert.deepEqual(r.body.system, [{ type: "text", text: "S", cache_control: { type: "ephemeral" } }])
   assert.equal(r.body.messages[2].content[0].type, "tool_result")
   assert.equal(r.body.messages[2].content[0].is_error, true)
   assert.equal(r.body.tools[0].input_schema.type, "object")
+  assert.deepEqual(r.body.tools[r.body.tools.length - 1].cache_control, { type: "ephemeral" })
+  const lastMsg = r.body.messages[r.body.messages.length - 1]
+  assert.deepEqual(lastMsg.content[lastMsg.content.length - 1].cache_control, { type: "ephemeral" })
+  assert.equal(r.body.messages[0].content.some((b) => b.cache_control), false, "only the newest message is marked")
+})
+
+test("anthropic adapter: a gateway that rejects cache_control gets the same request without cache marks", async () => {
+  const { stream } = require("../core/llm/anthropic")
+  const http = require("node:http")
+  const bodies = []
+  const server = await new Promise((resolve) => {
+    const s = http.createServer((req, res) => {
+      let b = ""
+      req.on("data", (d) => (b += d))
+      req.on("end", () => {
+        const body = JSON.parse(b)
+        bodies.push(body)
+        if (JSON.stringify(body).includes("cache_control")) {
+          res.writeHead(400, { "content-type": "application/json" })
+          return res.end(JSON.stringify({ error: { message: "Bad Request" } }))
+        }
+        res.writeHead(200, { "content-type": "text/event-stream" })
+        res.write('event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":3}}}\n\n')
+        res.write('event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n')
+        res.write('event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}\n\n')
+        res.write('event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}\n\n')
+        res.end('event: message_stop\ndata: {"type":"message_stop"}\n\n')
+      })
+    })
+    s.listen(0, "127.0.0.1", () => resolve(s))
+  })
+  require("../core/llm/cache")._reset()
+  const profile = { id: "a", format: "anthropic", baseURL: `http://127.0.0.1:${server.address().port}`, model: "m" }
+  const req = { apiKey: "AK", system: "S", messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }], tools: [{ name: "read", description: "r", parameters: { type: "object", properties: {} } }] }
+  const evs = []
+  for await (const e of stream({ profile, ...req })) evs.push(e)
+  assert.equal(bodies.length, 2, "one retry, whatever the error text says")
+  assert.equal(JSON.stringify(bodies[1]).includes("cache_control"), false)
+  assert.equal(bodies[1].system, "S", "the system prompt is plain text again")
+  assert.ok(evs.length > 0)
+  // The endpoint is remembered: the next request goes without marks straight away.
+  for await (const e of stream({ profile, ...req })) void e
+  server.close()
+  assert.equal(bodies.length, 3, "no failed request the second time")
+  assert.equal(JSON.stringify(bodies[2]).includes("cache_control"), false)
+  require("../core/llm/cache")._reset()
 })
 
 test("agent loop: write -> read -> answer, session persisted", async () => {
@@ -555,11 +608,11 @@ test("AUTO-COMPACTION step 2: model writes a checkpoint summary, history replace
   let writes = 0
   const { m, vibe, s, dir } = await setup(
     ({ body }) => {
-      const sys = body.messages[0].content
+      const sys = contentText(body.messages[0].content)
       if (/checkpoint summar(?:y|ies)/i.test(sys)) {
         summaryCalls++
         assert.equal(body.messages.length, 2)
-        assert.match(body.messages[1].content, /## Objective/)
+        assert.match(contentText(body.messages[1].content), /## Objective/)
         return { chunks: [...chat.text("## Goal\nwrite files\n\n## Accomplished\nwrote some"), ...chat.end(500, 50)] }
       }
       const n = writes++
@@ -604,7 +657,7 @@ test("terminal compaction failure is marked non-retryable and never calls the mo
 test("overflow error from provider triggers compaction and retry", async () => {
   let first = true
   const { m, vibe, s } = await setup(({ body }) => {
-    if (/checkpoint summaries/.test(body.messages[0].content)) return { chunks: [...chat.text("## Goal\nx"), ...chat.end()] }
+    if (/checkpoint summaries/.test(contentText(body.messages[0].content))) return { chunks: [...chat.text("## Goal\nx"), ...chat.end()] }
     if (first) {
       first = false
       return { status: 400, text: JSON.stringify({ error: { message: "This model's maximum context length is 8192 tokens. Reduce the length of the messages." } }) }
@@ -1684,7 +1737,7 @@ test("OpenCode-style compaction summarizes meaningful history even when everythi
 
   let summaryInput = ""
   const m = await mock(({ body }) => {
-    summaryInput = String(body.messages?.at(-1)?.content || "")
+    summaryInput = contentText(body.messages?.at(-1)?.content)
     return { chunks: [...chat.text("## Objective\n- Continue the Binance and YouTube research accurately.\n\n## Work State\n### Completed\n- YouTube and Binance research collected.\n### Active\n- Verify tools and techniques.\n### Blocked\n- (none)\n\n## Next Move\n1. Verify sources."), ...chat.end()] }
   })
   const profile = { id: "summary", format: "openai-chat", baseURL: `http://127.0.0.1:${m.port}/v1`, model: "m", noAuth: true, contextLimit: 8000, maxOutput: 1000 }
@@ -1711,7 +1764,7 @@ test("compaction prompt preserves user language and evidence uncertainty", () =>
 
 test("agent blocks follow-up requests when a committed checkpoint still exceeds budget", async () => {
   const m = await mock(({ body }) => {
-    const system = String(body.messages?.[0]?.content || "")
+    const system = contentText(body.messages?.[0]?.content)
     if (/checkpoint summaries/.test(system)) {
       return { chunks: [...chat.text("## Goal\nPreserve the current user request\n\n## Discoveries\nA single recent message is oversized\n\n## Accomplished\nA checkpoint was generated\n\n## Relevant files and directories\n(none)"), ...chat.end(300, 80)] }
     }
@@ -1730,7 +1783,7 @@ test("agent blocks follow-up requests when a committed checkpoint still exceeds 
   assert.equal(compactEnd.fitsBudget, false, "a huge retained user message should remain over budget")
   assert.ok(compactEnd.summarized, "the checkpoint itself should be committed")
   assert.ok(m.requests.length > 0)
-  assert.ok(m.requests.every((request) => /checkpoint summaries/.test(String(request.body.messages?.[0]?.content || ""))), "no normal model request may be sent after unresolved overflow")
+  assert.ok(m.requests.every((request) => /checkpoint summaries/.test(contentText(request.body.messages?.[0]?.content))), "no normal model request may be sent after unresolved overflow")
   assert.match(events.find((event) => event.type === "error")?.message || "", /still over budget|over budget/i)
 })
 
@@ -2383,10 +2436,9 @@ test("V-02: a plugin-type subagent can actually call a plugin tool", async () =>
   }
 })
 
-test("V-06: the final step drops tools and asks for a closing summary", async () => {
+test("V-06: the final step keeps the whole prompt prefix (cache) and asks for a closing summary at the end", async () => {
   const m = await mock(({ body }) => {
-    const hasTools = Array.isArray(body.tools) && body.tools.length > 0
-    return hasTools
+    return !JSON.stringify(body.messages.at(-1)).includes("# Final step")
       ? { chunks: [...chat.tool("c6", "bash", { command: "echo hi" }), ...chat.end(2, 1, "tool_calls")] }
       : { chunks: [...chat.text("closing summary produced"), ...chat.end()] }
   })
@@ -2405,10 +2457,20 @@ test("V-06: the final step drops tools and asks for a closing summary", async ()
   assert.equal(last.role, "assistant")
   assert.equal(last.parts[0].text, "closing summary produced", "the last assistant message is the closing summary")
   const finalReq = m.requests[m.requests.length - 1].body
-  const finalTools = Array.isArray(finalReq.tools) ? finalReq.tools.length : 0
-  assert.equal(finalTools, 0, "the final request is sent with no tools")
+  const firstReq = m.requests[0].body
+  // Everything before the note is byte-for-byte the previous request: same
+  // system prompt, same tools, no tool_choice (changing it drops the cache on
+  // some providers), and the history so far unchanged.
+  assert.equal(finalReq.tool_choice, undefined, "no tool_choice on the final step")
+  assert.equal(JSON.stringify(finalReq.tools), JSON.stringify(firstReq.tools), "the same tool list")
+  assert.equal(JSON.stringify(finalReq.messages[0]), JSON.stringify(firstReq.messages[0]), "the same system prompt")
+  const prevReq = m.requests[m.requests.length - 2].body
+  assert.deepEqual(finalReq.messages.slice(0, prevReq.messages.length).map(plainMsg), prevReq.messages.map(plainMsg), "the previous request is an exact prefix of the final one (only the moving cache mark differs)")
+  assert.match(JSON.stringify(finalReq.messages.at(-1)), /# Final step/, "the closing-summary note is at the very end")
+  assert.doesNotMatch(JSON.stringify(vibe.engine.getSession(s.id).messages), /# Final step/, "the note is never saved in the history")
   m.close()
 })
+
 
 test("V-18: compaction.keep.tokens keeps more of the recent tail", async () => {
   const compaction = require("../core/agent/compaction")
@@ -2687,7 +2749,7 @@ test("automatic compaction uses the configured summary model and continues the r
 
 test("ChatComposer automatic compaction uses the selected session model", async () => {
   const main = await mock(({ body }) => {
-    if (/checkpoint summar/i.test(body.messages?.[0]?.content || "")) {
+    if (/checkpoint summar/i.test(contentText(body.messages?.[0]?.content))) {
       return { chunks: [...chat.text("## Goal\nuse selected model automatically\n\n## Accomplished\nauto session-model checkpoint written"), ...chat.end()] }
     }
     return { chunks: [...chat.text("continued with selected model"), ...chat.end()] }
@@ -2713,7 +2775,7 @@ test("ChatComposer automatic compaction uses the selected session model", async 
 
 test("auto:false stops proactive compaction but manual model-summary compaction still works", async () => {
   const m = await mock(({ body }) => {
-    if (/checkpoint summar/i.test(body.messages?.[0]?.content || "")) {
+    if (/checkpoint summar/i.test(contentText(body.messages?.[0]?.content))) {
       return { chunks: [...chat.text("## Goal\nretain manual control\n\n## Accomplished\nmanual checkpoint still works"), ...chat.end()] }
     }
     return { chunks: [...chat.text("normal answer"), ...chat.end()] }
@@ -2737,7 +2799,7 @@ test("auto:false stops proactive compaction but manual model-summary compaction 
 
 test("V-20: an unknown summary model id falls back to the session model and warns", async () => {
   const { m, vibe, s, home } = await setup(({ body }) => {
-    if (/checkpoint summar/i.test(body.messages[0].content || "")) {
+    if (/checkpoint summar/i.test(contentText(body.messages[0].content))) {
       return { chunks: [...chat.text("## Goal\nanswer the user question\n\n## Accomplished\nwork was completed"), ...chat.end()] }
     }
     return { chunks: [...chat.text("ok"), ...chat.end()] }

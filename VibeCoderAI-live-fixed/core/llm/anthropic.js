@@ -3,6 +3,7 @@
 const { parseSSE } = require("./sse")
 const { postStreamAdaptive, parseRawBody, streamError, PRODUCT_HEADERS } = require("./http")
 const { anthropicUsage } = require("./usage")
+const promptCache = require("./cache")
 
 function toWire(messages) {
   const out = []
@@ -33,10 +34,36 @@ function toWire(messages) {
   return out
 }
 
+/**
+ * Prompt caching: mark the stable prefix so the provider can reuse it on the
+ * next request of the same run (cheaper, faster). Three breakpoints: the last
+ * tool definition, the system prompt and the newest message block; the
+ * provider looks back from each one, so the previous step's prefix is found.
+ * profile.quirks.promptCache === false turns it off for a gateway that
+ * rejects cache_control.
+ */
+const EPHEMERAL = { type: "ephemeral" }
+function addCacheMarks(body) {
+  if (Array.isArray(body.tools) && body.tools.length) body.tools[body.tools.length - 1].cache_control = EPHEMERAL
+  if (typeof body.system === "string" && body.system) body.system = [{ type: "text", text: body.system, cache_control: EPHEMERAL }]
+  const last = Array.isArray(body.messages) && body.messages[body.messages.length - 1]
+  const block = last && Array.isArray(last.content) && last.content[last.content.length - 1]
+  if (block && typeof block === "object") block.cache_control = EPHEMERAL
+  return body
+}
+/** Undo addCacheMarks (for a gateway that answers 400 to cache_control). */
+function dropCacheMarks(body) {
+  let changed = false
+  for (const t of body.tools || []) if (t.cache_control) { delete t.cache_control; changed = true }
+  if (Array.isArray(body.system)) { body.system = body.system.map((b) => b.text).join("\n"); changed = true }
+  for (const m of body.messages || []) for (const b of Array.isArray(m.content) ? m.content : []) if (b && b.cache_control) { delete b.cache_control; changed = true }
+  return changed
+}
+
 /** base may already end in /v1 or /v1/messages: never double the path. */
 const endpoint = (base) => base.replace(/\/v1\/messages$/i, "").replace(/\/v1$/i, "") + "/v1/messages"
 
-async function* stream({ profile, apiKey, system, messages, tools, signal }) {
+async function* stream({ profile, apiKey, system, messages, tools, signal, toolChoice = null }) {
   const q = profile.quirks || {}
   const body = {
     model: profile.model,
@@ -47,6 +74,13 @@ async function* stream({ profile, apiKey, system, messages, tools, signal }) {
   }
   if (system) body.system = system
   if (tools && tools.length) body.tools = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters }))
+  // The last step of a run keeps the tool definitions (so the cached prefix
+  // still matches) but tells the model not to call them.
+  if (toolChoice === "none" && body.tools) body.tool_choice = { type: "none" }
+  // Explicit cache marks for every Anthropic-format endpoint (core/llm/cache.js).
+  const marked = promptCache.useMarks(profile)
+  if (marked) addCacheMarks(body)
+  let droppedMarks = false
 
   // Identity first: every request says it comes from VibeCoder AI. Some
   // Anthropic-format gateways (new-api based routers etc.) whitelist known
@@ -58,10 +92,14 @@ async function* stream({ profile, apiKey, system, messages, tools, signal }) {
   const headers = { "anthropic-version": "2023-06-01", ...PRODUCT_HEADERS, ...(profile.headers || {}) }
   if (apiKey) headers["x-api-key"] = apiKey
   const base = (profile.baseURL || "https://api.anthropic.com").replace(/\/+$/, "")
-  const adapt = q.reasoningOverride ? (error, request) => {
-    if (request.thinking && /thinking|budget_tokens|temperature/i.test(error.body) && /unsupported|unknown|not support|unrecognized|invalid|must be/i.test(error.body)) return delete request.thinking
+  const adapt = (error, request) => {
+    if (q.reasoningOverride && request.thinking && /thinking|budget_tokens|temperature/i.test(error.body) && /unsupported|unknown|not support|unrecognized|invalid|must be/i.test(error.body)) return delete request.thinking
+    if (request.tool_choice && /tool_choice/i.test(String(error.body || ""))) return delete request.tool_choice
+    // Any other 400 while the request carries cache marks: try once without
+    // them, whatever the endpoint's error text says (no provider-specific rules).
+    if (marked && !droppedMarks && promptCache.mayBeAboutMarks(error.body) && dropCacheMarks(request)) { droppedMarks = true; return true }
     return false
-  } : null
+  }
   let res
   try {
     res = await postStreamAdaptive(endpoint(base), { headers, body, signal }, adapt)
@@ -71,6 +109,8 @@ async function* stream({ profile, apiKey, system, messages, tools, signal }) {
     // stays so the gateway still sees which app made the request.
     res = await postStreamAdaptive(endpoint(base), { headers: { ...headers, ...COMPAT_HEADERS }, body, signal }, adapt)
   }
+  // The request only went through without the marks: do not send them to this endpoint again.
+  if (droppedMarks) promptCache.rememberRejected(profile)
 
   const blocks = new Map()
   let finish = "stop"

@@ -78,7 +78,7 @@ try {
   assert(html.indexOf('vendor/codemirror/codemirror.js') < html.indexOf('code-panel.js'))
   assert(html.indexOf('code-panel.js') < html.indexOf('src="app.js"'))
   assert(html.includes('id="btn-code-files"') && html.includes('id="code-panel"'))
-  const app = r('renderer/app.js')
+  const app = require("./renderer-app-source.cjs")()
   const link = app.slice(app.indexOf("function linkFileName("), app.indexOf("function linkFileName(") + 600)
   assert(link.includes("event.stopPropagation()") && link.includes("window.vibeCodePanel.open(file"), "a name click opens the editor, not the diff")
   assert(app.includes('linkFileName(row.querySelector(".fr-name"), full, () => changedLinesOf(f))'))

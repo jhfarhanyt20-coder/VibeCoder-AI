@@ -186,7 +186,7 @@
       <!-- Background job indicator: the agent keeps working while the app is in the background -->
       <div class="bg-job" id="bg-job" hidden>
         <button class="bg-job-btn" id="bg-job-btn" type="button" title="Show the running jobs">
-          <span class="status-dot"></span>
+          <svg class="bg-job-ico" viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden="true"><circle cx="4" cy="4" r="1.3"/><circle cx="8" cy="4" r="1.3"/><circle cx="12" cy="4" r="1.3"/><circle cx="4" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12" cy="8" r="1.3"/><circle cx="4" cy="12" r="1.3"/><circle cx="8" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/></svg>
           <span id="bg-job-text">Running</span>
         </button>
         <div class="bg-job-panel" id="bg-job-panel" hidden>
@@ -510,7 +510,7 @@
             <div class="s-row" id="row-notify">
               <div>
                 <div class="s-name">Background notifications</div>
-                <div class="s-desc">Show a Windows toast when the agent finishes, fails, or needs your permission while the app is in the background.</div>
+                <div class="s-desc">Show a quiet Windows notification when the agent finishes, stops with an error, asks you something, or needs your approval while you are in another window. Click it to open that chat.</div>
               </div>
               <div class="toggle on" id="toggle-notify" role="switch" aria-checked="true" tabindex="0"></div>
             </div>
@@ -520,6 +520,16 @@
                 <div class="s-desc">Send a test toast to check that Windows notifications are allowed for VibeCoder AI.</div>
               </div>
               <button class="save-btn" id="btn-test-notify" type="button">Send test</button>
+            </div>
+            <div class="s-row" id="row-notify-sound">
+              <div>
+                <div class="s-name">Notification sound</div>
+                <div class="s-desc">A soft VibeCoder chime instead of the Windows sound. Notifications come only when you are away and the agent finished, needs your approval, asks a question, or stopped with an error.</div>
+              </div>
+              <div class="s-inline-controls">
+                <button class="save-btn" id="btn-play-chime" type="button">Play</button>
+                <div class="toggle on" id="toggle-notify-sound" role="switch" aria-checked="true" tabindex="0"></div>
+              </div>
             </div>
 
             <div class="s-row" id="row-autocontinue">
@@ -680,12 +690,13 @@
             <div class="s-row">
               <div class="s-col">
                 <div class="s-name">App theme</div>
-                <div class="s-desc">Choose Obsidian, light, dark, AMOLED (pure black), or follow the system theme. The chat, settings, and every popup follow it.</div>
+                <div class="s-desc">Choose Obsidian, light, dark, AMOLED (pure black), Ember (warm dark), or follow the system theme. The chat, settings, and every popup follow it.</div>
               </div>
               <select class="s-input s-select-compact" id="theme-select">
                 <option value="obsidian">◆ Obsidian</option>
                 <option value="dark">🌙 Dark</option>
                 <option value="amoled">🌑 AMOLED</option>
+                <option value="ember">🔥 Ember (warm)</option>
                 <option value="light">☀️ Light</option>
                 <option value="system">🖥 Follow the system</option>
               </select>
@@ -752,14 +763,14 @@
             <!-- inner provider list -->
             <aside class="model-list">
               <div class="ml-item provider-item fb-entry" id="fallback-group-item" title="Ordered fallback chain across your providers">
-                <span class="prov-ic">⇄</span>
+                <span class="prov-ic mono" aria-hidden="true">FB</span>
                 <span class="prov-nm">Fallback model</span>
                 <span class="prov-dot" id="fb-entry-dot"></span>
               </div>
 
               <div class="ml-group">Providers</div>
               <div class="ml-item provider-item" data-provider="opencode">
-                <span class="prov-ic">◈</span>
+                <span class="prov-ic mono" aria-hidden="true">VC</span>
                 <span class="prov-nm">VibeCoderAI</span>
                 <span class="prov-soon">free</span>
                 <span class="prov-dot" id="opencode-dot"></span>
@@ -786,10 +797,14 @@
               </div>
               <div class="md-provider" id="md-opencode" hidden>
                 <div class="mdp-head">
-                  <div class="mdp-logo">◈</div>
+                  <div class="mdp-logo mono" aria-hidden="true">VC</div>
                   <div>
                     <div class="mdp-name">VibeCoderAI</div>
                     <div class="mdp-sub" id="opencode-sub">Sign in with VibeCoder to use free models — no API key needed</div>
+                  </div>
+                  <div class="mdp-actions vc-head-actions">
+                    <button class="save-btn" id="opencode-connect">Log in</button>
+                    <button class="danger-btn" id="opencode-disconnect" hidden>Log out</button>
                   </div>
                 </div>
 
@@ -804,16 +819,17 @@
                   <div class="mdp-wait" id="opencode-wait">Waiting for authorization… the login finishes automatically after you sign in in the browser</div>
                 </div>
 
-                <div class="mdp-actions">
-                  <button class="save-btn" id="opencode-connect">Sign in with VibeCoder</button>
-                  <button class="danger-btn" id="opencode-disconnect" hidden>Disconnect</button>
+                <div class="vc-models" id="vc-models" hidden>
+                  <div class="vc-models-head"><span>Models</span><span class="vc-models-count" id="vc-models-count"></span></div>
+                  <div class="vc-models-list" id="vc-models-list"></div>
+                  <div class="vc-models-note">These models come with your VibeCoder account and appear in the model picker by themselves.</div>
                 </div>
               </div>
 
               <!-- custom provider detail -->
               <div class="md-provider" id="md-custom" hidden>
                 <div class="mdp-head">
-                  <div class="mdp-logo" id="md-custom-logo">◈</div>
+                  <div class="mdp-logo mono" id="md-custom-logo" aria-hidden="true">CP</div>
                   <div>
                     <div class="mdp-name" id="md-custom-name">Custom provider</div>
                     <div class="mdp-sub" id="md-custom-sub">You can create your own provider and use its models</div>
@@ -997,16 +1013,83 @@
         </div>
         <div class="s-page" data-page="keyboard" hidden>
           <h1 class="s-title">Keyboard Shortcuts</h1>
-          <div class="s-card">
-            <div class="s-row">
-              <div class="s-col">
-                <div class="s-name">Shortcuts</div>
-                <div class="s-desc">
-                  Enter — send the message · Shift+Enter — new line · Ctrl+Enter — save an edited message ·
-                  Esc — close a menu or a dialog · Ctrl+, — settings
-                </div>
+          <p class="s-sub">Every shortcut VibeCoder understands, grouped by where you use it.</p>
+          <div class="s-card kbd-card">
+            <div class="kbd-group">Chat</div>
+              <div class="kbd-row">
+                <div><div class="kbd-name">Send the message</div><div class="kbd-desc">While the agent works, it waits in the queue and goes next.</div></div>
+                <span class="kbd-combo"><kbd>Enter</kbd></span>
               </div>
-            </div>
+              <div class="kbd-row">
+                <div><div class="kbd-name">New line</div></div>
+                <span class="kbd-combo"><kbd>Shift</kbd><span class="kbd-plus">+</span><kbd>Enter</kbd></span>
+              </div>
+              <div class="kbd-row">
+                <div><div class="kbd-name">Save an edited message</div><div class="kbd-desc">In the Edit &amp; resend box.</div></div>
+                <span class="kbd-combo"><kbd>Ctrl</kbd><span class="kbd-plus">+</span><kbd>Enter</kbd></span>
+              </div>
+              <div class="kbd-row">
+                <div><div class="kbd-name">Add files</div><div class="kbd-desc">Type it in the message box.</div></div>
+                <span class="kbd-combo"><kbd>@</kbd></span>
+              </div>
+              <div class="kbd-row">
+                <div><div class="kbd-name">Run a recipe</div><div class="kbd-desc">Type it in the message box.</div></div>
+                <span class="kbd-combo"><kbd>/</kbd></span>
+              </div>
+              <div class="kbd-row">
+                <div><div class="kbd-name">Use a playbook</div><div class="kbd-desc">Type it in the message box.</div></div>
+                <span class="kbd-combo"><kbd>$</kbd></span>
+              </div>
+              <div class="kbd-row">
+                <div><div class="kbd-name">Link another chat</div><div class="kbd-desc">Type it in the message box.</div></div>
+                <span class="kbd-combo"><kbd>#</kbd></span>
+              </div>
+          </div>
+          <div class="s-card kbd-card">
+            <div class="kbd-group">Window and panels</div>
+              <div class="kbd-row">
+                <div><div class="kbd-name">Show or hide the left bar</div><div class="kbd-desc">While a command is blocking the agent, this moves it to the background instead.</div></div>
+                <span class="kbd-combo"><kbd>Ctrl</kbd><span class="kbd-plus">+</span><kbd>B</kbd></span>
+              </div>
+              <div class="kbd-row">
+                <div><div class="kbd-name">Open or close the side panel</div></div>
+                <span class="kbd-combo"><kbd>Ctrl</kbd><span class="kbd-plus">+</span><kbd>Shift</kbd><span class="kbd-plus">+</span><kbd>L</kbd></span>
+              </div>
+              <div class="kbd-row">
+                <div><div class="kbd-name">Show the project files</div></div>
+                <span class="kbd-combo"><kbd>Ctrl</kbd><span class="kbd-plus">+</span><kbd>Shift</kbd><span class="kbd-plus">+</span><kbd>E</kbd></span>
+              </div>
+              <div class="kbd-row">
+                <div><div class="kbd-name">Show the changes</div></div>
+                <span class="kbd-combo"><kbd>Ctrl</kbd><span class="kbd-plus">+</span><kbd>Shift</kbd><span class="kbd-plus">+</span><kbd>G</kbd></span>
+              </div>
+              <div class="kbd-row">
+                <div><div class="kbd-name">Open or close the browser</div></div>
+                <span class="kbd-combo"><kbd>Ctrl</kbd><span class="kbd-plus">+</span><kbd>Shift</kbd><span class="kbd-plus">+</span><kbd>B</kbd></span>
+              </div>
+              <div class="kbd-row">
+                <div><div class="kbd-name">New browser tab</div><div class="kbd-desc">While the browser is open.</div></div>
+                <span class="kbd-combo"><kbd>Ctrl</kbd><span class="kbd-plus">+</span><kbd>Shift</kbd><span class="kbd-plus">+</span><kbd>T</kbd></span>
+              </div>
+              <div class="kbd-row">
+                <div><div class="kbd-name">Open settings</div></div>
+                <span class="kbd-combo"><kbd>Ctrl</kbd><span class="kbd-plus">+</span><kbd>,</kbd></span>
+              </div>
+              <div class="kbd-row">
+                <div><div class="kbd-name">Close a menu, dialog or settings</div></div>
+                <span class="kbd-combo"><kbd>Esc</kbd></span>
+              </div>
+          </div>
+          <div class="s-card kbd-card">
+            <div class="kbd-group">Agent and commands</div>
+              <div class="kbd-row">
+                <div><div class="kbd-name">Move running commands to the background</div><div class="kbd-desc">They keep running; the agent continues.</div></div>
+                <span class="kbd-combo"><kbd>Ctrl</kbd><span class="kbd-plus">+</span><kbd>B</kbd></span>
+              </div>
+              <div class="kbd-row">
+                <div><div class="kbd-name">Stop Computer Use at once</div><div class="kbd-desc">Works everywhere, even while another app is in front.</div></div>
+                <span class="kbd-combo"><kbd>Ctrl</kbd><span class="kbd-plus">+</span><kbd>Alt</kbd><span class="kbd-plus">+</span><kbd>Esc</kbd></span>
+              </div>
           </div>
         </div>
         <div class="s-page" data-page="memory" hidden>
@@ -1278,24 +1361,63 @@
         </div>
         <div class="s-page" data-page="commands" hidden>
           <h1 class="s-title">Commands</h1>
+          <p class="s-sub">Your own slash commands. Type <code>/</code> in the message box and pick one: VibeCoder runs the prompt saved in it.</p>
           <div class="s-card">
-            <div class="s-row">
-              <div class="s-col">
-                <div class="s-name">Custom commands</div>
-                <div class="s-desc">Custom recipes live in <code>.vibe/recipes/</code> of the project — VibeCoder picks them up automatically. Type <code>/</code> in the composer to use one.</div>
+            <div class="xs-head">
+              <div class="kbd-group">Installed commands</div>
+              <div class="xs-actions">
+                <button class="save-btn ghost" type="button" id="btn-commands-refresh">Refresh</button>
+                <button class="save-btn" type="button" id="btn-commands-folder">Open folder</button>
               </div>
             </div>
+            <div class="xs-list" id="commands-list"><div class="xs-empty">Loading…</div></div>
+          </div>
+          <div class="s-card kbd-card">
+            <div class="kbd-group">How to add one</div>
+            <div class="xs-steps">
+              <div class="xs-step"><span class="xs-num">1</span><div>Create a <code>.md</code> file in the commands folder (for every project) or in <code>.vibe/recipes/</code> of a project (only there). The file name is the command: <code>review.md</code> → <code>/review</code>.</div></div>
+              <div class="xs-step"><span class="xs-num">2</span><div>Write the prompt inside. <code>$ARGUMENTS</code> is replaced by what you type after the command.</div></div>
+              <div class="xs-step"><span class="xs-num">3</span><div>Optional first lines: <code>description:</code>, <code>agent:</code> and <code>model:</code> between two <code>---</code> lines.</div></div>
+            </div>
+            <pre class="xs-example">---
+description: Review the changed files
+---
+Review my latest changes for bugs and unclear names. Focus on: $ARGUMENTS</pre>
           </div>
         </div>
         <div class="s-page" data-page="hooks" hidden>
           <h1 class="s-title">Hooks</h1>
+          <p class="s-sub">Small extensions that run your own code at fixed moments of the agent's work, for example to log every action or to check a command before it runs.</p>
           <div class="s-card">
-            <div class="s-row">
-              <div class="s-col">
-                <div class="s-name">Hooks</div>
-                <div class="s-desc">Hooks are configured in the VibeCoder config (the <code>hook</code> key). VibeCoder AI ships its own plugins for the environment guard and the compaction context.</div>
+            <div class="xs-head">
+              <div class="kbd-group">Installed extensions</div>
+              <div class="xs-actions">
+                <button class="save-btn ghost" type="button" id="btn-hooks-refresh">Refresh</button>
+                <button class="save-btn" type="button" id="btn-hooks-folder">Open folder</button>
               </div>
             </div>
+            <div class="xs-list" id="hooks-list"><div class="xs-empty">Loading…</div></div>
+          </div>
+          <div class="s-card kbd-card">
+            <div class="kbd-group">The moments you can hook into</div>
+            <div class="kbd-row"><div><div class="kbd-name">onLoad</div><div class="kbd-desc">The extension was loaded.</div></div><code class="xs-tag">start</code></div>
+            <div class="kbd-row"><div><div class="kbd-name">beforeAction</div><div class="kbd-desc">Right before one of the extension's tools runs.</div></div><code class="xs-tag">before</code></div>
+            <div class="kbd-row"><div><div class="kbd-name">afterAction</div><div class="kbd-desc">After the tool finished, with its result or error.</div></div><code class="xs-tag">after</code></div>
+            <div class="kbd-row"><div><div class="kbd-name">onEvent</div><div class="kbd-desc">Every agent event (a step, a tool call, a message).</div></div><code class="xs-tag">live</code></div>
+            <div class="kbd-row"><div><div class="kbd-name">onUnload</div><div class="kbd-desc">The extension was changed or removed.</div></div><code class="xs-tag">end</code></div>
+          </div>
+          <div class="s-card kbd-card">
+            <div class="kbd-group">How to add one</div>
+            <div class="xs-steps">
+              <div class="xs-step"><span class="xs-num">1</span><div>Put a <code>.js</code> file in the extensions folder (every project) or in <code>.vibe/extensions/</code> of a trusted project.</div></div>
+              <div class="xs-step"><span class="xs-num">2</span><div>Export <code>{ tools, hooks }</code>. A hook that fails never stops the agent.</div></div>
+            </div>
+            <pre class="xs-example">module.exports = {
+  tools: [],
+  hooks: {
+    onEvent(event) { /* e.g. write event.type to a log */ },
+  },
+}</pre>
           </div>
         </div>
         <div class="s-page" data-page="usage" hidden>

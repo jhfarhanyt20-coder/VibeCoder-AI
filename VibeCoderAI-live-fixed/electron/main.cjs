@@ -130,8 +130,19 @@ function closeToTray(win) {
     win.hide()
     if (!trayHintShown && process.platform === "win32") {
       trayHintShown = true
+      // A quiet note like every other VibeCoder notification: no Windows sound
+      // (the app plays its own soft chime), and it slides away after a few seconds.
       try {
-        tray.displayBalloon({ title: "VibeCoder AI is still running", content: "It is in the tray. Right-click the icon and choose Quit to exit.", iconType: "info" })
+        const { Notification } = require("electron")
+        if (Notification && typeof Notification.isSupported === "function" && Notification.isSupported()) {
+          const n = new Notification({ title: "VibeCoder AI is still running", body: "It keeps working in the tray. Right-click the tray icon and choose Quit to exit.", silent: true, timeoutType: "default" })
+          n.on("click", () => { try { win.show(); win.focus() } catch {} })
+          n.show()
+          setTimeout(() => { try { n.close() } catch {} }, 2500)
+          try { win.webContents.send("vibe:event", { type: "notification.chime", data: {} }) } catch {}
+        } else {
+          tray.displayBalloon({ title: "VibeCoder AI is still running", content: "It is in the tray. Right-click the icon and choose Quit to exit.", iconType: "info" })
+        }
       } catch {}
     }
   })

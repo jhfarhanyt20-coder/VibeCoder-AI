@@ -621,6 +621,12 @@ if ($("btn-marketplace")) {
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !settings.hidden) closeSettings()
 })
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === ",") {
+    e.preventDefault()
+    if (settings.hidden) openSettings()
+  }
+})
 
 // Settings nav: switch right-hand page + active state
 const settingsNav = document.querySelector(".settings-nav")
@@ -636,6 +642,8 @@ settingsNav.querySelectorAll(".nav-item").forEach((item) => {
     })
     settingsContent.scrollTop = 0
     // Load live data for pages backed by the OpenCode config
+    if (page === "commands") loadCommandsPage()
+    if (page === "hooks") loadHooksPage()
     if (page === "mcp") loadMcp()
     if (page === "plugins") loadPlugins()
     if (page === "marketplace") loadMarketplace()
@@ -651,3 +659,74 @@ settingsNav.querySelectorAll(".nav-item").forEach((item) => {
   }
 })
 
+
+
+/* ---------- Settings → Commands / Hooks (read-only lists) ---------- */
+function xsRow(title, sub, tags) {
+  const row = document.createElement("div")
+  row.className = "kbd-row"
+  const left = document.createElement("div")
+  const name = document.createElement("div")
+  name.className = "kbd-name"
+  name.textContent = title
+  left.appendChild(name)
+  if (sub) {
+    const d = document.createElement("div")
+    d.className = "kbd-desc"
+    d.textContent = sub
+    left.appendChild(d)
+  }
+  const right = document.createElement("div")
+  right.className = "xs-tags"
+  for (const t of tags) {
+    const tag = document.createElement("code")
+    tag.className = "xs-tag" + (t.bad ? " bad" : "")
+    tag.textContent = t.text
+    right.appendChild(tag)
+  }
+  row.append(left, right)
+  return row
+}
+function xsEmpty(box, text) {
+  box.textContent = ""
+  const e = document.createElement("div")
+  e.className = "xs-empty"
+  e.textContent = text
+  box.appendChild(e)
+}
+async function loadCommandsPage() {
+  const box = $("commands-list")
+  if (!box || typeof vibe.commandsList !== "function") return
+  try {
+    const res = await vibe.commandsList()
+    const data = res && res.ok === false ? null : (res?.data ?? res)
+    const list = Array.isArray(data?.list) ? data.list : []
+    if (!list.length) return xsEmpty(box, "No commands yet. Add a .md file to the commands folder and it shows up here and in the / menu.")
+    box.textContent = ""
+    for (const c of list) box.appendChild(xsRow(`/${c.id}`, c.description || "", [{ text: c.scope === "project" ? "this project" : "every project" }]))
+  } catch (e) {
+    xsEmpty(box, "Could not read the commands: " + String(e?.message || e))
+  }
+}
+async function loadHooksPage() {
+  const box = $("hooks-list")
+  if (!box || typeof vibe.hooksList !== "function") return
+  try {
+    const res = await vibe.hooksList()
+    const data = res && res.ok === false ? null : (res?.data ?? res)
+    const list = Array.isArray(data?.list) ? data.list : []
+    if (!list.length) return xsEmpty(box, "No extensions yet. Add a .js file to the extensions folder; its hooks are listed here.")
+    box.textContent = ""
+    for (const h of list) {
+      const tags = h.ok ? (h.hooks.length ? h.hooks.map((x) => ({ text: x })) : [{ text: "no hooks" }]) : [{ text: "failed to load", bad: true }]
+      const sub = h.ok ? `${h.scope === "project" ? "This project" : "Every project"} · ${h.tools} tool${h.tools === 1 ? "" : "s"}` : h.error
+      box.appendChild(xsRow(h.id, sub, tags))
+    }
+  } catch (e) {
+    xsEmpty(box, "Could not read the extensions: " + String(e?.message || e))
+  }
+}
+$("btn-commands-refresh")?.addEventListener("click", loadCommandsPage)
+$("btn-hooks-refresh")?.addEventListener("click", loadHooksPage)
+$("btn-commands-folder")?.addEventListener("click", () => vibe.openSettingsFolder?.({ kind: "commands" }).catch((e) => showError("Could not open the folder", String(e?.message || e))))
+$("btn-hooks-folder")?.addEventListener("click", () => vibe.openSettingsFolder?.({ kind: "hooks" }).catch((e) => showError("Could not open the folder", String(e?.message || e))))

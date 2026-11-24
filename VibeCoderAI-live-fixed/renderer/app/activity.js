@@ -2,14 +2,14 @@
 const THEME_KEY = "vibecoder.theme"
 const FONT_KEY = "vibecoder.fontScale"
 const CHAT_FONT_KEY = "vibecoder.chatFontScale"
-const THEMES = ["obsidian", "dark", "amoled", "light", "system"]
+const THEMES = ["obsidian", "dark", "amoled", "light", "system", "ember"]
 
 function currentTheme() {
   try {
     const t = localStorage.getItem(THEME_KEY)
-    return THEMES.includes(t) ? t : "dark"
+    return THEMES.includes(t) ? t : "ember"
   } catch {
-    return "dark"
+    return "ember"
   }
 }
 
@@ -22,7 +22,7 @@ function systemTheme() {
 }
 
 function resolvedTheme(name) {
-  const t = THEMES.includes(name) ? name : "dark"
+  const t = THEMES.includes(name) ? name : "ember"
   return t === "system" ? systemTheme() : t
 }
 
@@ -484,8 +484,10 @@ async function refreshPermissionRequests() {
     }
     // The agent is blocked -> tell the user, even if the app is in the background
     notifyAgent(
-      "Permission needed",
-      `${p.action || "action"} — ${(Array.isArray(p.resources) ? p.resources.join(", ") : p.resource) || "the agent is waiting"}`,
+      "Approval needed",
+      `${p.action || "An action"}: ${(Array.isArray(p.resources) ? p.resources.join(", ") : p.resource) || "the agent is waiting for you"}`,
+      "permission",
+      p.sessionID || el.dataset.sessionId || state.activeSessionID,
     )
     el.querySelectorAll(".perm-actions button").forEach((b) => {
       b.onclick = async () => {
@@ -908,7 +910,7 @@ async function refreshForms() {
     qCards.set(f.id, el)
     // The agent is waiting for an answer -> tell the user, even in background.
     const question = (f.questions && f.questions[0] && (f.questions[0].question || f.questions[0].text)) || ""
-    notifyAgent("❓ The agent is asking you", question || "The agent needs an answer to continue.")
+    notifyAgent("VibeCoder has a question", question || "The agent needs your answer to continue.", "question", formSid)
   }
   // a form that vanished without us answering was answered/cancelled elsewhere
   // (only this chat's forms were listed, so other chats' cards are left alone)

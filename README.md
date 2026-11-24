@@ -28,7 +28,29 @@
 | **Hardened against prompt injection** | A web page, README or tool result cannot make the agent run, delete or install things on its own: risky shell commands, repo-provided agents and plugins, Computer Use launches and dangerous browser clicks all ask you first, and secrets stay out of logs and away from other hosts. |
 | **Stays open in the tray** | The close button hides VibeCoder AI in the Windows tray, so a stray click never stops a running agent. Click the tray icon to bring it back; right-click → Quit to exit. |
 | **Two surfaces, one engine** | The desktop app and the full-screen `vibe` CLI share sessions, providers, tools, permissions, and history. |
+| **Light on your PC** | About 120-130 MB in Task Manager and around 0.5% CPU even while the agent writes and tests code — see the measurements below. |
+| **Computer Use like a person at the desk** | The VibeCoder window steps aside into a narrow side panel, the agent opens the app, clicks and types, checks every step with a clean screenshot, handles dialogs, and gives your window back when it is done. A soft glow around the screen shows it is working; Ctrl+Alt+Esc stops it. |
 | **Local-first** | No VibeCoder-hosted model service. API keys stay in the local encrypted key store; project code stays on your machine until you send it to your chosen provider. |
+
+## Light on your PC
+
+VibeCoder AI is built to stay out of the way while it works. Measured on 2026-11-24
+on the same Windows 10 PC (4 CPU cores), all apps open at the same time, each app's
+own processes added up. "RAM" is the number Task Manager shows (private working set);
+CPU is the average over 30-40 seconds.
+
+| App | State | RAM (Task Manager) | CPU |
+|---|---|---|---|
+| **VibeCoder AI** | idle, chat open | **~120 MB** | **0.0-0.3%** |
+| **VibeCoder AI** | working: writing and testing a Node.js project | **~130 MB** | **~0.5%** (6% for a moment at the start) |
+| Another AI coding desktop app | idle | ~540 MB | 0.1-4% |
+| An AI chat and coding desktop app | working | ~1,080 MB | ~3% |
+
+Counting memory that is shared between processes too (the full working set),
+VibeCoder AI uses about 450-550 MB while it works. Your numbers depend on your
+PC, the chat length and the model, but VibeCoder AI stays a light app: one
+lean window, no background helper services, and work that waits on the model
+costs almost no CPU.
 
 ## Screenshots
 

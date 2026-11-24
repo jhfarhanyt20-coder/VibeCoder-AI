@@ -36,6 +36,15 @@
   --hover-strong: #343a43;
 }
 
+html[data-theme="ember"] {
+  --bg: #1c1b19;
+  --bg-main: #22211f;
+  --panel: #272624;
+  --panel-2: #2d2b28;
+  --border: #3a3733;
+  --hover: #302e2a;
+}
+
 html[data-theme="amoled"] {
   --bg: #000;
   --bg-main: #000;

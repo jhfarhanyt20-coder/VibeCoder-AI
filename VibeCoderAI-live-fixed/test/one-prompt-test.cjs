@@ -70,5 +70,26 @@ const bashPerm = (command) => tools.byName("bash").perm({ command })
   assert.equal(await checkPermissions(ask, bashPerm("npm test; npm test"), {}), true)
   assert.equal(events.filter((e) => e.type === "permission.ask").length, 0)
 
-  console.log("PASS one prompt per command: whole command shown once, blocks kept whole, deny/wildcard/always rules unchanged")
+  // 5) two calls for the same file at once (two parallel edits) -> ONE prompt; the answer covers both
+  events.length = 0
+  const file = path.join(s.dir, "a.h")
+  const e1 = ask({ tool: "edit", subject: file })
+  const e2 = ask({ tool: "edit", subject: file })
+  await tick()
+  assert.equal(events.filter((e) => e.type === "permission.ask").length, 1, "no duplicate prompt for the same file")
+  vibe.permission.reply([...vibe.engine.pending.keys()].pop(), "once")
+  assert.deepEqual([await e1, await e2], [true, true])
+  // a different file still gets its own prompt, and a rejection covers both waiting calls
+  events.length = 0
+  const d1 = ask({ tool: "edit", subject: file })
+  const d2 = ask({ tool: "edit", subject: file })
+  const other = ask({ tool: "edit", subject: path.join(s.dir, "b.h") })
+  await tick()
+  assert.equal(events.filter((e) => e.type === "permission.ask").length, 2)
+  const ids = [...vibe.engine.pending.keys()]
+  vibe.permission.reply(ids[0], "deny")
+  vibe.permission.reply(ids[1], "once")
+  assert.deepEqual([await d1, await d2, await other], [false, false, true])
+
+  console.log("PASS one prompt per command: whole command shown once, blocks kept whole, deny/wildcard/always rules unchanged, same-file calls share one prompt")
 })().catch((e) => { console.error(e); process.exit(1) })

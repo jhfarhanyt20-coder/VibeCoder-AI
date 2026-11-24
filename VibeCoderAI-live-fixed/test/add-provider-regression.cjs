@@ -16,7 +16,7 @@ const pick = (from, to) => {
 const context = vm.createContext({ providerState: { draft: null } })
 vm.runInContext([
   pick("function providerDraftKey(", "\nfunction captureProviderForm"),
-  "const PROVIDER_PRESETS = [{ name: 'OpenAI', baseURL: 'https://api.openai.com/v1' }, { name: 'Agnes AI', baseURL: 'https://api.agnes-ai.com/api/v1' }]",
+  "const PROVIDER_PRESETS = [{ name: 'OpenAI', baseURL: 'https://api.openai.com/v1' }, { name: 'Agnes AI', baseURL: 'https://apihub.agnes-ai.com/v1' }]",
   pick("const presetKey = ", "\nfunction renderProviderPresets"),
 ].join("\n"), context)
 
@@ -26,8 +26,8 @@ assert.equal(key({ preset: "https://api.openai.com/v1" }), "__preset__:https://a
 assert.equal(key({ name: "" }), "__new__", "only the blank form is __new__")
 
 const untouched = (d) => vm.runInContext("isUntouchedPresetDraft(d)", Object.assign(context, { d }))
-assert.equal(untouched({ name: "Agnes AI", baseURL: "https://api.agnes-ai.com/api/v1/" }), true, "an old preset left in __new__ is recognised")
-assert.equal(untouched({ name: "Agnes AI", baseURL: "https://api.agnes-ai.com/api/v1", apiKey: "sk-typed" }), false, "a form the user typed into is kept")
+assert.equal(untouched({ name: "Agnes AI", baseURL: "https://apihub.agnes-ai.com/v1/" }), true, "an old preset left in __new__ is recognised")
+assert.equal(untouched({ name: "Agnes AI", baseURL: "https://apihub.agnes-ai.com/v1", apiKey: "sk-typed" }), false, "a form the user typed into is kept")
 assert.equal(untouched({ name: "Mine", baseURL: "https://my.example.com/v1" }), false, "a real custom draft is kept")
 
 // Wiring: presets store under their own key; Add provider never reuses an untouched preset.

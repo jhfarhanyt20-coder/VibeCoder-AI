@@ -145,8 +145,8 @@ console.log("PASS question box: above the composer, one question at a time, butt
   for (const n of ["bash", "shell", "powershell", "cmd"]) assert(SHELL_TOOL.test(n), n)
   for (const n of ["read", "grep", "edit", "webfetch"]) assert(!SHELL_TOOL.test(n), n)
   const render = app.slice(app.indexOf("function renderBgJob() {"), app.indexOf("function markBackgroundJob("))
-  assert(render.includes('const kind = list.every((j) => j.shellId && j.backgrounded) ? "Background" : "Shell"'), "just Shell or Background")
-  console.log("PASS command chip: only for shell / background commands, labelled Shell or Background")
+  assert(render.includes('`${list.length || 1} shell${list.length > 1 ? "s" : ""}`'), "a calm count: 1 shell / 2 shells")
+  console.log("PASS command chip: only for shell / background commands, labelled with a shell count")
 }
 
 // The Running panel lists each command once (a shell replaces its bare tool

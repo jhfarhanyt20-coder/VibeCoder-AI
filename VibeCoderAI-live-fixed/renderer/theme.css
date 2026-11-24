@@ -195,6 +195,103 @@ html[data-theme="amoled"] {
   --logo-2: #c8701f;
 }
 
+/* Ember: a warm, calm dark theme (VibeCoder's own palette). */
+html[data-theme="ember"] {
+  color-scheme: dark;
+  /* the interface text scale (Settings > Interface Setting > UI font size) */
+  --fs-scale: 1;
+  --bg: #1c1b19;
+  --bg-main: #22211f;
+  --panel: #272624;
+  --panel-2: #2d2b28;
+  --border: #3a3733;
+  --text: #ebe6dd;
+  --muted: #a39d92;
+  --accent: #d6825a;
+  --accent-soft: rgba(214, 130, 90, 0.16);
+  --hover: #302e2a;
+  --ok: #4ecb71;
+  --ok-soft: #7ee2a0;
+  --danger: #ef6b6b;
+  --danger-soft: #ff9d95;
+  --warn: #e0a94a;
+  --text-strong: #f6f2ea;
+  --overlay: rgba(16, 14, 12, 0.6);
+  --overlay-soft: rgba(16, 14, 12, 0.4);
+  --overlay-strong: rgba(16, 14, 12, 0.76);
+  --shadow: rgba(0, 0, 0, 0.45);
+  --shadow-strong: rgba(0, 0, 0, 0.7);
+  --popover: #2a2926;
+  --row-bg: #252422;
+  --row-bg-hover: #2d2b28;
+  --row-border: #36332f;
+  --row-border-hover: #45413b;
+  --code-bg: #1a1917;
+  --code-bg-2: #201f1c;
+  --code-head: #2c2a27;
+  --scroll-thumb: #46423c;
+  --toggle-knob: #1c1b19;
+  --hover-strong: #3a3733;
+  --accent-contrast: #1c1b19;
+  --accent-soft-strong: rgba(214, 130, 90, 0.75);
+  --accent-line: rgba(214, 130, 90, 0.5);
+  --accent-glow: rgba(214, 130, 90, 0.42);
+  --accent-soft-2: rgba(214, 130, 90, 0.12);
+  --accent-soft-3: rgba(214, 130, 90, 0.09);
+  --accent-weak: rgba(214, 130, 90, 0.07);
+  --accent-faint: rgba(214, 130, 90, 0.03);
+  --ok-badge: rgba(78, 203, 113, 0.45);
+  --ok-soft: rgba(78, 203, 113, 0.13);
+  --ok-weak: rgba(78, 203, 113, 0.1);
+  --ok-weaker: rgba(78, 203, 113, 0.05);
+  --ok-soft-solid: #1d3a2a;
+  --ok-bright: #d8ffe9;
+  --green-badge: rgba(76, 195, 138, 0.4);
+  --green-badge-2: rgba(76, 195, 138, 0.45);
+  --green-soft: rgba(76, 195, 138, 0.14);
+  --danger-solid: #8f3a3a;
+  --danger-solid-soft: #3a1a1a;
+  --danger-soft-bg: rgba(239, 107, 107, 0.14);
+  --warn-solid: #d9a13b;
+  --warn-badge: rgba(217, 164, 65, 0.42);
+  --blue: #7aa7ff;
+  --blue-soft: rgba(122, 167, 255, 0.4);
+  --purple: #b78af7;
+  --purple-soft: rgba(183, 138, 247, 0.4);
+  --stop-bg: #d9534f;
+  --stop-bg-hover: #e05a56;
+  --stop-text: #ffffff;
+  --err-bg: #2a1c19;
+  --err-border: #5a2f29;
+  --err-accent: #ef6b6b;
+  --err-text: #e8c9c9;
+  --err-body-text: #d9b6b6;
+  --err-title: #ffb3b3;
+  --err-icon: #ff8a8a;
+  --err-close: #b98a8a;
+  --err-close-bg: #33201c;
+  --err-close-text: #ffd0d0;
+  --err-btn-bg: #2e1e1b;
+  --err-btn-border: #4a2024;
+  --err-btn-text: #eec4c4;
+  --err-btn-hover-bg: #33201c;
+  --err-btn-hover-text: #ffe0e0;
+
+  --code-purple: #a78bfa;
+  --code-pink: #e879b9;
+  --code-yellow: #f0c987;
+  --code-cyan: #7dd3fc;
+  --code-blue: #60a5fa;
+  --code-orange: #f08a5d;
+  --code-steel: #6aa9d6;
+  --code-navy: #4a86c4;
+  --code-green: #5fd98a;
+  --code-red: #e05252;
+  --code-gray: #a8b0bd;
+  --logo-1: #e9a37c;
+  --logo-2: #b8613d;
+}
+
 /* Light theme. */
 html[data-theme="light"] {
   color-scheme: light;

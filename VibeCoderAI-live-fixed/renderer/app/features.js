@@ -994,7 +994,7 @@ async function verifyOwner(code) {
   try { localStorage.setItem(OWNER_CODE_KEY, "1") } catch {}
   hideError("owner")
   renderOwnerBadge()
-  notifyAgent("Owner verified", "The user proved that they are the owner of this app.")
+  notifyAgent("Owner verified", "The user proved that they are the owner of this app.", "progress")
   return true
 }
 
@@ -1019,7 +1019,7 @@ async function checkOwnerCode(text) {
   // it matched the stored hash -> the user is the owner
   try { localStorage.setItem(OWNER_CODE_KEY, "1") } catch {}
   renderOwnerBadge()
-  notifyAgent("Owner verified", "The user proved that they are the owner of this app.")
+  notifyAgent("Owner verified", "The user proved that they are the owner of this app.", "progress")
   showError("Owner verified", "You are verified as the owner of this app.", { key: "owner" })
   setTimeout(() => hideError("owner"), 4000)
   return { text: scan.redacted ?? text, found: true }

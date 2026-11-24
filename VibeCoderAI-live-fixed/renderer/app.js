@@ -271,16 +271,75 @@ function lastAnswerSummary() {
   return ""
 }
 
+const NOTIFY_SOUND_KEY = "vibecoder.notifySound"
+function notifySoundEnabled() {
+  try { return localStorage.getItem(NOTIFY_SOUND_KEY) !== "off" } catch { return true }
+}
+
 /**
- * Windows toast for a finished / blocked agent run. Only fires when the app is
- * in the background and notifications are enabled in General settings.
+ * VibeCoder's own notification sound: two soft, short sine notes (a rising
+ * fifth) with a gentle fade, quiet enough never to startle. Made on the fly
+ * with Web Audio, so there is no sound file and no system "ding".
  */
-function notifyAgent(title, body) {
+let chimeCtx = null
+function playChime() {
   try {
+    if (!notifySoundEnabled()) return
+    const Ctx = window.AudioContext || window.webkitAudioContext
+    if (!Ctx) return
+    chimeCtx = chimeCtx || new Ctx()
+    if (chimeCtx.state === "suspended") chimeCtx.resume().catch(() => {})
+    const ctx = chimeCtx
+    const out = ctx.createGain()
+    out.gain.value = 0.9
+    const tone = ctx.createBiquadFilter()
+    tone.type = "lowpass"
+    tone.frequency.value = 2400
+    tone.connect(out)
+    out.connect(ctx.destination)
+    const t0 = ctx.currentTime + 0.02
+    for (const [freq, at, len] of [[659.25, 0, 0.42], [987.77, 0.11, 0.55]]) {
+      const osc = ctx.createOscillator()
+      const g = ctx.createGain()
+      osc.type = "sine"
+      osc.frequency.value = freq
+      g.gain.setValueAtTime(0.0001, t0 + at)
+      g.gain.exponentialRampToValueAtTime(0.07, t0 + at + 0.018)
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + at + len)
+      osc.connect(g)
+      g.connect(tone)
+      osc.start(t0 + at)
+      osc.stop(t0 + at + len + 0.05)
+    }
+  } catch {}
+}
+
+/**
+ * When VibeCoder tells you something, like a professional tool: only when you
+ * are away from the app (another window, minimized) and only when it matters:
+ *   done       the task is finished
+ *   permission the agent waits for your approval
+ *   question   the agent asks you something
+ *   error      the run stopped and will not continue by itself
+ *   attention  the agent paused and needs you
+ * Progress ("finished a step", "retrying", ...) never interrupts you. A burst of
+ * the same message shows once; a click opens the chat that asked.
+ */
+const NOTIFY_KINDS = new Set(["done", "permission", "question", "error", "attention"])
+const notifyRecent = new Map()
+function notifyAgent(title, body, kind = "attention", sessionID = state.activeSessionID) {
+  try {
+    if (!NOTIFY_KINDS.has(kind)) return
     if (!notificationsEnabled()) return
     if (!appIsInBackground()) return
     if (!vibe.notify) return
-    Promise.resolve(vibe.notify({ title, body: body || "" })).catch(() => {})
+    const key = `${kind}|${title}|${body || ""}`
+    const now = Date.now()
+    if (now - (notifyRecent.get(key) || 0) < 8000) return
+    notifyRecent.set(key, now)
+    for (const [k, t] of notifyRecent) if (now - t > 60000) notifyRecent.delete(k)
+    Promise.resolve(vibe.notify({ title, body: body || "", sessionID: sessionID || null, silent: true })).catch(() => {})
+    playChime()
   } catch {}
 }
 
@@ -317,7 +376,6 @@ function bgJobPanelSignature() {
 function refreshBgJobTimes() {
   document.querySelectorAll("#bg-job-list .bji-time[data-at]").forEach((el) => {
     const bits = [jobElapsed(Number(el.dataset.at) || Date.now())]
-    if (el.dataset.backgrounded === "true") bits.push("background")
     if (el.dataset.waiting === "true") bits.push("waiting for input")
     el.textContent = bits.join(" · ")
   })
@@ -362,8 +420,13 @@ function jobElapsed(at) {
 // background process. That the agent itself is working already shows in the
 // composer (the Stop button), so a plain run or an ordinary tool shows no chip.
 const SHELL_TOOL = /^(bash|shell|sh|cmd|powershell|pwsh|terminal|command)$/i
+// A command belongs to the chat that started it: another chat (or a new, empty
+// task) never shows it. Rows without a session (older events) stay visible.
+function jobInThisChat(j) {
+  return !j.sessionID || j.sessionID === state.activeSessionID
+}
 function shellJobs() {
-  return [...runningJobs.values()].filter((j) => j.shellId || (j.kind === "Tool" && SHELL_TOOL.test(String(j.title || ""))))
+  return [...runningJobs.values()].filter((j) => jobInThisChat(j) && (j.shellId || (j.kind === "Tool" && SHELL_TOOL.test(String(j.title || "")))))
 }
 function bgJobActive() {
   return shellJobs().length > 0
@@ -383,7 +446,7 @@ function renderBgJobPanel() {
   // tool row of the same call, so one command is listed once.
   const shellCalls = new Set([...runningJobs.values()].filter((j) => j.shellId && j.toolCallId).map((j) => `tool:${j.toolCallId}`))
   // Only commands are listed (the agent's own run shows in the composer).
-  const jobs = [...runningJobs.entries()].filter(([key, j]) => !shellCalls.has(key) && (j.shellId || (j.kind === "Tool" && SHELL_TOOL.test(String(j.title || "")))))
+  const jobs = [...runningJobs.entries()].filter(([key, j]) => !shellCalls.has(key) && jobInThisChat(j) && (j.shellId || (j.kind === "Tool" && SHELL_TOOL.test(String(j.title || "")))))
   const head = document.querySelector("#bg-job-panel .bg-job-head > span")
   if (head) head.textContent = jobs.length > 1 ? `Running commands · ${jobs.length}` : "Running command"
   if (!jobs.length) {
@@ -404,18 +467,20 @@ function renderBgJobPanel() {
     const top = document.createElement("div")
     top.className = "bji-top"
     const dot = document.createElement("span")
-    dot.className = "bji-dot"
+    dot.className = "bji-dot bji-term-ico"
+    dot.setAttribute("aria-hidden", "true")
+    dot.innerHTML = icon('<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="m4.5 6.5 2 1.75-2 1.75M8.5 10h3"/>')
     const title = document.createElement("span")
     title.className = "bji-title"
-    title.textContent = job.title || job.command || key
-    title.title = job.title || job.command || key
+    // the command itself, like a terminal tab; the description shows on hover
+    title.textContent = job.command || job.title || key
+    title.title = [job.title && job.command && job.title !== job.command ? job.title : "", job.command || job.title || key].filter(Boolean).join(" · ")
     const time = document.createElement("span")
     time.className = "bji-time"
     time.dataset.at = String(job.at || now)
     time.dataset.backgrounded = String(!!(job.shellId && job.backgrounded))
     time.dataset.waiting = String(!!(job.shellId && job.waitingForInput))
     const bits = [jobElapsed(job.at || now)]
-    if (job.shellId && job.backgrounded) bits.push("background")
     if (job.shellId && job.waitingForInput) bits.push("waiting for input")
     time.textContent = bits.join(" · ")
     const acts = document.createElement("div")
@@ -434,7 +499,7 @@ function renderBgJobPanel() {
     const stop = document.createElement("button")
     stop.className = "bg-job-stop bji-icon"
     stop.type = "button"
-    stop.innerHTML = icon('<rect x="4" y="4" width="8" height="8" rx="1.5"/>')
+    stop.innerHTML = icon('<path d="m4.5 4.5 7 7M11.5 4.5l-7 7"/>')
     stop.title = "Stop this command (the agent keeps running)"
     stop.setAttribute("aria-label", "Stop this command")
     stop.onclick = () => stopRunningJob(key)
@@ -576,7 +641,7 @@ async function moveRunningJobToBackground(shellID) {
 
 /** Ctrl+B (OpenCode's session.background): move every blocking command at once. */
 async function moveAllToBackground() {
-  const blocking = [...runningJobs.values()].filter((j) => j.shellId && !j.backgrounded)
+  const blocking = [...runningJobs.values()].filter((j) => j.shellId && !j.backgrounded && jobInThisChat(j))
   if (!blocking.length || !state.activeSessionID) return
   for (const j of blocking) await vibe.backgroundShell({ sessionID: state.activeSessionID, shellID: j.shellId })
   const res = await vibe.backgroundSession({ sessionID: state.activeSessionID }).catch(() => null)
@@ -612,8 +677,8 @@ function renderBgJob() {
   const shells = shellJobs()
   const real = shells.filter((j) => j.shellId)
   const list = real.length ? real : shells
-  const kind = list.every((j) => j.shellId && j.backgrounded) ? "Background" : "Shell"
-  $("bg-job-text").textContent = list.length > 1 ? `${kind} · ${list.length}` : kind
+  // "1 shell" / "3 shells": short and calm, like a status line
+  $("bg-job-text").textContent = `${list.length || 1} shell${list.length > 1 ? "s" : ""}`
   $("bg-job-btn").title = list.map((j) => j.command || j.title || "").filter(Boolean).join("\n") || "Show the running commands"
   if (!$("bg-job-panel").hidden) {
     if (bgJob.panelSignature !== bgJobPanelSignature()) renderBgJobPanel()
@@ -674,7 +739,7 @@ $("bg-job-stop")?.addEventListener("click", (e) => {
   stopAllCommands()
 })
 async function stopAllCommands() {
-  const shells = [...runningJobs.values()].filter((j) => j.shellId)
+  const shells = [...runningJobs.values()].filter((j) => j.shellId && jobInThisChat(j))
   for (const j of shells) await moveOrStopShell(j.shellId, false)
   renderBgJob()
 }
@@ -698,7 +763,7 @@ document.addEventListener("keydown", (e) => {
 
 /** "Stop all": the agent run plus every running command of this session. */
 async function stopAllJobs() {
-  const shells = [...runningJobs.values()].filter((j) => j.shellId)
+  const shells = [...runningJobs.values()].filter((j) => j.shellId && jobInThisChat(j))
   for (const j of shells) await moveOrStopShell(j.shellId, false)
   if (runningJobs.has("agent") || state.running) stopRunningJob("agent")
   renderBgJob()
@@ -808,6 +873,7 @@ async function refreshShellJobs() {
       runningJobs.set(key, {
         ...prev,
         kind: "Shell",
+        sessionID,
         title: String(sh.description || sh.intent || sh.command || "shell"),
         command: String(sh.command || ""),
         at: sh.started || prev.at || Date.now(),
@@ -875,8 +941,9 @@ async function autoContinueNow() {
       { key: "autocontinue" },
     )
     notifyAgent(
-      "Auto-continue limit reached",
-      `The agent paused after ${AUTO_CONTINUE_MAX} automatic continuations. Open the app to continue.`,
+      "VibeCoder paused",
+      `It stopped after ${AUTO_CONTINUE_MAX} automatic continuations. Open the app to continue.`,
+      "attention",
     )
     return
   }
@@ -1451,11 +1518,17 @@ async function newTask() {
   if (!res.ok) return alert(res.error)
   const s = res.data?.data ?? res.data
   state.activeSessionID = s.id ?? s.sessionID
+  // A brand-new chat is never running, even while another chat still works:
+  // without this the first message was queued into it ("Session is not running").
+  if (state.running) setRunning(false)
   $("messages").innerHTML = ""
   resetCompactionUi()
   resetUsage()
   setMainEmpty(false)
   hideBranchChip()
+  // the new chat starts with no commands: the old chat's shells stay with it
+  toggleBgJobPanel(false)
+  renderBgJob()
   await refreshSessions()
 }
 
@@ -1499,6 +1572,7 @@ $("btn-sidebar-toggle")?.addEventListener("click", () => applySidebarHidden(!sid
 $("btn-sidebar-restore")?.addEventListener("click", () => applySidebarHidden(false, true))
 document.addEventListener("keydown", (event) => {
   if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "b") {
+    if (event.defaultPrevented) return // Ctrl+B already moved a blocking command to the background
     event.preventDefault()
     applySidebarHidden(!sidebarIsHidden(), true)
   }
@@ -1509,3 +1583,30 @@ try {
   // Ignore a blocked storage read.
 }
 
+
+/* ---------- wheel over the empty space beside the chat column ---------- */
+// The chat column is narrower than the main area, so a wheel over the blank
+// margins (wide window, sidebar open) hit nothing scrollable. Pass it to the chat,
+// unless the pointer is over something that scrolls by itself (composer, panels).
+;(() => {
+  const main = document.getElementById("main")
+  if (!main) return
+  const scrollsItself = (el) => {
+    for (let e = el; e && e !== main; e = e.parentElement) {
+      if (e.id === "messages") return true
+      const oy = getComputedStyle(e).overflowY
+      if ((oy === "auto" || oy === "scroll") && e.scrollHeight > e.clientHeight) return true
+      if (e.matches?.("textarea, input, select, .composer, .bg-job-panel, .todo-panel, [role='dialog'], [role='menu']")) return true
+    }
+    return false
+  }
+  main.addEventListener("wheel", (ev) => {
+    if (ev.ctrlKey || ev.defaultPrevented) return
+    const chat = document.getElementById("messages")
+    if (!chat || chat.scrollHeight <= chat.clientHeight) return
+    if (scrollsItself(ev.target)) return
+    const unit = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? chat.clientHeight : 1
+    chat.scrollTop += ev.deltaY * unit
+    ev.preventDefault()
+  }, { passive: false })
+})()

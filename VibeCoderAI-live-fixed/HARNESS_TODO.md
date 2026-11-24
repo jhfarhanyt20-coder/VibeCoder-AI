@@ -627,4 +627,79 @@ Thin vertical slice first:
 - [x] VIBE.md "Current release" and this section updated; README (root + engine).
 - [x] Website "What's new" updated.
 
-### Next release (0.3.25): same checklist, one patch up, never skip.
+### Next release (0.3.25): see section 17.
+
+## 17. Release 0.3.25 — 2026-11-24
+
+- **Computer Use works like a person at the desk** (checked live with Agnes 2.5
+  Flash on Notepad: open, type, verify by screenshot, close without saving):
+  - `electron/backend.cjs`: during computer use the window becomes a narrow
+    always-on-top side panel (`sideWindowBegin`/`sideWindowEnd`) and gets its
+    exact size, position and maximized state back after computer_done / run end.
+    `computerUse.windowMode: "minimize"` keeps the old taskbar behaviour. The
+    overlay covers the whole screen: a soft edge glow plus the label a little
+    above the middle; `beforeCapture`/`afterCapture` hide it for the moment of
+    an agent screenshot.
+  - `core/tools/computer.js`: screenshots are plain pictures (`draw: false`, the
+    helper still scans); each numbered element lists `at (x, y)` in the image.
+    A click/drag on VibeCoder's own panel is refused; a screenshot first brings
+    the worked-on app back to the front when the panel is in front.
+  - `core/agent/loop.js` + GUIDE: the plan → open → look → batch → verify →
+    handle dialogs → final screenshot → computer_done loop; a program started
+    with bash must be seen with computer_screenshot before reporting on it.
+  - `renderer`: `body.computer-side` hides the left bar in the panel.
+- **One prompt per thing** (`core/engine.js`): two calls for the same tool and
+  subject at once share one permission prompt (seen: two parallel edits of one
+  file asked twice). Test: `test/one-prompt-test.cjs` case 5.
+- **Shells chip**: "1 shell / 2 shells" chip, transparent blurred panel, one row
+  per command (terminal icon, command, time, ×). Rows carry their `sessionID`:
+  another chat or a new task never shows them, and Stop all only stops this
+  chat's commands. New Task resets the running state (its first message was
+  queued: "Session is not running").
+- **Scroll**: the wheel over the empty space beside the chat column scrolls the
+  chat (it did nothing while the left bar was open).
+- `npm test`: 404 PASS.
+- **Notifications like a professional tool** (`renderer/app.js` notifyAgent):
+  only while the user is away from the app, and only for `done`, `permission`,
+  `question`, `error` and `attention` (paused); progress ("finished a step",
+  "retrying", owner verified) never notifies. The same message within 8 s shows
+  once. Toasts are `silent` (no Windows sound); the app plays its own soft
+  two-note Web Audio chime (`playChime`, Settings → Notification sound, with
+  Play). Clicking a toast focuses the window and opens that chat
+  (`notification.clicked`).
+- **Ember theme** (default for new users; a saved choice is kept): warm dark
+  surfaces, cream text, terracotta accent; VibeCoder's own palette
+  (`theme.css`, `skin.css`, picker, `theme.js`, THEMES).
+- Toasts slide away by themselves: `timeoutType: "default"` plus `close()` after
+  3 s (task toasts) / 2.5 s (the one-time "still running in the tray" note, now
+  a silent Notification with the app chime instead of the Windows balloon; the
+  balloon stays as the fallback).
+- Settings pages rebuilt from real data: **Keyboard Shortcuts** (grouped rows
+  with key caps; Ctrl+, now opens settings; Ctrl+B no longer also toggles the
+  left bar when it moved a blocking command), **Commands** (`commandsList`:
+  recipes from `<home>/recipes` and `.vibe/recipes`, Open folder, how-to) and
+  **Hooks** (`hooksList`: extensions with their declared hooks, the five hook
+  moments, how-to).
+- Provider icons: one style everywhere (`provMonogram` / `setProvIcon` in
+  `renderer/app/models.js`, `.prov-ic.mono` in polish.css): two letters on a
+  rounded tile (OpenAI → OA, Google Gemini → GG), no third-party logos; the
+  preset `icon` field stays for compatibility but is no longer drawn.
+- Built-in provider list: **AMD** (`https://developer.amd.com.cn/radeon/api/v1`, chat) added after Agnes AI; an existing custom AMD profile is matched by its base URL and now shows there as configured.
+- Agnes AI preset base URL fixed to `https://apihub.agnes-ai.com/v1` (the old `api.agnes-ai.com/api/v1` answered 401 "Login expired" for API keys; checked: /models 200 on the new URL).
+- VibeCoderAI account panel: Log in / Log out sits on the right of its header; when logged in the account's models are listed below (`renderVibecoderModels`, from the `vibecoder` profile or the picker). The `vibecoder` profile no longer shows under Custom providers.
+- Connectors hub (left bar → Connectors): a "← Back" button at the top returns to the chat (the hub hides the settings menu with its Back to workspace); Esc does the same.
+- Performance measured for the README/website (same PC, Task Manager memory):
+  VibeCoder ~120 MB idle / ~130 MB working, ~0.5% CPU working (6% peak at the
+  start); another AI coding desktop app ~540 MB idle; an AI chat/coding desktop
+  app ~1,080 MB working.
+
+### 0.3.25 release checklist
+- [x] Owner approved the release (2026-11-24).
+- [x] `package.json` and both root entries of `package-lock.json` → **0.3.25**.
+- [x] `npm test` green.
+- [ ] Commit, push `master`, tag `v0.3.25`, push the tag.
+- [ ] One release with `.exe`, `.exe.blockmap`, `latest.yml` and the CLI `.tgz`.
+- [ ] `releases/latest/download/latest.yml` shows `version: 0.3.25`.
+- [ ] Website "What's new" + performance comparison.
+
+### Next release (0.3.26): same checklist, one patch up, never skip.

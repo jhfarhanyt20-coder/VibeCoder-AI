@@ -387,7 +387,7 @@ async function refreshAuthUI() {
     const usage = res.data.usage && res.data.dailyLimit != null
       ? ` · ${Number(res.data.usage.requests) || 0}/${Number(res.data.dailyLimit) || 0} requests today${resets}`
       : ""
-    ocSub.textContent = "Signed in — free VibeCoder models are in the model picker"
+    ocSub.textContent = "Logged in — your VibeCoder models are listed below"
     ocStDot.className = "st-dot on"
     ocStText.textContent = `Connected — ${who}${usage}`
     ocConnect.hidden = true
@@ -403,7 +403,8 @@ async function refreshAuthUI() {
     if (logout) logout.disabled = false
     const login = document.getElementById("conn-connect")
     if (login) login.hidden = true
-    if (!(state.models || []).some((m) => m && m.providerID === "vibecoder")) loadModels().then(() => renderModelList()).catch(() => {})
+    if (!(state.models || []).some((m) => m && m.providerID === "vibecoder")) loadModels().then(() => { renderModelList(); renderVibecoderModels(true) }).catch(() => {})
+    renderVibecoderModels(true)
   } else if (pending) {
     ocSub.textContent = "Finish signing in in your browser"
     ocConnect.hidden = false
@@ -411,6 +412,7 @@ async function refreshAuthUI() {
     ocConnect.textContent = "Open the sign-in page again"
     ocDisconnect.hidden = true
     ocDot.classList.remove("on")
+    renderVibecoderModels(false)
     showAuthCode(pending.code)
     connLabel.textContent = "Signing in…"
     connLabel.title = `Code ${pending.code}`
@@ -420,10 +422,11 @@ async function refreshAuthUI() {
     ocStText.textContent = res.data?.error || "Not connected"
     ocConnect.hidden = false
     ocConnect.disabled = false
-    ocConnect.textContent = "Sign in with VibeCoder"
+    ocConnect.textContent = "Log in"
     ocDisconnect.hidden = true
     ocDevice.hidden = true
     ocDot.classList.remove("on")
+    renderVibecoderModels(false)
     // Clearing the OpenCode model cache also drops a stale opencode selection,
     // so nothing tries to use the logged-out account's models.
     resetOpenCodeModelCache()
@@ -444,6 +447,45 @@ async function refreshAuthUI() {
 }
 
 state.selectedProvider = null
+
+/* The models of the signed-in VibeCoder account, shown in its own panel. */
+function renderVibecoderModels(signedIn) {
+  const box = document.getElementById("vc-models")
+  const list = document.getElementById("vc-models-list")
+  const count = document.getElementById("vc-models-count")
+  if (!box || !list) return
+  const profile = (providerState.list || []).find((p) => p && p.id === "vibecoder")
+  const fromProfile = Array.isArray(profile?.models) ? profile.models : []
+  const fromPicker = (state.models || []).filter((m) => m && m.providerID === "vibecoder")
+  const models = fromProfile.length ? fromProfile : fromPicker
+  box.hidden = !signedIn
+  if (!signedIn) return
+  list.textContent = ""
+  if (count) count.textContent = models.length ? String(models.length) : ""
+  if (!models.length) {
+    const e = document.createElement("div")
+    e.className = "vc-models-empty"
+    e.textContent = "Loading your models…"
+    list.appendChild(e)
+    return
+  }
+  for (const m of models) {
+    const row = document.createElement("div")
+    row.className = "vc-model"
+    const nm = document.createElement("span")
+    nm.className = "vc-model-name"
+    nm.textContent = m.name || m.id
+    const meta = document.createElement("span")
+    meta.className = "vc-model-meta"
+    const ctx = Number(m.context || m.limit?.context || 0)
+    const bits = []
+    if (ctx) bits.push(ctx >= 1000000 ? `${Math.round(ctx / 100000) / 10}M context` : `${Math.round(ctx / 1000)}K context`)
+    if (m.image || m.attachment) bits.push("images")
+    meta.textContent = bits.join(" · ")
+    row.append(nm, meta)
+    list.appendChild(row)
+  }
+}
 
 document.querySelector(".provider-item[data-provider=opencode]").onclick = () => {
   state.selectedProvider = "opencode"
@@ -488,7 +530,7 @@ ocDisconnect.onclick = async () => {
 
 // Toggles
 settingsContent.querySelectorAll(".toggle").forEach((t) => {
-  if (t.id === "toggle-notify" || t.id === "toggle-autocontinue" || t.id === "toggle-memory" || t.id === "toggle-computer-use") {
+  if (t.id === "toggle-notify" || t.id === "toggle-notify-sound" || t.id === "toggle-autocontinue" || t.id === "toggle-memory" || t.id === "toggle-computer-use") {
     return // handled below (persisted)
   }
   t.onclick = () => t.classList.toggle("on")
@@ -515,6 +557,33 @@ if (notifyToggle) {
   }
 }
 
+/* Notification sound toggle + preview (persisted in localStorage) */
+const soundToggle = $("toggle-notify-sound")
+if (soundToggle) {
+  const applySoundState = () => {
+    const on = notifySoundEnabled()
+    soundToggle.classList.toggle("on", on)
+    soundToggle.setAttribute("aria-checked", on ? "true" : "false")
+  }
+  applySoundState()
+  soundToggle.onclick = () => {
+    try { localStorage.setItem(NOTIFY_SOUND_KEY, notifySoundEnabled() ? "off" : "on") } catch {}
+    applySoundState()
+  }
+  soundToggle.onkeydown = (e) => {
+    if (e.key === " " || e.key === "Enter") {
+      e.preventDefault()
+      soundToggle.onclick()
+    }
+  }
+}
+$("btn-play-chime")?.addEventListener("click", () => {
+  const was = notifySoundEnabled()
+  try { if (!was) localStorage.setItem(NOTIFY_SOUND_KEY, "on") } catch {}
+  playChime()
+  try { if (!was) localStorage.setItem(NOTIFY_SOUND_KEY, "off") } catch {}
+})
+
 /* Auto-continue in the background toggle (persisted in localStorage) */
 const autoToggle = $("toggle-autocontinue")
 if (autoToggle) {
@@ -537,7 +606,8 @@ if (autoToggle) {
 }
 $("btn-test-notify")?.addEventListener("click", async () => {
   try {
-    const r = await vibe.notify({ title: "VibeCoder AI", body: "Notifications are working ✅" })
+    const r = await vibe.notify({ title: "VibeCoder AI", body: "Notifications are working.", silent: true })
+    playChime()
     if (r && r.ok === false) showError("Could not send the notification", r.error || "Unknown error")
   } catch (e) {
     showError("Could not send the notification", String(e))

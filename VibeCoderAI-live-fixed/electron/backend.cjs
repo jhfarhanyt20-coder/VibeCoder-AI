@@ -706,18 +706,22 @@ let computerOverlay = null
 let computerActiveSession = null
 let computerMinimizedApp = false
 const COMPUTER_BADGE_HTML = `<!doctype html><html><head><meta charset="utf-8"><style>
-html,body{margin:0;background:transparent;overflow:hidden;font:600 13px "Segoe UI",system-ui,sans-serif;-webkit-user-select:none;user-select:none}
-.pill{display:flex;align-items:center;gap:9px;height:34px;margin:2px;padding:0 16px;border-radius:17px;background:rgba(18,20,26,.92);color:#f3f4f8;box-shadow:0 4px 16px rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.12)}
+html,body{margin:0;height:100%;background:transparent;overflow:hidden;font:600 13px "Segoe UI",system-ui,sans-serif;-webkit-user-select:none;user-select:none}
+/* A soft glow around the whole screen says the agent is in control. */
+.edge{position:fixed;inset:0;border:2px solid rgba(255,138,61,.85);box-shadow:inset 0 0 28px 6px rgba(255,138,61,.45);pointer-events:none;animation:g 2.4s ease-in-out infinite}
+@keyframes g{50%{box-shadow:inset 0 0 18px 3px rgba(255,138,61,.28)}}
+.wrap{position:fixed;inset:0;display:flex;align-items:flex-start;justify-content:center;padding-top:14vh;pointer-events:none}
+.pill{display:flex;align-items:center;gap:9px;height:34px;padding:0 16px;border-radius:17px;background:rgba(18,20,26,.88);color:#f3f4f8;box-shadow:0 6px 22px rgba(0,0,0,.4);border:1px solid rgba(255,138,61,.55)}
 .dot{width:9px;height:9px;border-radius:50%;background:#ff4f7b;box-shadow:0 0 0 0 rgba(255,79,123,.7);animation:p 1.4s infinite}
 @keyframes p{70%{box-shadow:0 0 0 8px rgba(255,79,123,0)}100%{box-shadow:0 0 0 0 rgba(255,79,123,0)}}
 kbd{font:600 12px "Segoe UI",sans-serif;background:rgba(255,255,255,.14);padding:2px 6px;border-radius:5px}
-</style></head><body><div class="pill"><span class="dot"></span><span>VibeCoder is using your computer</span><span>·</span><span>Press <kbd>Ctrl+Alt+Esc</kbd> to stop</span></div></body></html>`
+</style></head><body><div class="edge"></div><div class="wrap"><div class="pill"><span class="dot"></span><span>VibeCoder is using your computer</span><span>·</span><span>Press <kbd>Ctrl+Alt+Esc</kbd> to stop</span></div></div></body></html>`
 
 function showComputerBadge() {
   try {
     if (!computerOverlay || computerOverlay.isDestroyed()) {
       computerOverlay = new BrowserWindow({
-        width: 470, height: 40, frame: false, transparent: true, resizable: false, movable: false,
+        width: 800, height: 600, frame: false, transparent: true, resizable: false, movable: false,
         focusable: false, skipTaskbar: true, alwaysOnTop: true, show: false, hasShadow: false, fullscreenable: false,
         webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, javascript: false },
       })
@@ -727,13 +731,51 @@ function showComputerBadge() {
       computerOverlay.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(COMPUTER_BADGE_HTML))
     }
     const area = screen.getPrimaryDisplay().workArea
-    computerOverlay.setBounds({ x: Math.round(area.x + (area.width - 470) / 2), y: area.y + 6, width: 470, height: 40 })
+    // The whole screen: the glow runs along every edge and the label sits a little
+    // above the middle (clear of the app's own text). Clicks pass through and screenshots never include it.
+    computerOverlay.setBounds({ x: area.x, y: area.y, width: area.width, height: area.height })
     computerOverlay.showInactive()
   } catch {}
 }
 function hideComputerBadge() { try { if (computerOverlay && !computerOverlay.isDestroyed()) computerOverlay.hide() } catch {} }
 function ownWindowHandle() {
   try { const h = win.getNativeWindowHandle(); return h.length >= 8 ? h.readBigUInt64LE(0).toString() : String(h.readUInt32LE(0)) } catch { return "" }
+}
+
+// The window as it was before Computer Use made it a side panel.
+let computerSideSaved = null
+function sideWindowBegin() {
+  try {
+    if (!win || win.isDestroyed() || win.isFullScreen()) return false
+    const maximized = win.isMaximized()
+    if (maximized) win.unmaximize()
+    const bounds = maximized ? win.getNormalBounds() : win.getBounds()
+    const [minW, minH] = win.getMinimumSize()
+    computerSideSaved = { bounds, maximized, minW, minH, onTop: win.isAlwaysOnTop() }
+    const area = screen.getDisplayMatching(bounds).workArea
+    const w = Math.round(Math.min(440, Math.max(360, area.width * 0.27)))
+    win.setMinimumSize(320, 400)
+    win.setBounds({ x: area.x + area.width - w, y: area.y, width: w, height: area.height })
+    win.setAlwaysOnTop(true, "floating") // the other app never covers the chat
+    return true
+  } catch {
+    computerSideSaved = null
+    return false
+  }
+}
+function sideWindowEnd() {
+  const saved = computerSideSaved
+  computerSideSaved = null
+  if (!saved || !win || win.isDestroyed()) return
+  try {
+    win.setAlwaysOnTop(!!saved.onTop)
+    if (win.isMinimized()) win.restore()
+    win.setMinimumSize(saved.minW || 980, saved.minH || 640)
+    win.setBounds(saved.bounds)
+    if (saved.maximized) win.maximize()
+    win.show()
+    win.focus()
+  } catch {}
 }
 
 const computerHooks = {
@@ -744,8 +786,14 @@ const computerHooks = {
     if (engine.computer) engine.computer.stopped = false
     showComputerBadge()
     if (win && !win.isDestroyed() && win.isVisible() && !win.isMinimized()) {
-      win.minimize()
-      computerMinimizedApp = true
+      // Step aside into a narrow panel on one side of the screen, so the user
+      // keeps watching the chat while the agent works in the other app. The old
+      // size and position come back after computer_done. ("minimize" keeps the
+      // older behaviour: the window goes to the taskbar.)
+      if ((engine.computerUse && engine.computerUse.windowMode) === "minimize" || !sideWindowBegin()) {
+        win.minimize()
+        computerMinimizedApp = true
+      }
       await new Promise((r) => setTimeout(r, 400))
     }
     emitUI("computer.active", sid, { active: true })
@@ -759,7 +807,18 @@ const computerHooks = {
     computerActiveSession = null
     hideComputerBadge()
     if (computerMinimizedApp && win && !win.isDestroyed()) { win.restore(); computerMinimizedApp = false }
+    sideWindowEnd()
     emitUI("computer.active", sessionId || null, { active: false })
+  },
+  // The overlay label sits in the middle of the screen: hide it for the moment
+  // of a screenshot so the agent sees the app, then show it again.
+  async beforeCapture() {
+    if (!computerActiveSession || !computerOverlay || computerOverlay.isDestroyed() || !computerOverlay.isVisible()) return
+    computerOverlay.hide()
+    await new Promise((r) => setTimeout(r, 120))
+  },
+  afterCapture() {
+    if (computerActiveSession && computerOverlay && !computerOverlay.isDestroyed()) computerOverlay.showInactive()
   },
   isOwnWindow(fg) {
     if (!fg) return false
@@ -1240,6 +1299,33 @@ const handlers = {
   crewChanges: async (a = {}) => engine.crewChanges(String(a.id || a.subagentID || ""), { withDiff: a.diff !== false }),
   crewMerge: async (a = {}) => engine.crewMerge(String(a.id || a.subagentID || ""), { only: Array.isArray(a.files) && a.files.length ? a.files.map(String) : undefined }),
   crewDiscard: async (a = {}) => engine.crewDiscard(String(a.id || a.subagentID || "")),
+  // Settings → Commands: the slash-command recipes this project can use (read only).
+  commandsList: async () => {
+    const recipes = require("../core/harness/recipes")
+    const list = recipes.listRecipes({ directory: currentDirectory, home })
+    return { folder: path.join(home, "recipes"), projectFolder: path.join(currentDirectory || "", ".vibe", "recipes"), list: list.map((r) => ({ id: r.id, name: r.name, description: r.description, scope: r.scope, file: r.file, agent: r.agent, model: r.model })) }
+  },
+  // Settings → Hooks: extensions and the lifecycle hooks each one declares.
+  hooksList: async () => {
+    const HOOKS = ["onLoad", "onUnload", "onEvent", "beforeAction", "afterAction"]
+    let rows = []
+    try { engine.extensions.sync(currentDirectory) } catch {}
+    try {
+      rows = [...engine.extensions.loaded.values()].map((r) => ({
+        id: r.id, file: r.file, scope: r.scope, ok: !!r.ok, error: r.error || "", tools: (r.rawTools || []).length,
+        hooks: HOOKS.filter((h) => r.hooks && typeof r.hooks[h] === "function"),
+      }))
+    } catch {}
+    return { folder: path.join(home, "extensions"), list: rows }
+  },
+  openSettingsFolder: async (a = {}) => {
+    const which = a.kind === "hooks" ? "extensions" : "recipes"
+    const dir = path.join(home, which)
+    fs.mkdirSync(dir, { recursive: true })
+    const e = await shell.openPath(dir)
+    if (e) throw new Error(e)
+    return { path: dir }
+  },
   computerUseGet: async () => ({ enabled: computerUseEnabled, supported: process.platform === "win32", killSwitch: "Ctrl+Alt+Esc", logFile: path.join(home, "computer-actions.log") }),
   computerUseSet: async (a = {}) => { applyComputerUse(!!a.enabled); persistUIState(); return { enabled: computerUseEnabled, supported: process.platform === "win32" } },
   // Connectors (GitHub…): sign in through the browser; the engine keeps the account.
@@ -1323,7 +1409,26 @@ const handlers = {
   startUpgrade: async () => { throw new Error("In-app upgrades are not configured in this build. Install a verified release manually.") },
   ownerScan: async (a = {}) => ({ found: false, text: String(a.text || ""), message: "Owner verification is not configured in this standalone build." }),
   ownerVerify: async () => ({ verified: false, message: "Owner verification is not configured in this standalone build." }),
-  notify: async (a = {}) => { if (Notification?.isSupported?.()) new Notification({ title: String(a.title || "VibeCoder AI"), body: String(a.body || a.message || "") }).show(); return { notified: true } },
+  notify: async (a = {}) => {
+    if (!Notification?.isSupported?.()) return { notified: false }
+    // silent: Windows plays no system sound; the app plays its own soft chime.
+    // Clicking the toast brings VibeCoder forward on the chat that asked.
+    // timeoutType "default": the toast shows for a few seconds and slides away by
+    // itself into the notification centre, so it never sits over the user's work.
+    const n = new Notification({ title: String(a.title || "VibeCoder AI"), body: String(a.body || a.message || "").slice(0, 240), silent: a.silent !== false, timeoutType: "default" })
+    const sid = a.sessionID ? String(a.sessionID) : null
+    n.on("click", () => {
+      try { if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.show(); win.focus() } } catch {}
+      emitUI("notification.clicked", sid, { sessionID: sid })
+    })
+    n.show()
+    // Some Windows setups keep a banner on screen; take it away after a few
+    // seconds in any case (the task bar badge and the chat still show it).
+    const hideTimer = setTimeout(() => { try { n.close() } catch {} }, 3000)
+    n.on("click", () => clearTimeout(hideTimer))
+    n.on("close", () => clearTimeout(hideTimer))
+    return { notified: true }
+  },
   openExternal: async (a = {}) => { const url = String(a.url || a.href || ""); if (!/^https?:\/\//i.test(url)) throw new Error("Only HTTP(S) URLs can be opened externally"); await shell.openExternal(url); return { opened: true } },
   restartEvents: async () => { emitUI("host.event_stream", null, { status: "connected", attempt: 1 }); return { restarted: true } },
   logError: async (a = {}) => { const file = path.join(home, "app-error.log"); fs.appendFileSync(file, `[${new Date().toISOString()}] renderer: ${String(a.message || a.error || "unknown error").slice(0, 8000)}\n`); return { logged: true } },
@@ -1359,7 +1464,7 @@ const preloadNames = [
   "listSessions","createSession","getMessages","renameSession","deleteSession","revertSession","undoSession","listSnapshots","listStepSnapshots","previewSnapshot","undoStepSession","redoSession","listRedo","getTrail","prompt","queuePrompt","resumeRun","interrupt","compactSession","getCompactionSettings","setCompactionSettings",
   "listShells","shellOutput","shellInput","backgroundSession","backgroundShell","cancelShell","setPermissions","listPermissionRequests","replyPermission","listForms","replyForm","cancelForm",
   "listModels","listAllModels","listModelLimits","setModel","providerCatalog","providerList","providerSave","providerRemove","providerDraftSave","providerDraftLoad","providerDraftRemove","providerDisabled","providerKey","providerModels","providerModel","providerMeta","fallbackGet","fallbackSave","fallbackReset",
-  "cwd","setDirectory","getDirectory","gitBranch","pickProject","pickAttachments","readAttachment","ensureAgent","switchAgent","listAgents","setAgentDisabled","mcpList","mcpAdd","mcpRemove","subagentCreate","subagentList","subagentStatus","subagentResult","subagentDetails","subagentResume","subagentStop","crewChanges","crewMerge","crewDiscard","subagentToggle","computerUseGet","computerUseSet","connectorsList","connectorConnect","connectorCancel","connectorDisconnect",
+  "cwd","setDirectory","getDirectory","gitBranch","pickProject","pickAttachments","readAttachment","ensureAgent","switchAgent","listAgents","setAgentDisabled","mcpList","mcpAdd","mcpRemove","subagentCreate","subagentList","subagentStatus","subagentResult","subagentDetails","subagentResume","subagentStop","crewChanges","crewMerge","crewDiscard","subagentToggle","computerUseGet","computerUseSet","commandsList","hooksList","openSettingsFolder","connectorsList","connectorConnect","connectorCancel","connectorDisconnect",
   "pluginList","pluginAdd","pluginRemove","builtins","installBuiltinPlugin","removeBuiltinPlugin","marketplace","installSkill","removeSkill","installCustomSkill","removeCustomSkill","importGitHubSkills","registryAdd","registryRemove","memoryPath","memoryList","memoryAdd","memoryRemove","openMemoryFile","todoList","todoSave","cliInfo","cliInstallTested","cliUpdateCheck","authStatus","authConnect","authDisconnect","upgradeInfo","startUpgrade","ownerScan","ownerVerify","notify","openExternal","restartEvents","logError","openErrorLog","appUpdateStatus","appUpdateSetPrefs","codeTree","codeRead","codeWrite"
 ]
 

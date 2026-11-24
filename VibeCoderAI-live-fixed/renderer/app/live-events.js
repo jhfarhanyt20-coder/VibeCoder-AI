@@ -149,7 +149,21 @@ vibe.onEvent(async (event) => {
   }
   // VibeCoder account: signed in / out, code expired, or models refreshed.
   // Computer Use: the on-screen badge shows activity; here only the stop is reported.
-  if (type === "computer.active") return
+  if (type === "notification.chime") {
+    if (notificationsEnabled()) playChime()
+    return
+  }
+  if (type === "notification.clicked") {
+    const target = data.sessionID
+    if (target && target !== state.activeSessionID && typeof openSession === "function") openSession(target)
+    return
+  }
+  if (type === "computer.active") {
+    // While the agent uses the computer the window is a narrow side panel:
+    // only the chat shows (the left bar comes back with the full window).
+    document.body.classList.toggle("computer-side", data.active === true)
+    return
+  }
   if (type === "computer.stopped") {
     showError("Computer Use stopped", "You pressed Ctrl+Alt+Esc, so the agent stopped controlling the computer.", { key: "computer-use" })
     return
@@ -469,7 +483,7 @@ vibe.onEvent(async (event) => {
         setTimeout(() => {
           if (state.running || state.retryTimer || state.userStopped) return
           if (state.interruptReason) return
-          if (scheduleRetry(pretty)) notifyAgent("The model did not answer — retrying", pretty)
+          if (scheduleRetry(pretty)) notifyAgent("The model did not answer — retrying", pretty, "progress")
         }, 1500)
       }
     } else {
@@ -524,12 +538,14 @@ vibe.onEvent(async (event) => {
         // The whole task is finished -> tell the user, with the summary.
         clearBackgroundJob()
         notifyAgent(
-          wasBackgroundJob ? "🎉 Background job finished" : "✅ Task finished",
+          wasBackgroundJob ? "Background task finished" : "Task finished",
           summary || "The agent finished the whole task.",
+          "done",
+          sid,
         )
       } else {
         // One step is done, more is open.
-        notifyAgent("Agent finished a step", summary || "Continuing with the next step.")
+        notifyAgent("Agent finished a step", summary || "Continuing with the next step.", "progress")
         // ... and let the agent continue on its own if the user is away.
         if (appIsInBackground()) scheduleAutoContinue()
       }
@@ -565,7 +581,7 @@ vibe.onEvent(async (event) => {
     if (type === "session.execution.failed" && data.source === "subagent-result") {
       const msg = realErrorText(data.error) || "The main agent could not report the completed subagent result."
       showRunFailureInline(msg, runEndBubble())
-      notifyAgent("Could not report subagent result", msg)
+      notifyAgent("Could not report the helper's result", msg, "error", sid)
       return
     }
     if (type === "session.execution.failed" && (state.compactionBlockedRun || isTerminalCompactionError(data.error) || (data.retryable === false && /compaction|context window|over budget/i.test(String(data.error?.message || data.error || ""))))) {
@@ -625,13 +641,13 @@ vibe.onEvent(async (event) => {
       if (data.retryable !== false && !state.userStopped && (isRetryableRunError(real) || unexpectedAbort) && scheduleRetry(msg)) {
         // A retry is coming: no red banner, the inline counter says it all.
         hideError("execution")
-        notifyAgent("The model did not answer — retrying", msg)
+        notifyAgent("The model did not answer — retrying", msg, "progress")
       } else {
         // Retries exhausted (or the error is not retryable): show the real
         // error inline, where the run stopped. No red popup.
         hideRetryInline()
         showRunFailureInline(msg, target)
-        notifyAgent("Agent stopped with an error", msg)
+        notifyAgent("Task stopped with an error", msg, "error", sid)
       }
     } else {
       // remember why the run was interrupted so the step row can say it
@@ -644,18 +660,18 @@ vibe.onEvent(async (event) => {
           const target = runEndBubble()
           if (target) target.textContent = `⏹ ${msg}`
           hideError("execution")
-          notifyAgent("Agent interrupted", msg)
+          notifyAgent("Task interrupted", msg, "error", sid)
         } else {
           hideError("execution")
         }
       } else if (scheduleRetry("The run stopped unexpectedly.")) {
         // An abort nobody asked for (provider/tool failure inside OpenCode):
         // retry it like any other hiccup instead of silently ending the run.
-        notifyAgent("The model did not answer — retrying", "The run stopped unexpectedly.")
+        notifyAgent("The model did not answer — retrying", "The run stopped unexpectedly.", "progress")
       } else {
         const msg = interruptText()
         showRunFailureInline(msg)
-        notifyAgent("Agent interrupted", msg)
+        notifyAgent("Task interrupted", msg, "error", sid)
       }
     }
   }
@@ -690,7 +706,7 @@ vibe.onEvent(async (event) => {
     const key = `tool:${data.id}`
     if (data.name) toolNames.set(key, data.name)
     // track it as a running job (shown in the "Running" list)
-    runningJobs.set(key, { kind: "Tool", title: data.name || "tool", at: Date.now() })
+    runningJobs.set(key, { kind: "Tool", title: data.name || "tool", at: Date.now(), sessionID: sid || state.activeSessionID || "" })
     renderBgJob()
     // The question tool gets its own interactive card (form.created) instead of
     // a raw tool row.
@@ -825,6 +841,7 @@ vibe.onEvent(async (event) => {
     if (sh.id) {
       runningJobs.set(`shell:${sh.id}`, {
         kind: "Shell",
+        sessionID: sid || state.activeSessionID || "",
         title: String(sh.description || sh.intent || sh.command || "shell"),
         at: sh.started || Date.now(),
         shellId: sh.id,
@@ -851,6 +868,7 @@ vibe.onEvent(async (event) => {
       // if the renderer missed shell.started during a sleep/reconnect.
       job = {
         kind: "Shell",
+        sessionID: sid || state.activeSessionID || "",
         title: String(sh.description || sh.intent || sh.command || "shell"),
         command: String(sh.command || ""),
         at: sh.started || Date.now(),

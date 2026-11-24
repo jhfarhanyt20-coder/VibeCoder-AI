@@ -480,6 +480,24 @@ class Engine {
       if (this.permissionMode === "allow" && !critical) return true
       if (this.permissionMode === "deny") return false
       if (signal.aborted) return false // the run was stopped: never wait for an answer nobody can give
+      // One prompt per thing: when the model sends two calls for the same tool and
+      // subject at once (two edits of one file), the second waits for the answer
+      // to the prompt already on screen instead of showing a duplicate.
+      if (!critical) {
+        for (const p of this.pending.values()) {
+          if (p.session === session && p.tool === tool && String(p.subject) === String(subject) && !p.critical) {
+            return new Promise((resolve) => {
+              const follower = { resolve }
+              p.followers = p.followers || []
+              p.followers.push(follower)
+              signal.addEventListener("abort", () => {
+                const i = p.followers.indexOf(follower)
+                if (i >= 0) { p.followers.splice(i, 1); resolve(false) }
+              }, { once: true })
+            })
+          }
+        }
+      }
       const permissionId = newId("perm")
       return new Promise((resolve) => {
         const persistAs = Array.isArray(perm?.persistAs) ? perm.persistAs.map(String).filter(Boolean) : null
@@ -518,6 +536,7 @@ class Engine {
       ...(p.session.kind === "subagent" ? { subagentId: p.session.agentId, subagentSessionId: p.session.id, subagentName: p.session.subagentName } : {}),
     })
     p.resolve(decision !== "deny")
+    for (const f of p.followers || []) f.resolve(decision !== "deny")
     return true
   }
 

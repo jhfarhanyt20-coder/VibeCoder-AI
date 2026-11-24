@@ -3,13 +3,13 @@
 // Content-Security-Policy does not allow inline scripts.
 (function () {
   try {
-    var pref = localStorage.getItem("vibecoder.theme") || "dark"
+    var pref = localStorage.getItem("vibecoder.theme") || "ember"
     var resolved = pref
     if (pref === "system") {
       var light = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
       resolved = light ? "light" : "dark"
     }
-    if (resolved === "obsidian" || resolved === "amoled" || resolved === "light" || resolved === "dark") {
+    if (resolved === "obsidian" || resolved === "amoled" || resolved === "ember" || resolved === "light" || resolved === "dark") {
       document.documentElement.dataset.theme = resolved
     }
     var savedFont = Number(localStorage.getItem("vibecoder.fontScale"))

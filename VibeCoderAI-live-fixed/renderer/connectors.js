@@ -37,9 +37,11 @@
     head = document.createElement("div")
     head.id = "hub-head"
     head.className = "hub-head"
-    head.innerHTML = '<h1 class="hub-title" id="hub-title">Connectors</h1><div class="hub-tabs" id="hub-tabs" role="tablist"></div><div class="hub-subtabs" id="hub-subtabs" role="tablist"></div>'
+    head.innerHTML = '<button class="hub-back" id="hub-back" type="button" title="Back to the chat (Esc)"><span aria-hidden="true">←</span> Back</button><h1 class="hub-title" id="hub-title">Connectors</h1><div class="hub-tabs" id="hub-tabs" role="tablist"></div><div class="hub-subtabs" id="hub-subtabs" role="tablist"></div>'
     const content = $("settings-content")
     content.prepend(head)
+    // The hub hides the settings menu (and its "Back to workspace"), so it has its own way out.
+    $("hub-back").addEventListener("click", () => { closeHub(); const back = $("btn-back"); if (back) back.click() })
     return head
   }
   function renderTabs() {

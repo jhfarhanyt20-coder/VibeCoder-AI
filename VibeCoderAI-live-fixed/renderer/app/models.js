@@ -1,3 +1,25 @@
+/**
+ * One icon style for every provider: a small rounded tile with two letters
+ * taken from the name (OpenAI → OA, Google Gemini → GG, agness → AG). The same
+ * look everywhere, no third-party logos.
+ */
+function provMonogram(name) {
+  const clean = String(name || "").replace(/\(.*?\)/g, " ").replace(/[^A-Za-z0-9 ]+/g, " ").trim()
+  const skip = /^(ai|api|the|inc|llc)$/i
+  const words = clean.split(/\s+/).filter((w) => w && !skip.test(w))
+  if (!words.length) return "?"
+  if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase()
+  const w = words[0]
+  const caps = w.replace(/[^A-Z0-9]/g, "")
+  if (caps.length >= 2) return caps.slice(0, 2)
+  return w.slice(0, 2).toUpperCase()
+}
+function setProvIcon(el, name) {
+  el.classList.add("mono")
+  el.textContent = provMonogram(name)
+  el.setAttribute("aria-hidden", "true")
+}
+
 /* ---------- model picker (searchable) ---------- */
 state.models = []
 state.selectedModel = null
@@ -926,7 +948,8 @@ function renderProviderList() {
   box.textContent = ""
   // A provider created from a popular preset belongs to the Popular list, not
   // to Custom providers. Only genuinely new/custom providers appear here.
-  const rows = providerState.list.filter((p) => !providerPresetOf(p))
+  // The VibeCoder account's own profile lives in the VibeCoderAI panel above.
+  const rows = providerState.list.filter((p) => !providerPresetOf(p) && p.id !== "vibecoder")
   if (empty) empty.hidden = rows.length > 0
   for (const p of rows) {
     const item = document.createElement("div")
@@ -934,7 +957,7 @@ function renderProviderList() {
     item.dataset.provider = p.id
     const ic = document.createElement("span")
     ic.className = "prov-ic"
-    ic.textContent = "◈"
+    setProvIcon(ic, p.name)
     const nm = document.createElement("span")
     nm.className = "prov-nm"
     nm.textContent = p.name
@@ -983,7 +1006,8 @@ const PROVIDER_PRESETS = [
   { name: "AgentRouter", baseURL: "https://agentrouter.org/v1", apiFormat: "chat", icon: "◈" },
   { name: "Google Gemini", baseURL: "https://generativelanguage.googleapis.com/v1beta/openai", apiFormat: "chat", icon: "✦" },
   { name: "Groq", baseURL: "https://api.groq.com/openai/v1", apiFormat: "chat", icon: "⚡" },
-  { name: "Agnes AI", baseURL: "https://api.agnes-ai.com/api/v1", apiFormat: "chat", icon: "◈" },
+  { name: "Agnes AI", baseURL: "https://apihub.agnes-ai.com/v1", apiFormat: "chat", icon: "◈" },
+  { name: "AMD", baseURL: "https://developer.amd.com.cn/radeon/api/v1", apiFormat: "chat", icon: "◈" },
 ]
 
 const presetKey = (p) => String(p && p.baseURL || "").trim().replace(/\/+$/, "").toLowerCase()
@@ -1009,7 +1033,7 @@ function renderProviderPresets() {
       : `${preset.name} — ${preset.baseURL}`
     const ic = document.createElement("span")
     ic.className = "prov-ic"
-    ic.textContent = preset.icon
+    setProvIcon(ic, preset.name)
     const nm = document.createElement("span")
     nm.className = "prov-nm"
     nm.textContent = preset.name
@@ -1130,6 +1154,7 @@ function renderProviderDetail() {
   }
   box.hidden = false
   $("md-custom-name").textContent = d.name || "New provider"
+  if ($("md-custom-logo")) setProvIcon($("md-custom-logo"), d.name || "New provider")
   $("md-custom-sub").textContent = d.isNew
     ? "Not saved yet — fill the form and press Save provider"
     : `${d.models.length} model${d.models.length === 1 ? "" : "s"} · ${d.scope === "global" ? "global" : "this project"}`

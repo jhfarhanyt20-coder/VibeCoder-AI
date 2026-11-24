@@ -476,7 +476,8 @@ public static class VcComputer {
       using (var g = Graphics.FromImage(small)) {
         g.InterpolationMode = InterpolationMode.HighQualityBicubic; g.SmoothingMode = SmoothingMode.HighQuality;
         g.DrawImage(full, 0, 0, sw, sh);
-        if (marks.Count > 0) {
+        // "draw": false keeps the picture clean (the numbers still come back as a list).
+        if (marks.Count > 0 && !(a != null && a.ContainsKey("draw") && a["draw"] is bool && !(bool)a["draw"])) {
           using (var pen = new Pen(Color.FromArgb(230, 255, 0, 90), 2f))
           using (var font = new Font("Segoe UI", 9f, FontStyle.Bold, GraphicsUnit.Pixel))
           using (var bg = new SolidBrush(Color.FromArgb(235, 255, 0, 90)))

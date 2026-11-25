@@ -1,7 +1,7 @@
 # VibeCoder AI — Project Rules (read this first)
 
 Last updated: 2026-11-25
-Current release: **0.3.26** (tag `v0.3.26`, published 2026-11-25) — the model picker lists
+Current release: **0.3.26** (tag `v0.3.26`, commit `9204481`, run `45611178814`, published 2026-11-25; all four assets by `github-actions[bot]`, `latest.yml` = 0.3.26) — the model picker lists
 the signed-in VibeCoder account right under Fallback (app and CLI); the owner, Jamil Hussain
 (JH Farhan), is named in the LICENSE and the installer's copyright.
 Previous: 0.3.25 (`56f7843`, run `45433400354`, complete and bot-uploaded).

@@ -715,9 +715,9 @@ Thin vertical slice first:
 ### 0.3.26 release checklist
 - [x] Owner approved the release (2026-11-25).
 - [x] `package.json` and both root entries of `package-lock.json` → **0.3.26**.
-- [ ] `npm test` green; commit, push `master`, tag `v0.3.26`, push the tag.
-- [ ] One release with `.exe`, `.exe.blockmap`, `latest.yml` and the CLI `.tgz`.
-- [ ] `releases/latest/download/latest.yml` shows `version: 0.3.26`.
-- [ ] Website "What's new".
+- [x] `npm test` green (405); commit `9204481`, push `master`, tag `v0.3.26`; run `45611178814` succeeded.
+- [x] One release with `.exe` (122181628), `.exe.blockmap` (129200), `latest.yml` (348) and `VibeCoder-CLI-0.3.26.tgz` (348229), all by `github-actions[bot]`.
+- [x] `releases/latest/download/latest.yml` shows `version: 0.3.26`.
+- [x] Website "What's new".
 
 ### Next release (0.3.27): same checklist, one patch up, never skip.

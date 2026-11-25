@@ -185,7 +185,11 @@ function renderModelList(filter = "") {
     if (!groups.has(m.providerID)) groups.set(m.providerID, [])
     groups.get(m.providerID).push(m)
   }
-  for (const [providerID, models] of groups) {
+  // Fallback model first, then the signed-in VibeCoder account's models, then
+  // every other provider in the order the backend gave them.
+  const groupRank = (id) => (id === "group" ? 0 : id === "vibecoder" ? 1 : 2)
+  const orderedGroups = [...groups].map((g, i) => [g, i]).sort((a, b) => groupRank(a[0][0]) - groupRank(b[0][0]) || a[1] - b[1]).map(([g]) => g)
+  for (const [providerID, models] of orderedGroups) {
     const g = document.createElement("div")
     g.className = "mr-group"
     // One provider heading; IDs stay on the model keys, not beside the name.

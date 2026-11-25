@@ -86,7 +86,9 @@ function writeNewFile(file, dir, content) {
   return full
 }
 function modelChoices(profiles) {
-  return profiles.filter((p) => !p.derivedFrom && !p.disabled).flatMap((p) => {
+  // The signed-in VibeCoder account's models come first (same order as the app).
+  const ordered = profiles.map((p, i) => [p, i]).sort((a, b) => (a[0].id === "vibecoder" ? 0 : 1) - (b[0].id === "vibecoder" ? 0 : 1) || a[1] - b[1]).map(([p]) => p)
+  return ordered.filter((p) => !p.derivedFrom && !p.disabled).flatMap((p) => {
     const models = p.models?.length ? p.models : [{ id: p.model }]
     return models.map((m) => ({
       id: p.models?.length ? `${p.id}/${m.id}` : p.id,

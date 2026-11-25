@@ -137,7 +137,7 @@ The test suite covers the core engine, adapters, agents, skills, harness, contro
 
 ## License
 
-Proprietary software, all rights reserved. See [LICENSE](LICENSE). VibeCoder AI is a desktop workspace, not a hosted AI provider; model usage and provider terms are handled by the provider you connect.
+Proprietary software, all rights reserved. Created and owned by **Jamil Hussain (JH Farhan)**, published as VibeCoder AI. The only official source is [github.com/jhfarhanyt20-coder](https://github.com/jhfarhanyt20-coder). See [LICENSE](LICENSE). VibeCoder AI is a desktop workspace, not a hosted AI provider; model usage and provider terms are handled by the provider you connect.
 
 ---
 

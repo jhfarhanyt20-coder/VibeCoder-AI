@@ -1,17 +1,11 @@
 # VibeCoder AI — Project Rules (read this first)
 
-Last updated: 2026-11-24
-Current release: **0.3.25** (tag `v0.3.25`, commit `56f7843`, run `45433400354`, published 2026-11-24) — Computer Use like a
-person at the desk (side panel, glow, clean screenshots, verify loop, own-panel clicks
-refused), one prompt per file for parallel calls, chat-scoped background shells, quiet
-notifications with VibeCoder's own chime, the Ember theme (default), one provider icon
-style, AMD + fixed Agnes AI presets, VibeCoderAI account panel with its models, rebuilt
-Shortcuts / Commands / Hooks pages. Measured: ~120-130 MB (Task Manager) and ~0.5% CPU
-while working.
-Release assets verified (all by `github-actions[bot]`): `VibeCoderAI-v2-0.3.25.exe` (122181108 bytes),
-`.exe.blockmap` (129408), `latest.yml` (348, `version: 0.3.25`), `VibeCoder-CLI-0.3.25.tgz` (347764).
-Release notes include the measured RAM/CPU table. Website updated (`10d7d87`).
-Previous: 0.3.24 (`9229f7e`, run `45167261565`, complete and bot-uploaded).
+Last updated: 2026-11-25
+Current release: **0.3.26** (tag `v0.3.26`, published 2026-11-25) — the model picker lists
+the signed-in VibeCoder account right under Fallback (app and CLI); the owner, Jamil Hussain
+(JH Farhan), is named in the LICENSE and the installer's copyright.
+Previous: 0.3.25 (`56f7843`, run `45433400354`, complete and bot-uploaded).
+Before that: 0.3.24 (`9229f7e`, run `45167261565`, complete and bot-uploaded).
 Previous: 0.3.23 (`a89caf9`, run `45154487271`, also complete and bot-uploaded).
 Resolved: the blockmap gap of 0.3.13 (differential updates work again since 0.3.14).
 

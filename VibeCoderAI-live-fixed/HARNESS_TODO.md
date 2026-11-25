@@ -702,4 +702,22 @@ Thin vertical slice first:
 - [x] `releases/latest/download/latest.yml` shows `version: 0.3.25`.
 - [x] Website "What's new" + performance comparison (site commit `10d7d87`).
 
-### Next release (0.3.26): same checklist, one patch up, never skip.
+## 18. Release 0.3.26 — 2026-11-25
+
+- Model picker (app `renderModelList`, CLI `modelChoices`): Fallback model first,
+  then the signed-in VibeCoder account's models, then every other provider.
+  Test: `test/picker-order-test.cjs`.
+- Owner named everywhere: LICENSE "Copyright (c) 2026 Jamil Hussain (JH Farhan),
+  trading as VibeCoder AI" with an "Owner and proof of authorship" section;
+  electron-builder `copyright` (shown in the installer's file properties).
+- No AI attribution in commits, release notes, docs or the website from now on.
+
+### 0.3.26 release checklist
+- [x] Owner approved the release (2026-11-25).
+- [x] `package.json` and both root entries of `package-lock.json` → **0.3.26**.
+- [ ] `npm test` green; commit, push `master`, tag `v0.3.26`, push the tag.
+- [ ] One release with `.exe`, `.exe.blockmap`, `latest.yml` and the CLI `.tgz`.
+- [ ] `releases/latest/download/latest.yml` shows `version: 0.3.26`.
+- [ ] Website "What's new".
+
+### Next release (0.3.27): same checklist, one patch up, never skip.

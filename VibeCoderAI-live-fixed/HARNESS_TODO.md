@@ -731,8 +731,9 @@ Thin vertical slice first:
 - [x] Owner approved the release (2026-11-27).
 - [x] `package.json` and both root entries of `package-lock.json` → **0.3.27**.
 - [x] `npm test` green (405 PASS).
-- [ ] Commit, push `master`, tag `v0.3.27`, push the tag.
-- [ ] One release with `BDCoderAI-0.3.27.exe`, `.exe.blockmap`, `latest.yml`, `BDCoder-CLI-0.3.27.tgz`.
-- [ ] `releases/latest/download/latest.yml` shows `version: 0.3.27`.
+- [x] Commit, push `master`, tag `v0.3.27`, push the tag (`660edc5`, run `45992858217`).
+- [x] One release with `BDCoderAI-0.3.27.exe` (122235130), `.exe.blockmap` (129563), `latest.yml` (338), `BDCoder-CLI-0.3.27.tgz` (348219), all by `github-actions[bot]`.
+- [x] `releases/latest/download/latest.yml` shows `version: 0.3.27`; the old repo name still serves it.
+- [x] Same day: BD Route 1.3.12, BD All-in-One Tools 2.5.6, BD Downloader 2.7.3, BD Downloader for Android 1.0.3; Google, Facebook and GitHub sign-in accept bdcoderai.onrender.com; the old site 301s pages there (`REDIRECT_TO`).
 
 ### Next release (0.3.28): same checklist, one patch up, never skip.

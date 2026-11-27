@@ -1,7 +1,7 @@
 # VibeCoder AI — Project Rules (read this first)
 
 Last updated: 2026-11-27
-Current release: **0.3.27** (tag `v0.3.27`, published 2026-11-27) — rebrand to **BDCoder AI**
+Current release: **0.3.27** (tag `v0.3.27`, commit `660edc5`, run `45992858217`, published 2026-11-27; all four assets by `github-actions[bot]`, `latest.yml` = 0.3.27) — rebrand to **BDCoder AI**
 (display names, icons, installer, CLI wordmark); repo renamed to `jhfarhanyt20-coder/BDCoder-AI`
 (old URLs redirect); website `https://bdcoderai.onrender.com`. Technical IDs are kept on purpose:
 appId `ai.vibecoder.app`, package `vibe-core`, data folder `%APPDATA%ibe-core` (now pinned in

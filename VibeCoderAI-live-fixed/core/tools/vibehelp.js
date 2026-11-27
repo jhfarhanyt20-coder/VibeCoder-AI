@@ -1,7 +1,7 @@
 "use strict"
 /**
  * vibecoder_help: the agent's own product guide (core/knowledge/vibecoder.md).
- * Any model can answer questions about VibeCoder itself — features, settings,
+ * Any model can answer questions about BDCoder itself — features, settings,
  * shortcuts, models, Computer Use, Connectors, CLI, updates, privacy — from the
  * real guide instead of guessing. Read-only; offered in the app and the CLI.
  */
@@ -75,7 +75,7 @@ function score(sec, words, raw) {
 const vibecoderHelp = {
   name: "vibecoder_help",
   description:
-    "The official VibeCoder AI product guide. Use it whenever the user asks about VibeCoder itself — what it is, who made it, website or GitHub, " +
+    "The official BDCoder AI product guide. Use it whenever the user asks about BDCoder itself — what it is, who made it, website or GitHub, " +
     "features, settings, keyboard shortcuts, models/providers/API keys, free models and limits, Fallback model, permissions, Rewind, Computer Use, " +
     "Browser Use, Connectors (GitHub), Marketplace/MCP/plugins/skills, memory, the CLI and its commands, updates, privacy/terms, usage/cost, or troubleshooting. " +
     "Give topic words (e.g. \"computer use\", \"openrouter base url\", \"shortcuts\"); leave it empty for the table of contents.",
@@ -88,7 +88,7 @@ const vibecoderHelp = {
   paths: () => [],
   async run(a = {}) {
     const all = sections()
-    const head = `VibeCoder AI${version() ? ` v${version()}` : ""} — product guide.`
+    const head = `BDCoder AI${version() ? ` v${version()}` : ""} — product guide.`
     const raw = String(a.topic || "").toLowerCase().trim()
     if (!raw) {
       return `${head} Topics: ${all.map((s) => s.title).join(" · ")}.\nCall vibecoder_help again with a topic to read it.\n\n## ${all[0].title}\n${all[0].body}`
@@ -100,7 +100,7 @@ const vibecoderHelp = {
     const words = query.split(/[^\p{L}\p{N}+.#@/$-]+/u).filter(Boolean)
     const ranked = all.map((s) => ({ s, n: score(s, words, query) })).filter((x) => x.n > 0).sort((x, y) => y.n - x.n).slice(0, 3)
     if (!ranked.length) {
-      return `${head} Nothing in the guide matches "${a.topic}". If the topic was not in English, call vibecoder_help again with English keywords (for example "computer use", "update", "provider"). Otherwise: Do not guess. Tell the user you are not sure, and point them to https://vibecoderai.onrender.com or GitHub issues. Topics in the guide: ${all.map((s) => s.title).join(" · ")}.`
+      return `${head} Nothing in the guide matches "${a.topic}". If the topic was not in English, call vibecoder_help again with English keywords (for example "computer use", "update", "provider"). Otherwise: Do not guess. Tell the user you are not sure, and point them to https://bdcoderai.onrender.com or GitHub issues. Topics in the guide: ${all.map((s) => s.title).join(" · ")}.`
     }
     return `${head}\n\n${ranked.map((x) => `## ${x.s.title}\n${x.s.body}`).join("\n\n")}\n\nAnswer from this text only; if it does not cover the question, say so.`
   },

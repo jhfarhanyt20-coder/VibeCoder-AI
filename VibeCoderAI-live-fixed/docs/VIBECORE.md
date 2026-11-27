@@ -1,6 +1,6 @@
 # VibeCore Harness
 
-VibeCore is VibeCoder AI's execution harness. It turns a model response into a
+VibeCore is BDCoder AI's execution harness. It turns a model response into a
 bounded run of visible steps, actions, permission decisions and recoverable file
 changes.
 
@@ -118,7 +118,7 @@ while allowing all five existing rows to show the values a provider returns.
 JSON, JavaScript and Python syntax checks continue to run automatically after
 file actions. The read-only `diagnostics` action adds targeted TypeScript
 syntax and semantic/type errors when that project already has TypeScript under
-its own `node_modules`. VibeCoder installs nothing. Loading project-installed
+its own `node_modules`. BDCoder installs nothing. Loading project-installed
 compiler code goes through Guardrails, runs in an isolated bounded worker, and
 falls back with a clear message when no provider is available.
 

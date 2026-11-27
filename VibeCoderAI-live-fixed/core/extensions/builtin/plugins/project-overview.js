@@ -1,5 +1,5 @@
 "use strict"
-// VibeCoder built-in plugin: a quick map of the open project (languages, how to
+// BDCoder built-in plugin: a quick map of the open project (languages, how to
 // run / test / build it, main config files, largest folders). Read-only.
 const fs = require("fs")
 const path = require("path")

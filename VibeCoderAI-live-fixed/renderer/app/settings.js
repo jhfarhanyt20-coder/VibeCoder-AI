@@ -24,8 +24,8 @@ async function loadModelLabel() {
 async function loadAuthInfo() {
   if (VIBECODER_ACCOUNT_COMING_SOON) {
     $("nav-avatar").textContent = "AI"
-    $("nav-user").textContent = "VibeCoderAI — coming soon"
-    $("nav-user").title = "Your own VibeCoderAI API host is coming soon"
+    $("nav-user").textContent = "BDCoder AI — coming soon"
+    $("nav-user").title = "Your own BDCoder AI API host is coming soon"
     return
   }
   try {
@@ -194,7 +194,7 @@ async function refreshTrustList() {
   if (!projects.length) {
     const empty = document.createElement("div")
     empty.className = "trust-empty"
-    empty.textContent = "No workspace is trusted yet. Approve one when VibeCoder asks about project extensions, plugins or MCP servers."
+    empty.textContent = "No workspace is trusted yet. Approve one when BDCoder asks about project extensions, plugins or MCP servers."
     list.appendChild(empty)
     return projects
   }

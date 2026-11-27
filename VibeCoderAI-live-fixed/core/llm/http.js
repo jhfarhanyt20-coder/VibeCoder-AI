@@ -8,7 +8,7 @@ const VIBE_VERSION = (() => {
 })()
 
 // Product identity carried by every provider request (chat, responses, anthropic
-// and the model list), so providers and gateways can recognise VibeCoder AI.
+// and the model list), so providers and gateways can recognise BDCoder AI.
 // A profile's own headers may still override these values.
 const PRODUCT_HEADERS = {
   "user-agent": `VibeCoderAI/${VIBE_VERSION}`,
@@ -33,8 +33,8 @@ function authHeaders(baseURL, apiKey) {
     else h.authorization = `Bearer ${apiKey}`
   }
   if (host === "openrouter.ai") {
-    h["http-referer"] = "https://vibecoderai.onrender.com"
-    h["x-title"] = "VibeCoder AI"
+    h["http-referer"] = "https://bdcoderai.onrender.com"
+    h["x-title"] = "BDCoder AI"
   }
   return h
 }
@@ -70,7 +70,7 @@ function freeLimitMessage(text, now = Date.now()) {
   const inText = hours ? `${hours}h ${minutes === 60 ? 0 : minutes}m` : `${minutes}m`
   let clock = ""
   try { clock = new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) } catch {}
-  return `Today's free VibeCoder requests are used up${limit ? ` (${limit} per day)` : ""}. They come back at ${clock ? clock + " your time" : "midnight UTC"} (00:00 UTC), in ${inText}. Until then, pick another model, or use the Fallback model so another provider answers.`
+  return `Today's free BDCoder requests are used up${limit ? ` (${limit} per day)` : ""}. They come back at ${clock ? clock + " your time" : "midnight UTC"} (00:00 UTC), in ${inText}. Until then, pick another model, or use the Fallback model so another provider answers.`
 }
 
 class ApiError extends Error {
@@ -82,7 +82,7 @@ class ApiError extends Error {
     // languages (tested: Bangla, Banglish and Hindi are blocked; English, French,
     // Chinese and mixed Bangla+English pass). Say so plainly.
     const agentRouter = /agent_router_api_error|agentrouter/i.test(text)
-    // VibeCoder's free models: say when the daily quota comes back, in local time.
+    // BDCoder's free models: say when the daily quota comes back, in local time.
     const freeLimit = status === 429 && /"code"\s*:\s*"daily_limit"|Daily free limit reached/i.test(text)
     super(freeLimit
       ? freeLimitMessage(text)
@@ -91,7 +91,7 @@ class ApiError extends Error {
         ? `AgentRouter's filter blocked this message (HTTP 400). AgentRouter refuses chats that start in some languages, such as Bangla, Banglish or Hindi, even harmless ones. Start the chat in English (once the model itself has replied in Bangla, Bangla and Banglish messages usually pass), mix in English, pick another model, or use the Fallback model so the next provider answers automatically. Provider said: ${text.slice(0, 200)}`
         : `The provider's content filter blocked this message (HTTP 400). Try another provider, add one to the Fallback model chain, or rephrase the message. Provider said: ${text.slice(0, 300)}`
       : restricted
-        ? `This provider rejected VibeCoder AI as an unauthorized client (HTTP ${status}). The credential is restricted to another approved application; ask the provider to authorize VibeCoder AI or use an unrestricted API credential. Provider said: ${text.slice(0, 300)}`
+        ? `This provider rejected BDCoder AI as an unauthorized client (HTTP ${status}). The credential is restricted to another approved application; ask the provider to authorize BDCoder AI or use an unrestricted API credential. Provider said: ${text.slice(0, 300)}`
         : `HTTP ${status}: ${text.slice(0, 500)}`)
     this.name = "ApiError"
     this.status = status
@@ -165,7 +165,7 @@ function redirectTarget(res, from) {
     const where = next ? next.origin : "an unknown location"
     throw new ApiError(
       res.status,
-      `The provider redirected the request (${res.status}) to ${where}. VibeCoder does not send API keys across redirects - set the provider base URL to the final API address.`,
+      `The provider redirected the request (${res.status}) to ${where}. BDCoder does not send API keys across redirects - set the provider base URL to the final API address.`,
     )
   }
   return next.toString()

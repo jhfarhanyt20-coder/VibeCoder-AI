@@ -1,4 +1,4 @@
-name: Release stable VibeCoder AI
+name: Release stable BDCoder AI
 
 # Trigger ONLY on version tags like v0.3.12. Ordinary commits never build or
 # publish a stable release (run the workflow on tag v* only).
@@ -73,7 +73,7 @@ jobs:
         shell: pwsh
         run: |
           $v = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          $files = @("release/VibeCoderAI-v2-$v.exe", "release/VibeCoderAI-v2-$v.exe.blockmap", "release/latest.yml", "release/VibeCoder-CLI-$v.tgz")
+          $files = @("release/BDCoderAI-$v.exe", "release/BDCoderAI-$v.exe.blockmap", "release/latest.yml", "release/BDCoder-CLI-$v.tgz")
           foreach ($f in $files) { if (-not (Test-Path $f)) { throw "Missing build output: $f" } }
           gh release view $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) { gh release upload $env:GITHUB_REF_NAME @files --clobber --repo $env:GITHUB_REPOSITORY }
@@ -89,7 +89,7 @@ jobs:
         run: |
           $v = (Get-Content package.json -Raw | ConvertFrom-Json).version
           $names = gh release view $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[].name'
-          foreach ($n in @("latest.yml", "VibeCoderAI-v2-$v.exe", "VibeCoderAI-v2-$v.exe.blockmap", "VibeCoder-CLI-$v.tgz")) {
+          foreach ($n in @("latest.yml", "BDCoderAI-$v.exe", "BDCoderAI-$v.exe.blockmap", "BDCoder-CLI-$v.tgz")) {
             if ($names -notcontains $n) { throw "The release is missing $n" }
           }
           "All four release assets are present."

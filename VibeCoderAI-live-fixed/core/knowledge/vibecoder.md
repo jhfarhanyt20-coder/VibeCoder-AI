@@ -1,16 +1,16 @@
-# VibeCoder AI — product guide
+# BDCoder AI — product guide
 
-This is the official guide the agent reads to answer questions about VibeCoder AI itself.
+This is the official guide the agent reads to answer questions about BDCoder AI itself.
 If something is not written here, say you are not sure instead of guessing, and point the
 user to the website or GitHub.
 
 ## Overview
 keywords: what is vibecoder, about, product, who made, company, website, github, download, platform, windows, version
-VibeCoder AI is a local-first AI coding workspace for Windows 10 and Windows 11 (64-bit). An agent
+BDCoder AI is a local-first AI coding workspace for Windows 10 and Windows 11 (64-bit). An agent
 plans, edits files, runs commands, tests the result and reports back — in a desktop app and in a
 terminal CLI that share the same engine.
-- Website: https://vibecoderai.onrender.com (downloads, Products, CLI guide, privacy, terms).
-- Source and releases: https://github.com/jhfarhanyt20-coder/VibeCoder-AI
+- Website: https://bdcoderai.onrender.com (downloads, Products, CLI guide, privacy, terms).
+- Source and releases: https://github.com/jhfarhanyt20-coder/BDCoder-AI
 - Bug reports and ideas: GitHub Issues of that repository.
 - The desktop installer is downloaded from the website after Google sign-in; it updates itself from
   GitHub Releases.
@@ -31,17 +31,17 @@ keywords: model, provider, api key, custom header, header, headers, proxy, reque
   "Advanced (optional) — extra headers & request body" → Request headers, one `Name: value` per line
   (for example `X-Tenant-ID: team-a`). CLI: `vibe profile` (the profile JSON has `headers`). Put the API
   key in the key field, not in a header. Custom headers override the defaults.
-- Headers VibeCoder sends by itself: `User-Agent: VibeCoderAI/<version>`; `Authorization: Bearer <key>`
+- Headers BDCoder sends by itself: `User-Agent: VibeCoderAI/<version>`; `Authorization: Bearer <key>`
   for OpenAI-compatible APIs; `api-key` for Azure OpenAI; `x-api-key` + `anthropic-version` for
   Anthropic; `HTTP-Referer` + `X-Title` for OpenRouter.
 - Switch model from the model button in the composer (models show Free and Vision tags). Vision models
   can see attached images and screenshots.
 - Reasoning effort (None / Low / Medium / High) is the gauge button next to the model.
 
-## Free VibeCoder models
+## Free BDCoder models
 keywords: free, sign in with vibecoder, vibecoder account, daily limit, quota, free models, training
-- Click "Sign in with VibeCoder" in the sidebar account menu (the browser opens; press Allow). A
-  provider called "VibeCoder AI" then appears with free models.
+- Click "Sign in with BDCoder" in the sidebar account menu (the browser opens; press Allow). A
+  provider called "BDCoder AI" then appears with free models.
 - The daily request limit resets at 00:00 UTC (6:00 AM in Bangladesh); the account line and the
   limit message show the reset time in the user's own clock time.
 - Free models have a daily request limit, may change or disappear at any time, and are powered by
@@ -74,7 +74,7 @@ keywords: computer use, screen, mouse, keyboard, click, screenshot, test app, de
 - The agent can see the screen and use the mouse and keyboard to open and test what it built, like a person.
 - Turn it on/off in Settings → Computer Use (on by default) or `vibe computer on|off`.
 - Press **Ctrl+Alt+Esc** at any time to stop it. It also pauses the moment you move the mouse or type.
-- A badge "VibeCoder is using your computer" is shown while it works (hidden from its own screenshots).
+- A badge "BDCoder is using your computer" is shown while it works (hidden from its own screenshots).
 - Risky actions (send, delete, install, pay, confirm, sign out, format, …) always ask first. It never
   types passwords, one-time codes or card numbers and never solves CAPTCHAs.
 - A log of actions is kept in `~/.vibe/computer-actions.log`. Windows only.
@@ -161,15 +161,15 @@ keywords: update, upgrade, new version, auto update, install update, release
 ## Privacy and data
 keywords: privacy, data, policy, terms, telemetry, tracking, where is my data, delete data, security, keys stored
 - Projects, chats, keys and settings stay on the user's PC (`~/.vibe`). Prompts go only to the model
-  provider the user selected (or, for free models, through VibeCoder's server to its AI providers).
+  provider the user selected (or, for free models, through BDCoder's server to its AI providers).
 - The website uses an encrypted session cookie for Google sign-in and stores no model API keys.
 - Connector tokens are kept encrypted on the user's PC; the website only swaps the one-time sign-in code.
-- Full texts: https://vibecoderai.onrender.com/privacy and /terms.
+- Full texts: https://bdcoderai.onrender.com/privacy and /terms.
 
 ## Usage and cost
 keywords: usage, tokens, cost, price, context, ring, percent, billing, money
 - The ring in the composer shows how full the context window is. Settings → Usage (and `vibe usage`)
-  shows tokens, cache and estimated cost. Costs are charged by your provider, not by VibeCoder.
+  shows tokens, cache and estimated cost. Costs are charged by your provider, not by BDCoder.
 
 ## Troubleshooting
 keywords: error, not working, problem, fix, help, 401, 403, 404, 429, rate limit, empty reply, slow, crash, log
@@ -181,7 +181,7 @@ keywords: error, not working, problem, fix, help, 401, 403, 404, 429, rate limit
   languages pass). Its filter looks at the whole chat: start in English and ask the model to reply in
   Bangla — after the model has written Bangla once, Bangla and Banglish messages usually pass. Or use
   another model, or pick the Fallback model — it moves to the next provider automatically on a
-  content-filter block. VibeCoder free models and Kilo accept Bangla from the first message.
+  content-filter block. BDCoder free models and Kilo accept Bangla from the first message.
 - Empty replies: raise "Max output tokens" or lower reasoning effort for that model.
 - `vibe doctor` checks paths, keys and the host. App errors are logged to `~/.vibe/app-error.log`.
 - Still stuck: open an issue on GitHub with the steps and the error text (never paste API keys).

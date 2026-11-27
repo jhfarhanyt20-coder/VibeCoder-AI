@@ -65,9 +65,9 @@ assert.strictEqual(trays.length, 1, "tray icon created")
 const win = windows[0]
 win.show()
 const tray = trays[0]
-assert.strictEqual(tray.tip, "VibeCoder AI")
+assert.strictEqual(tray.tip, "BDCoder AI")
 const labels = tray.menu.items.map((i) => i.label).filter(Boolean)
-assert.deepStrictEqual(labels, ["Open VibeCoder AI", "Quit VibeCoder AI"], "tray menu: open + quit")
+assert.deepStrictEqual(labels, ["Open BDCoder AI", "Quit BDCoder AI"], "tray menu: open + quit")
 
 // 1) close button hides instead of quitting
 win.close()
@@ -80,7 +80,7 @@ assert.ok(tray.balloon && /tray/i.test(tray.balloon.content), "one-time hint say
 tray.emit("click")
 assert.strictEqual(win.isVisible(), true, "tray click shows the window")
 win.close()
-tray.menu.items.find((i) => i.label === "Open VibeCoder AI").click()
+tray.menu.items.find((i) => i.label === "Open BDCoder AI").click()
 assert.strictEqual(win.isVisible(), true, "Open item shows the window")
 
 // 3) second launch brings the hidden window back
@@ -89,7 +89,7 @@ appEvents.emit("second-instance")
 assert.strictEqual(win.isVisible(), true, "second launch shows the hidden window")
 
 // 4) Quit from the tray really closes
-tray.menu.items.find((i) => i.label === "Quit VibeCoder AI").click()
+tray.menu.items.find((i) => i.label === "Quit BDCoder AI").click()
 assert.strictEqual(quitCalls, 1, "app.quit called")
 win.close()
 assert.strictEqual(windows.length, 0, "window closes for real after Quit")

@@ -162,7 +162,7 @@ function renderModelList(filter = "") {
       `${m.providerID}/${m.id}`.toLowerCase().includes(q) ||
       // the display name of a custom provider is searchable too
       (custom.get(m.providerID)?.name || "").toLowerCase().includes(q) ||
-      // and a model's own name (VibeCoder models: "NVIDIA Nemotron 3 Ultra")
+      // and a model's own name (BDCoder models: "NVIDIA Nemotron 3 Ultra")
       String(m.name || "").toLowerCase().includes(q)
     )
   })
@@ -185,7 +185,7 @@ function renderModelList(filter = "") {
     if (!groups.has(m.providerID)) groups.set(m.providerID, [])
     groups.get(m.providerID).push(m)
   }
-  // Fallback model first, then the signed-in VibeCoder account's models, then
+  // Fallback model first, then the signed-in BDCoder account's models, then
   // every other provider in the order the backend gave them.
   const groupRank = (id) => (id === "group" ? 0 : id === "vibecoder" ? 1 : 2)
   const orderedGroups = [...groups].map((g, i) => [g, i]).sort((a, b) => groupRank(a[0][0]) - groupRank(b[0][0]) || a[1] - b[1]).map(([g]) => g)
@@ -202,7 +202,7 @@ function renderModelList(filter = "") {
       const key = `${m.providerID}/${m.id}`
       b.dataset.model = key
       if (state.selectedModel === key) b.classList.add("selected")
-      // VibeCoder account models have opaque ids (vibecoder/free-3): show their real name.
+      // BDCoder account models have opaque ids (vibecoder/free-3): show their real name.
       b.textContent = m.id === "fallback" && m.isGroup ? (m.name || "Fallback model") : (m.providerID === "vibecoder" && m.name ? m.name : m.id)
       // One clean line: the name, then small tags pushed to the right.
       const tagsEl = document.createElement("span")
@@ -952,7 +952,7 @@ function renderProviderList() {
   box.textContent = ""
   // A provider created from a popular preset belongs to the Popular list, not
   // to Custom providers. Only genuinely new/custom providers appear here.
-  // The VibeCoder account's own profile lives in the VibeCoderAI panel above.
+  // The BDCoder account's own profile lives in the BDCoder AI panel above.
   const rows = providerState.list.filter((p) => !providerPresetOf(p) && p.id !== "vibecoder")
   if (empty) empty.hidden = rows.length > 0
   for (const p of rows) {
@@ -1105,7 +1105,7 @@ function selectProviderPreset(preset) {
   // Writing a draft on every preset click just added IPC noise to the switch.
 }
 
-/** Show the custom/preset provider form and nothing else (the VibeCoderAI
+/** Show the custom/preset provider form and nothing else (the BDCoder AI
  *  account panel belongs to its own list item only). */
 function showProviderFormPanel() {
   state.selectedProvider = null
@@ -1126,7 +1126,7 @@ function selectProvider(id) {
   renderProviderDetail()
   $("model-detail").scrollTop = 0
   void restoreProviderDraft(providerState.draft)
-  // the VibeCoderAI account block is not shown while a custom provider is open
+  // the BDCoder AI account block is not shown while a custom provider is open
   showProviderFormPanel()
 }
 

@@ -82,7 +82,7 @@ async function* stream({ profile, apiKey, system, messages, tools, signal, toolC
   if (marked) addCacheMarks(body)
   let droppedMarks = false
 
-  // Identity first: every request says it comes from VibeCoder AI. Some
+  // Identity first: every request says it comes from BDCoder AI. Some
   // Anthropic-format gateways (new-api based routers etc.) whitelist known
   // Claude clients and answer 401 "unauthorized client detected" to anything
   // else. Only in that case do we retry once with the compatible client string,

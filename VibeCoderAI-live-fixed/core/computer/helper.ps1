@@ -1,4 +1,4 @@
-# VibeCoder Computer Use helper (Windows).
+# BDCoder Computer Use helper (Windows).
 # Long-running: reads one JSON request per line on stdin and writes one JSON
 # reply per line on stdout. Uses only what ships with Windows (PowerShell 5.1,
 # .NET Framework, Win32, UI Automation). Started by core/computer/index.js.
@@ -74,7 +74,7 @@ public static class VcComputer {
       Size = new Size(470, 34); Location = new Point(wa.X + (wa.Width - 470) / 2, wa.Y + 6);
       var label = new System.Windows.Forms.Label {
         Dock = System.Windows.Forms.DockStyle.Fill, ForeColor = Color.FromArgb(243, 244, 248), Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
-        TextAlign = ContentAlignment.MiddleCenter, Text = "●  VibeCoder is using your computer  ·  Press Ctrl+Alt+Esc to stop"
+        TextAlign = ContentAlignment.MiddleCenter, Text = "●  BDCoder is using your computer  ·  Press Ctrl+Alt+Esc to stop"
       };
       label.Paint += (s, e) => { using (var b = new SolidBrush(Color.FromArgb(255, 79, 123))) e.Graphics.FillEllipse(b, 10, 12, 10, 10); };
       Controls.Add(label);

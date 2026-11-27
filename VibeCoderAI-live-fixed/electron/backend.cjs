@@ -58,7 +58,7 @@ let providerWatcherStarted = false
 let currentDirectory = process.cwd()
 let activeSessionId = null
 let selectedModel = null
-let activeAgent = "VibeCoder AI"
+let activeAgent = "BDCoder AI"
 let subagentsEnabled = true
 const pickedAttachmentPaths = new Set()
 const runState = new Map()
@@ -308,7 +308,7 @@ function modelRows(profileList = engine.listProfiles()) {
         image: !!(m.image || p.image),
         hasKey,
         isBuiltin,
-        // VibeCoder account models carry a Free flag and capability tags.
+        // BDCoder account models carry a Free flag and capability tags.
         ...(m.free ? { free: true } : {}),
         ...(Array.isArray(m.tags) && m.tags.length ? { tags: m.tags.map(String).slice(0, 8) } : {}),
       }
@@ -670,10 +670,10 @@ function deleteCustomProfile(id) {
   return { removed: true }
 }
 
-// "Sign in with VibeCoder": device-code sign-in, an encrypted app token and the
-// free models kept as the "VibeCoder AI" provider profile. See vibecoder-account.cjs.
+// "Sign in with BDCoder": device-code sign-in, an encrypted app token and the
+// free models kept as the "BDCoder AI" provider profile. See vibecoder-account.cjs.
 const vibecoderAccount = createVibecoderAccount({
-  deviceName: `VibeCoder on ${os.hostname()}`.slice(0, 60),
+  deviceName: `BDCoder on ${os.hostname()}`.slice(0, 60),
   openExternal: (url) => shell.openExternal(url),
   emit: (type, data) => emitUI(type, null, data),
   keys: {
@@ -715,7 +715,7 @@ html,body{margin:0;height:100%;background:transparent;overflow:hidden;font:600 1
 .dot{width:9px;height:9px;border-radius:50%;background:#ff4f7b;box-shadow:0 0 0 0 rgba(255,79,123,.7);animation:p 1.4s infinite}
 @keyframes p{70%{box-shadow:0 0 0 8px rgba(255,79,123,0)}100%{box-shadow:0 0 0 0 rgba(255,79,123,0)}}
 kbd{font:600 12px "Segoe UI",sans-serif;background:rgba(255,255,255,.14);padding:2px 6px;border-radius:5px}
-</style></head><body><div class="edge"></div><div class="wrap"><div class="pill"><span class="dot"></span><span>VibeCoder is using your computer</span><span>·</span><span>Press <kbd>Ctrl+Alt+Esc</kbd> to stop</span></div></div></body></html>`
+</style></head><body><div class="edge"></div><div class="wrap"><div class="pill"><span class="dot"></span><span>BDCoder is using your computer</span><span>·</span><span>Press <kbd>Ctrl+Alt+Esc</kbd> to stop</span></div></div></body></html>`
 
 function showComputerBadge() {
   try {
@@ -1277,9 +1277,9 @@ const handlers = {
     return result.filePaths || []
   },
   readAttachment: async (a = {}) => readAttachmentData(typeof a === "string" ? a : a.path),
-  ensureAgent: async () => ({ agents: [{ id: "vibecoderai", name: "VibeCoder AI", enabled: !disabledAgents.has("vibecoderai") }], active: activeAgent }),
-  switchAgent: async (a = {}) => { const name = String(a.name || a.id || "VibeCoder AI"); if (!name.trim()) throw new Error("Agent name is required"); activeAgent = name; engine.agentName = name; persistUIState(); return { active: name } },
-  listAgents: async () => ({ agents: [{ id: "vibecoderai", name: "VibeCoder AI", enabled: !disabledAgents.has("vibecoderai") }] }),
+  ensureAgent: async () => ({ agents: [{ id: "vibecoderai", name: "BDCoder AI", enabled: !disabledAgents.has("vibecoderai") }], active: activeAgent }),
+  switchAgent: async (a = {}) => { const name = String(a.name || a.id || "BDCoder AI"); if (!name.trim()) throw new Error("Agent name is required"); activeAgent = name; engine.agentName = name; persistUIState(); return { active: name } },
+  listAgents: async () => ({ agents: [{ id: "vibecoderai", name: "BDCoder AI", enabled: !disabledAgents.has("vibecoderai") }] }),
   setAgentDisabled: async (a = {}) => { const id = String(a.id || "vibecoderai"); if (a.disabled) disabledAgents.add(id); else disabledAgents.delete(id); return { id, disabled: disabledAgents.has(id) } },
   mcpList: async (a = {}) => mcp.listServers(a.directory || currentDirectory),
   mcpAdd: async (a = {}) => mcp.addServer({ ...a, directory: a.directory || currentDirectory }),
@@ -1334,7 +1334,7 @@ const handlers = {
     const c = (engine.connectors || {})[String(a.id || "")]
     if (!c) throw new Error("Unknown connector")
     const st = await c.connect()
-    // GitHub's own page (code sign-in) or the VibeCoder website (one-click sign-in).
+    // GitHub's own page (code sign-in) or the BDCoder website (one-click sign-in).
     if (st.pending && /^https:\/\/(github\.com|vibecoderai\.onrender\.com)\//.test(st.pending.verificationUri)) { try { await shell.openExternal(st.pending.verificationUri) } catch {} }
     return st
   },
@@ -1412,10 +1412,10 @@ const handlers = {
   notify: async (a = {}) => {
     if (!Notification?.isSupported?.()) return { notified: false }
     // silent: Windows plays no system sound; the app plays its own soft chime.
-    // Clicking the toast brings VibeCoder forward on the chat that asked.
+    // Clicking the toast brings BDCoder forward on the chat that asked.
     // timeoutType "default": the toast shows for a few seconds and slides away by
     // itself into the notification centre, so it never sits over the user's work.
-    const n = new Notification({ title: String(a.title || "VibeCoder AI"), body: String(a.body || a.message || "").slice(0, 240), silent: a.silent !== false, timeoutType: "default" })
+    const n = new Notification({ title: String(a.title || "BDCoder AI"), body: String(a.body || a.message || "").slice(0, 240), silent: a.silent !== false, timeoutType: "default" })
     const sid = a.sessionID ? String(a.sessionID) : null
     n.on("click", () => {
       try { if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.show(); win.focus() } } catch {}
@@ -1432,7 +1432,7 @@ const handlers = {
   openExternal: async (a = {}) => { const url = String(a.url || a.href || ""); if (!/^https?:\/\//i.test(url)) throw new Error("Only HTTP(S) URLs can be opened externally"); await shell.openExternal(url); return { opened: true } },
   restartEvents: async () => { emitUI("host.event_stream", null, { status: "connected", attempt: 1 }); return { restarted: true } },
   logError: async (a = {}) => { const file = path.join(home, "app-error.log"); fs.appendFileSync(file, `[${new Date().toISOString()}] renderer: ${String(a.message || a.error || "unknown error").slice(0, 8000)}\n`); return { logged: true } },
-  openErrorLog: async () => { const file = path.join(home, "app-error.log"); if (!fs.existsSync(file)) fs.writeFileSync(file, "VibeCoder AI error log\n"); const e = await shell.openPath(file); if (e) throw new Error(e); return { path: file } },
+  openErrorLog: async () => { const file = path.join(home, "app-error.log"); if (!fs.existsSync(file)) fs.writeFileSync(file, "BDCoder AI error log\n"); const e = await shell.openPath(file); if (e) throw new Error(e); return { path: file } },
   browserCreateTab: async (a = {}) => normalizeResult(await engine.browserCreateTab(a)),
   browserCloseTab: async (a = {}) => normalizeResult(await engine.browserCloseTab(a)),
   browserListTabs: async () => normalizeResult(await engine.browserListTabs()),
@@ -1529,7 +1529,7 @@ function initBackend(targetWin, { port = Number(process.env.VIBE_SERVE_PORT || 4
   if (!computerKillRegistered && process.platform === "win32") {
     try { computerKillRegistered = globalShortcut.register("Control+Alt+Escape", computerKillSwitch) } catch {}
   }
-  // Refresh the VibeCoder free models now and every 30 minutes while signed in.
+  // Refresh the BDCoder free models now and every 30 minutes while signed in.
   if (!vibecoderSyncOff) vibecoderSyncOff = vibecoderAccount.startAutoSync()
   if (!eventOff) eventOff = engine.on(onEngineEvent)
   if (serve && !server) {

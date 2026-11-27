@@ -7,7 +7,7 @@ const settings = require("./settings")
 const { publicData } = require("../core/control")
 
 const COMMANDS = ["help", "chat", "run", "resume", "serve", "attach", "trust", "models", "provider", "fallback", "profile", "auth", "sessions", "session", "compact", "undo", "redo", "steps", "diff", "usage", "skills", "playbooks", "agents", "recipes", "mcp", "plugins", "extensions", "tools", "doctor", "memory", "config", "access", "computer", "connectors", "permissions", "locks", "forms", "crew", "shells", "shell", "trail", "todos", "browser", "marketplace", "registry", "theme", "init", "completion"]
-const HELP = `vibe - VibeCoder coding agent CLI
+const HELP = `vibe - BDCoder coding agent CLI
 
   vibe / vibe chat             interactive agent, pickers and multiline composer
   vibe run "<prompt>"          run a task; stream tools, Crew and shell results
@@ -86,7 +86,7 @@ function writeNewFile(file, dir, content) {
   return full
 }
 function modelChoices(profiles) {
-  // The signed-in VibeCoder account's models come first (same order as the app).
+  // The signed-in BDCoder account's models come first (same order as the app).
   const ordered = profiles.map((p, i) => [p, i]).sort((a, b) => (a[0].id === "vibecoder" ? 0 : 1) - (b[0].id === "vibecoder" ? 0 : 1) || a[1] - b[1]).map(([p]) => p)
   return ordered.filter((p) => !p.derivedFrom && !p.disabled).flatMap((p) => {
     const models = p.models?.length ? p.models : [{ id: p.model }]
@@ -492,7 +492,7 @@ async function runCommand(ctx, argv) {
 
     ${st.pending.userCode}
 `)
-      else log(`A browser tab opens for ${label}. Sign in there and allow VibeCoder.
+      else log(`A browser tab opens for ${label}. Sign in there and allow BDCoder.
 If it did not open: ${st.pending.verificationUri}
 `)
       try { if (process.platform === "win32") require("node:child_process").spawn("explorer.exe", [st.pending.verificationUri], { detached: true, stdio: "ignore" }).unref() } catch {}
@@ -685,7 +685,7 @@ If it did not open: ${st.pending.verificationUri}
       ])
       const data = { node: process.version, platform: `${process.platform} ${process.arch}`, dir, home: info.home, mode: vibe.mode, browser: info.browser, profiles: { total: profiles.length, ready: ready.length, readyIDs: ready.map((p) => p.id) }, skills: playbooks.length, agents: personas.length, mcpServers: mcpRows.length, plugins: extensions.length, sessions: sessions.length }
       show(data, (r) => {
-        log(c.bold("VibeCoder CLI doctor"))
+        log(c.bold("BDCoder CLI doctor"))
         for (const [key, value] of Object.entries({ node: `${r.node} (${r.platform})`, folder: dir, home: r.home, mode: r.mode, browser: r.browser ? "desktop host connected" : "use vibe attach for browser control", models: `${r.profiles.ready}/${r.profiles.total} ready`, skills: r.skills, agents: r.agents, mcp: r.mcpServers, extensions: r.plugins, sessions: r.sessions })) log(`  ${key.padEnd(12)} ${value}`)
         if (!ready.length) log(c.yellow("\nNo API keys configured. Run vibe models, then vibe auth add <profile>."))
       })
@@ -727,7 +727,7 @@ function formatHelp(text = HELP, { color = false } = {}) {
     if (lastWasCommand && /^\s{6,}\S/.test(raw)) { out.push(" ".repeat(COL + 1) + raw.trim()); continue }
     lastWasCommand = false
     if (/^(Options|Examples)$/.test(raw.trim())) { out.push(paint(c.bold, raw.trim())); continue }
-    if (/^vibe - VibeCoder coding agent CLI/.test(raw)) { out.push(paint(c.bold, raw)); continue }
+    if (/^vibe - BDCoder coding agent CLI/.test(raw)) { out.push(paint(c.bold, raw)); continue }
     out.push(raw)
   }
   return out.join("\n")

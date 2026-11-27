@@ -449,7 +449,7 @@ async function loadUsage() {
     console.log("[Usage] Response:", JSON.stringify(res).substring(0, 500))
     
     if (!res || res.ok === false) {
-      console.error("[VibeCoder] Could not load usage:", res?.error || "Unknown error")
+      console.error("[BDCoder] Could not load usage:", res?.error || "Unknown error")
       const overview = $("usage-overview")
       if (overview) {
         overview.hidden = false
@@ -707,7 +707,7 @@ function closeDialog(result) {
 }
 
 function showDialog({
-  title = "VibeCoder AI",
+  title = "BDCoder AI",
   message = "",
   okText = "OK",
   cancelText = "Cancel",
@@ -733,7 +733,7 @@ function showDialog({
 
 /* A themed text field (the native prompt() does not exist in Electron). */
 function showPrompt({
-  title = "VibeCoder AI",
+  title = "BDCoder AI",
   message = "",
   defaultValue = "",
   okText = "OK",
@@ -774,11 +774,11 @@ function focusDialogInput() {
   } catch {}
 }
 
-async function showAlert(message, title = "VibeCoder AI") {
+async function showAlert(message, title = "BDCoder AI") {
   return showDialog({ title, message, okText: "OK", cancelText: null })
 }
 
-async function showConfirm(message, title = "VibeCoder AI", okText = "OK") {
+async function showConfirm(message, title = "BDCoder AI", okText = "OK") {
   return showDialog({ title, message, okText, cancelText: "Cancel" })
 }
 
@@ -821,7 +821,7 @@ window.alert = (message) => {
 // safety net: if a native confirm() is ever used, it shows the themed dialog
 // and does nothing until the code is converted (never a white popup).
 window.confirm = (message) => {
-  showDialog({ title: "VibeCoder AI", message: String(message ?? ""), okText: "OK", cancelText: "Cancel" })
+  showDialog({ title: "BDCoder AI", message: String(message ?? ""), okText: "OK", cancelText: "Cancel" })
   return false
 }
 

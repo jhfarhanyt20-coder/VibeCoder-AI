@@ -1,4 +1,4 @@
-# VibeCoder CLI — parity, implementation and resume memory
+# BDCoder CLI — parity, implementation and resume memory
 
 > **Historical review record.** This document captures the CLI work as it was
 > reviewed around v0.3.10–0.3.11. The current shipped version and test counts
@@ -78,7 +78,7 @@ Build a dependency-free, npm-compatible release archive:
 
 ```powershell
 npm run pack:cli
-npm install -g ./release/VibeCoder-CLI-<version>.tgz
+npm install -g ./release/BDCoder-CLI-<version>.tgz
 vibe
 ```
 

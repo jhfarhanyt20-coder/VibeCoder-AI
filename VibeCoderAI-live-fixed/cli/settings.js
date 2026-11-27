@@ -53,7 +53,7 @@ function rememberPrompt(text, home) {
   const clean = redactText(safeText(raw)).slice(0, 12000)
   const file = historyFile(home)
   let rows = readJson(file, [])
-  if (!Array.isArray(rows) || rows.some((s) => typeof s !== "string")) throw new Error("History was left unchanged: it is not a VibeCoder history array.")
+  if (!Array.isArray(rows) || rows.some((s) => typeof s !== "string")) throw new Error("History was left unchanged: it is not a BDCoder history array.")
   if (rows[rows.length - 1] === clean) return
   rows.push(clean)
   rows = rows.slice(-200)

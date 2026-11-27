@@ -1,6 +1,6 @@
 "use strict"
 // Model settings: the right side shows ONLY the provider picked on the left.
-// Picking a preset (OpenAI, Anthropic…) used to leave the VibeCoderAI account
+// Picking a preset (OpenAI, Anthropic…) used to leave the BDCoder AI account
 // panel visible above the form, with both items highlighted.
 const assert = require("node:assert/strict")
 const fs = require("node:fs")
@@ -22,9 +22,9 @@ const context = vm.createContext({
 })
 vm.runInContext(source.slice(start, end), context)
 vm.runInContext("showProviderFormPanel()", context)
-assert.equal(els["md-opencode"].hidden, true, "the VibeCoderAI panel is hidden")
+assert.equal(els["md-opencode"].hidden, true, "the BDCoder AI panel is hidden")
 assert.equal(els["md-custom"].hidden, false, "the provider form is shown")
-assert.equal(context.state.selectedProvider, null, "VibeCoderAI is no longer the selected item")
+assert.equal(context.state.selectedProvider, null, "BDCoder AI is no longer the selected item")
 assert.deepEqual([...vcItem.classList.removed], ["selected"], "its highlight is removed")
 assert.equal(empty.attrs.hidden, "")
 

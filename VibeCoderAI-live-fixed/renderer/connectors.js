@@ -83,7 +83,7 @@
 
   const CARDS = {
     github: { name: "GitHub", idle: "Repositories, issues, pull requests and code", allow: "press Authorize", deviceUrl: "https://github.com/login/device" },
-    facebook: { name: "Facebook", idle: "Pages, posts, Messenger, Business and ads", allow: "allow VibeCoder", deviceUrl: "https://www.facebook.com" },
+    facebook: { name: "Facebook", idle: "Pages, posts, Messenger, Business and ads", allow: "allow BDCoder", deviceUrl: "https://www.facebook.com" },
   }
   function renderCard(id, st) {
     const meta = CARDS[id]

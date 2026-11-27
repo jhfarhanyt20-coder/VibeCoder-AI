@@ -1,4 +1,4 @@
-# Agent rules — VibeCoder AI
+# Agent rules — BDCoder AI
 
 The authoritative project rules live in [`VIBE.md`](./VIBE.md) at the repository
 root. Read it first, then `VibeCoderAI-live-fixed/HARNESS_TODO.md`.

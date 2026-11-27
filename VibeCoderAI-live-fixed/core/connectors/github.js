@@ -12,14 +12,14 @@
 const crypto = require("node:crypto")
 const store = require("./store")
 
-// The VibeCoder website does one-click sign-in (it holds the GitHub client secret).
+// The BDCoder website does one-click sign-in (it holds the GitHub client secret).
 const ACCOUNT_URL = (() => {
-  const raw = String(process.env.VIBECODER_ACCOUNT_URL || "https://vibecoderai.onrender.com").replace(/\/+$/, "")
-  try { const u = new URL(raw); return u.protocol === "https:" || ["localhost", "127.0.0.1"].includes(u.hostname) ? u.origin : "https://vibecoderai.onrender.com" } catch { return "https://vibecoderai.onrender.com" }
+  const raw = String(process.env.VIBECODER_ACCOUNT_URL || "https://bdcoderai.onrender.com").replace(/\/+$/, "")
+  try { const u = new URL(raw); return u.protocol === "https:" || ["localhost", "127.0.0.1"].includes(u.hostname) ? u.origin : "https://bdcoderai.onrender.com" } catch { return "https://bdcoderai.onrender.com" }
 })()
 const b64url = (buf) => Buffer.from(buf).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "")
 
-// Public OAuth App id of "VibeCoder AI" (not a secret; can be overridden).
+// Public OAuth App id of "BDCoder AI" (not a secret; can be overridden).
 const CLIENT_ID = process.env.VIBECODER_GITHUB_CLIENT_ID || "Ov23lirzzUNFz9HSGE3z"
 const SCOPES = "repo read:org read:user user:email workflow gist"
 const API = "https://api.github.com"
@@ -97,7 +97,7 @@ function createGitHub({ home, fetch: fetcher = globalThis.fetch, now = Date.now,
     const r = await post("https://github.com/login/device/code", { client_id: CLIENT_ID, scope: SCOPES })
     if (!r.ok || !r.data.device_code) {
       lastError = r.data.error_description || r.data.error || `GitHub did not start sign-in (HTTP ${r.status}).`
-      if (/device flow/i.test(lastError) || r.data.error === "device_flow_disabled") lastError = "Device Flow is turned off for the VibeCoder GitHub app. Turn on \"Enable Device Flow\" in its GitHub settings."
+      if (/device flow/i.test(lastError) || r.data.error === "device_flow_disabled") lastError = "Device Flow is turned off for the BDCoder GitHub app. Turn on \"Enable Device Flow\" in its GitHub settings."
       onChange(status())
       throw new Error(lastError)
     }

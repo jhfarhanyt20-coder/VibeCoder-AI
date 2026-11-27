@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 echo.
-echo === VibeCoder AI: install, test, and build Windows installer ===
+echo === BDCoder AI: install, test, and build Windows installer ===
 echo.
 call npm ci
 if errorlevel 1 goto :failed

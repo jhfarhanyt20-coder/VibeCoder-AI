@@ -1,6 +1,6 @@
 "use strict"
 /**
- * VibeCoder AI - desktop auto-updater (stable channel).
+ * BDCoder AI - desktop auto-updater (stable channel).
  *
  * This is the SINGLE module that owns electron-updater. It is deliberately kept
  * separate from the OpenCode CLI update screen and from the dev-only "Upgrade &

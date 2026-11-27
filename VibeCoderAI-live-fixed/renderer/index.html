@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" />
-  <title>VibeCoder AI</title>
+  <title>BDCoder AI</title>
   <script src="theme.js"></script>
   <link rel="stylesheet" href="vendor/codemirror/codemirror.css" />
   <link rel="stylesheet" href="vendor/codemirror/addon-dialog.css" />
@@ -19,7 +19,7 @@
       <button class="title-btn" id="btn-titlebar-sidebar" type="button" aria-label="Hide sidebar" aria-controls="app-sidebar" data-tip="Hide sidebar">
         <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M6.4 2.5v11"/></svg>
       </button>
-      <span class="title-brand"><span class="title-logo" aria-hidden="true">V</span>VibeCoder</span>
+      <span class="title-brand"><span class="title-logo" aria-hidden="true">B</span>BDCoder</span>
     </div>
     <div class="win-controls">
       <button class="title-btn title-files" id="btn-code-files" type="button" title="Project files and code editor" aria-label="Project files and code editor" aria-controls="code-panel">
@@ -39,11 +39,11 @@
       <div class="side-top">
         <div class="brand">
           <button class="brand-mark" id="btn-sidebar-toggle" type="button" title="Hide sidebar" aria-label="Hide sidebar" aria-controls="app-sidebar" aria-expanded="true" data-tip="Hide sidebar">
-            <span class="brand-v">V</span>
+            <span class="brand-v">B</span>
             <span class="brand-panel" aria-hidden="true"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M6.4 2.5v11"/></svg></span>
           </button>
           <div class="brand-copy">
-            <strong>VibeCoder</strong>
+            <strong>BDCoder</strong>
             <span>Workspace</span>
           </div>
         </div>
@@ -91,9 +91,9 @@
             <span id="connect-label">Connect</span>
           </button>
           <div class="drop-menu connect-menu" id="connect-menu" hidden>
-            <div class="drop-title">VibeCoderAI account</div>
-            <div class="conn-state" id="conn-state">Sign in with VibeCoder to use free models</div>
-            <button class="drop-item" id="conn-connect">Sign in with VibeCoder</button>
+            <div class="drop-title">BDCoder AI account</div>
+            <div class="conn-state" id="conn-state">Sign in with BDCoder to use free models</div>
+            <button class="drop-item" id="conn-connect">Sign in with BDCoder</button>
             <button class="drop-item danger" id="conn-logout" disabled>Logout</button>
           </div>
         </div>
@@ -106,7 +106,7 @@
 
     <!-- ============ MAIN ============ -->
     <main class="main empty" id="main">
-      <button class="sidebar-restore" id="btn-sidebar-restore" type="button" title="Show sidebar" aria-label="Show sidebar" aria-controls="app-sidebar" hidden>V</button>
+      <button class="sidebar-restore" id="btn-sidebar-restore" type="button" title="Show sidebar" aria-label="Show sidebar" aria-controls="app-sidebar" hidden>B</button>
 
       <div class="error-banner" id="error-banner" hidden role="alert" aria-live="assertive">
         <div class="error-head">
@@ -141,31 +141,19 @@
 
       <!-- Splash screen (logo + pulse on app start) -->
       <div class="splash" id="splash" role="status" aria-label="Loading">
-        <!-- the app logo (the brand "V"): every colour comes from the theme -->
+        <!-- the app logo: the brand "B" in one solid colour -->
         <svg class="splash-logo" viewBox="0 0 120 120" fill="none" aria-hidden="true">
-          <defs>
-            <linearGradient id="splashLogoFill" x1="60" y1="22" x2="60" y2="104" gradientUnits="userSpaceOnUse">
-              <stop offset="0" stop-color="var(--logo-1)"/>
-              <stop offset="1" stop-color="var(--logo-2)"/>
-            </linearGradient>
-          </defs>
-          <path d="M28 26 H51 L60 64 L69 26 H92 L68 104 H52 Z" fill="url(#splashLogoFill)"/>
+          <path d="M30 22 H66 C82 22 90 30 90 42 C90 51 85 56 79 59 C88 62 94 69 94 80 C94 95 84 104 66 104 H30 Z M50 38 V54 H63 C69 54 72 51 72 46 C72 41 69 38 63 38 Z M50 69 V88 H65 C72 88 75 85 75 78.5 C75 72 72 69 65 69 Z" fill-rule="evenodd" fill="#e8913a"/>
         </svg>
         <span class="splash-pulse" aria-hidden="true"></span>
       </div>
 
       <div class="hero" id="hero">
         <svg class="watermark" viewBox="0 0 120 120" fill="none" aria-hidden="true">
-          <defs>
-            <linearGradient id="heroLogoFill" x1="60" y1="22" x2="60" y2="104" gradientUnits="userSpaceOnUse">
-              <stop offset="0" stop-color="var(--logo-1)"/>
-              <stop offset="1" stop-color="var(--logo-2)"/>
-            </linearGradient>
-          </defs>
-          <path d="M28 26 H51 L60 64 L69 26 H92 L68 104 H52 Z" fill="url(#heroLogoFill)"/>
+          <path d="M30 22 H66 C82 22 90 30 90 42 C90 51 85 56 79 59 C88 62 94 69 94 80 C94 95 84 104 66 104 H30 Z M50 38 V54 H63 C69 54 72 51 72 46 C72 41 69 38 63 38 Z M50 69 V88 H65 C72 88 75 85 75 78.5 C75 72 72 69 65 69 Z" fill-rule="evenodd" fill="#e8913a"/>
         </svg>
         <h1 class="hero-title" id="hero-title">Start a new task</h1>
-        <p class="hero-sub" id="hero-sub">Describe what you want. VibeCoder plans it, writes the code, runs it and checks the result.</p>
+        <p class="hero-sub" id="hero-sub">Describe what you want. BDCoder plans it, writes the code, runs it and checks the result.</p>
         <div class="hero-chips" id="hero-chips" role="group" aria-label="Example tasks">
           <button class="hero-chip" type="button" data-vc-icon="blocks" data-prompt="Build a small app for me: ">Build an app</button>
           <button class="hero-chip" type="button" data-vc-icon="search" data-prompt="Find and fix the bug where ">Fix a bug</button>
@@ -252,7 +240,7 @@
         </div>
 
         <textarea id="input" rows="2"
-          placeholder="Ask VibeCoder, type @ to add files, / for recipes, $ for playbooks, # to link chats"></textarea>
+          placeholder="Ask BDCoder, type @ to add files, / for recipes, $ for playbooks, # to link chats"></textarea>
 
         <div class="attach-tray" id="attach-tray" hidden></div>
 
@@ -392,7 +380,7 @@
       </div>
       <div class="side-launch-list" role="menu">
         <button class="side-launch-item" type="button" role="menuitem" data-open="changes"><span class="sl-ic" data-vc-icon="changes"></span><span class="sl-text"><span class="sl-name">Changes</span><span class="sl-desc">Files that are new or changed in this project</span></span><span class="sl-keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>G</kbd></span></button>
-        <button class="side-launch-item" type="button" role="menuitem" data-open="browser"><span class="sl-ic" data-vc-icon="globe"></span><span class="sl-text"><span class="sl-name">Browser</span><span class="sl-desc">Web pages and your local app, inside VibeCoder</span></span><span class="sl-keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>B</kbd></span></button>
+        <button class="side-launch-item" type="button" role="menuitem" data-open="browser"><span class="sl-ic" data-vc-icon="globe"></span><span class="sl-text"><span class="sl-name">Browser</span><span class="sl-desc">Web pages and your local app, inside BDCoder</span></span><span class="sl-keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>B</kbd></span></button>
         <button class="side-launch-item" type="button" role="menuitem" data-open="files"><span class="sl-ic" data-vc-icon="folder"></span><span class="sl-text"><span class="sl-name">Files and code</span><span class="sl-desc">Browse the project, open a file, edit and save it</span></span><span class="sl-keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>E</kbd></span></button>
       </div>
     </aside>
@@ -517,14 +505,14 @@
             <div class="s-row">
               <div>
                 <div class="s-name">Test notification</div>
-                <div class="s-desc">Send a test toast to check that Windows notifications are allowed for VibeCoder AI.</div>
+                <div class="s-desc">Send a test toast to check that Windows notifications are allowed for BDCoder AI.</div>
               </div>
               <button class="save-btn" id="btn-test-notify" type="button">Send test</button>
             </div>
             <div class="s-row" id="row-notify-sound">
               <div>
                 <div class="s-name">Notification sound</div>
-                <div class="s-desc">A soft VibeCoder chime instead of the Windows sound. Notifications come only when you are away and the agent finished, needs your approval, asks a question, or stopped with an error.</div>
+                <div class="s-desc">A soft BDCoder chime instead of the Windows sound. Notifications come only when you are away and the agent finished, needs your approval, asks a question, or stopped with an error.</div>
               </div>
               <div class="s-inline-controls">
                 <button class="save-btn" id="btn-play-chime" type="button">Play</button>
@@ -580,7 +568,7 @@
           <div class="s-head-row">
             <div>
               <h1 class="s-title">App Updates</h1>
-              <p class="s-sub">Keep VibeCoder AI current with stable desktop releases. Your data (API keys, sessions, providers, MCP, skills, plugins) is never touched by an update.</p>
+              <p class="s-sub">Keep BDCoder AI current with stable desktop releases. Your data (API keys, sessions, providers, MCP, skills, plugins) is never touched by an update.</p>
             </div>
           </div>
 
@@ -771,7 +759,7 @@
               <div class="ml-group">Providers</div>
               <div class="ml-item provider-item" data-provider="opencode">
                 <span class="prov-ic mono" aria-hidden="true">VC</span>
-                <span class="prov-nm">VibeCoderAI</span>
+                <span class="prov-nm">BDCoder AI</span>
                 <span class="prov-soon">free</span>
                 <span class="prov-dot" id="opencode-dot"></span>
               </div>
@@ -799,8 +787,8 @@
                 <div class="mdp-head">
                   <div class="mdp-logo mono" aria-hidden="true">VC</div>
                   <div>
-                    <div class="mdp-name">VibeCoderAI</div>
-                    <div class="mdp-sub" id="opencode-sub">Sign in with VibeCoder to use free models — no API key needed</div>
+                    <div class="mdp-name">BDCoder AI</div>
+                    <div class="mdp-sub" id="opencode-sub">Sign in with BDCoder to use free models — no API key needed</div>
                   </div>
                   <div class="mdp-actions vc-head-actions">
                     <button class="save-btn" id="opencode-connect">Log in</button>
@@ -822,7 +810,7 @@
                 <div class="vc-models" id="vc-models" hidden>
                   <div class="vc-models-head"><span>Models</span><span class="vc-models-count" id="vc-models-count"></span></div>
                   <div class="vc-models-list" id="vc-models-list"></div>
-                  <div class="vc-models-note">These models come with your VibeCoder account and appear in the model picker by themselves.</div>
+                  <div class="vc-models-note">These models come with your BDCoder account and appear in the model picker by themselves.</div>
                 </div>
               </div>
 
@@ -864,7 +852,7 @@
                     </label>
                     <label class="pf-row">
                       <span class="pf-label">Extra request body <span class="muted">(optional JSON)</span></span>
-                      <textarea class="s-input pf-advanced" id="pf-body" rows="4" placeholder='{"metadata":{"application":"VibeCoderAI"}}'></textarea>
+                      <textarea class="s-input pf-advanced" id="pf-body" rows="4" placeholder='{"metadata":{"application":"BDCoder AI"}}'></textarea>
                       <span class="pf-hint">Merged into every model request. Credential-looking fields are blocked.</span>
                     </label>
                   </details>
@@ -944,7 +932,7 @@
             <div class="s-row">
               <div class="s-col">
                 <div class="s-name">Third-party desktop browser</div>
-                <div class="s-desc">Some desktop apps ship their own browser plugin. It only works inside that app, so VibeCoder AI does not offer it here.</div>
+                <div class="s-desc">Some desktop apps ship their own browser plugin. It only works inside that app, so BDCoder AI does not offer it here.</div>
               </div>
               <span class="cfg-tag">not available here</span>
             </div>
@@ -991,7 +979,7 @@
                 <span class="cn-badge" id="cn-facebook-badge" hidden>Connected</span>
               </div>
               <div class="cn-code" id="cn-facebook-code" hidden>
-                <div class="cn-code-label">A browser tab opened. Sign in to Facebook there and allow VibeCoder — that's all.</div>
+                <div class="cn-code-label">A browser tab opened. Sign in to Facebook there and allow BDCoder — that's all.</div>
                 <div class="cn-code-row"><span class="cn-code-value" id="cn-facebook-code-value"></span><button class="save-btn" type="button" id="cn-facebook-copy" hidden>Copy code</button><button class="save-btn" type="button" id="cn-facebook-open">Open the page again</button></div>
                 <div class="cn-code-wait">Waiting for you to finish on facebook.com…</div>
               </div>
@@ -1013,7 +1001,7 @@
         </div>
         <div class="s-page" data-page="keyboard" hidden>
           <h1 class="s-title">Keyboard Shortcuts</h1>
-          <p class="s-sub">Every shortcut VibeCoder understands, grouped by where you use it.</p>
+          <p class="s-sub">Every shortcut BDCoder understands, grouped by where you use it.</p>
           <div class="s-card kbd-card">
             <div class="kbd-group">Chat</div>
               <div class="kbd-row">
@@ -1148,7 +1136,7 @@
           <div class="s-head-row">
             <div>
               <h1 class="s-title">Subagents</h1>
-              <p class="s-sub">The agents the main agent can call for a job. Switch one off and VibeCoder removes it — the main agent then cannot use it.</p>
+              <p class="s-sub">The agents the main agent can call for a job. Switch one off and BDCoder removes it — the main agent then cannot use it.</p>
             </div>
           </div>
 
@@ -1176,7 +1164,7 @@
           <div class="s-head-row">
             <div>
               <h1 class="s-title">Marketplace</h1>
-              <p class="s-sub">Free MCP servers, plugins and skills. Install once — VibeCoder picks them up automatically.</p>
+              <p class="s-sub">Free MCP servers, plugins and skills. Install once — BDCoder picks them up automatically.</p>
             </div>
             <div class="s-head-actions">
               <button class="save-btn" id="mkt-refresh">⟳ Refresh</button>
@@ -1330,7 +1318,7 @@
               <div class="s-name">Built-in skills</div>
               <label class="s-check"><input type="checkbox" id="builtin-skill-global" /> Install globally</label>
             </div>
-            <div class="cfg-note cfg-note-top">Made for VibeCoder. Installed into the open project, or the global folder when no project is open.</div>
+            <div class="cfg-note cfg-note-top">Made for BDCoder. Installed into the open project, or the global folder when no project is open.</div>
             <div class="cfg-list" id="builtin-skill-list"></div>
           </div>
 
@@ -1361,7 +1349,7 @@
         </div>
         <div class="s-page" data-page="commands" hidden>
           <h1 class="s-title">Commands</h1>
-          <p class="s-sub">Your own slash commands. Type <code>/</code> in the message box and pick one: VibeCoder runs the prompt saved in it.</p>
+          <p class="s-sub">Your own slash commands. Type <code>/</code> in the message box and pick one: BDCoder runs the prompt saved in it.</p>
           <div class="s-card">
             <div class="xs-head">
               <div class="kbd-group">Installed commands</div>
@@ -1472,7 +1460,7 @@ Review my latest changes for bugs and unclear names. Focus on: $ARGUMENTS</pre>
             <div class="s-row">
               <div class="s-col">
                 <div class="s-name">Data sharing</div>
-                <div class="s-desc">Nothing is sent anywhere by VibeCoder AI. The agent talks to the model provider you picked (the built-in VibeCoderAI account or your own provider), and the errors of this app only go to the local log file.</div>
+                <div class="s-desc">Nothing is sent anywhere by BDCoder AI. The agent talks to the model provider you picked (the built-in BDCoder AI account or your own provider), and the errors of this app only go to the local log file.</div>
               </div>
             </div>
           </div>
@@ -1487,7 +1475,7 @@ Review my latest changes for bugs and unclear names. Focus on: $ARGUMENTS</pre>
     <div class="dlg-box">
       <div class="dlg-head">
         <span class="dlg-ic">◆</span>
-        <span class="dlg-title" id="dlg-title">VibeCoder AI</span>
+        <span class="dlg-title" id="dlg-title">BDCoder AI</span>
         <button class="dlg-x" id="dlg-x" type="button" title="Close">✕</button>
       </div>
       <div class="dlg-body" id="dlg-message"></div>

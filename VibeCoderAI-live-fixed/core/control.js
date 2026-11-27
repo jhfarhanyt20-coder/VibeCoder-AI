@@ -506,7 +506,7 @@ function createControl(engine) {
     },
     "session.export": (a) => ({ format: "vibecoder-session", version: 1, session: publicData(engine.getSession(a.sessionId)) }),
     "session.import": (a) => {
-      if (a.data?.format !== "vibecoder-session" || a.data?.version !== 1 || !Array.isArray(a.data.session?.messages)) throw new Error("Not a VibeCoder session export.")
+      if (a.data?.format !== "vibecoder-session" || a.data?.version !== 1 || !Array.isArray(a.data.session?.messages)) throw new Error("Not a BDCoder session export.")
       const source = a.data.session
       const session = engine.createSession({ dir: workspace(a.directory), profile: resolveProfile(String(a.profile || source.profile)), title: source.title })
       session.messages = source.messages

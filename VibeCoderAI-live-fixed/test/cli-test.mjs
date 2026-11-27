@@ -54,7 +54,7 @@ test("help lists the full command surface", () => {
 test("bare vibe prints help when stdin is not a terminal", () => {
   const out = run([])
   assert.equal(out.status, 0)
-  assert.match(out.stdout, /vibe - VibeCoder coding agent CLI/)
+  assert.match(out.stdout, /vibe - BDCoder coding agent CLI/)
 })
 
 test("--version matches package.json", () => {

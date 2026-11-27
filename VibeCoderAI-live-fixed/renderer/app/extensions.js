@@ -666,7 +666,7 @@ if ($("mkt-chips")) {
 }
 
 /* ---------- installed skills page ---------- */
-// The skills shipped with VibeCoder, each with Install / Remove.
+// The skills shipped with BDCoder, each with Install / Remove.
 function renderBuiltinSkills(items) {
   const list = $("builtin-skill-list")
   if (!list) return
@@ -788,7 +788,7 @@ async function loadSkills() {
       const note = document.createElement("div")
       note.className = "cfg-note"
       note.textContent =
-        "Skills are Markdown files with frontmatter (name, description). VibeCoder picks them up automatically."
+        "Skills are Markdown files with frontmatter (name, description). BDCoder picks them up automatically."
       files.appendChild(note)
     }
   } catch (e) {

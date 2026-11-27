@@ -63,7 +63,7 @@ function typingPush(text) {
    that into the real reason (or the real error message). */
 const INTERRUPT_REASON_TEXT = {
   user: "You stopped this run.",
-  shutdown: "The VibeCoder service shut down while this run was going.",
+  shutdown: "The BDCoder service shut down while this run was going.",
   superseded: "Another run replaced this one.",
   inactivity: "The run was stopped after a period of inactivity.",
   unknown: "The run was interrupted.",
@@ -147,7 +147,7 @@ vibe.onEvent(async (event) => {
     refreshProviderStateLive().catch((error) => showError("Could not refresh providers", String(error?.message || error), { key: "providers-refresh" }))
     return
   }
-  // VibeCoder account: signed in / out, code expired, or models refreshed.
+  // BDCoder account: signed in / out, code expired, or models refreshed.
   // Computer Use: the on-screen badge shows activity; here only the stop is reported.
   if (type === "notification.chime") {
     if (notificationsEnabled()) playChime()

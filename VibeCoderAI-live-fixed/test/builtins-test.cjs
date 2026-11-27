@@ -79,7 +79,7 @@ const skills = require("../core/skills")
     assert.deepEqual(tools.voice_over.paths({ text: "hi", out: "audio/a.wav" }, ctx), [path.join(proj, "audio", "a.wav")])
     await assert.rejects(tools.voice_over.run({ text: "hi", out: "a.mp3" }, ctx), /\.wav|Windows/)
     if (process.platform === "win32") {
-      const said = await tools.voice_over.run({ text: "Hello from VibeCoder.", out: "audio/hello.wav" }, ctx)
+      const said = await tools.voice_over.run({ text: "Hello from BDCoder.", out: "audio/hello.wav" }, ctx)
       assert.match(said, /Voice-over saved: audio\/hello\.wav \(\d+\.\d s/)
       assert(fs.statSync(path.join(proj, "audio", "hello.wav")).size > 10000)
       await assert.rejects(tools.voice_over.run({ text: "x", voice: "No Such Voice" }, ctx), /No installed voice/)

@@ -319,8 +319,8 @@ test("typing refuses password fields and the app's own window", async () => {
   await assert.rejects(tool("computer_type").run({ text: "secret" }, ctxFor(pw.ex)), /password/)
   assert.equal(pw.calls.some((c) => c.cmd === "type"), false)
   const own = fakeExecutor()
-  await assert.rejects(tool("computer_type").run({ text: "hi" }, ctxFor(own.ex, { ownFront: true })), /VibeCoder app itself is in front/)
-  await assert.rejects(tool("computer_key").run({ keys: "enter" }, ctxFor(own.ex, { ownFront: true })), /VibeCoder app itself is in front/)
+  await assert.rejects(tool("computer_type").run({ text: "hi" }, ctxFor(own.ex, { ownFront: true })), /BDCoder app itself is in front/)
+  await assert.rejects(tool("computer_key").run({ keys: "enter" }, ctxFor(own.ex, { ownFront: true })), /BDCoder app itself is in front/)
   const ok = fakeExecutor()
   ok.ex.target = ok.state.foreground
   const out = await tool("computer_type").run({ text: "আমার নাম পরীক্ষা 123", enter: true }, ctxFor(ok.ex))

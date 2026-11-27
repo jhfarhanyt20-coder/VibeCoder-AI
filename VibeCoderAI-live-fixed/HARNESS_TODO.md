@@ -720,4 +720,19 @@ Thin vertical slice first:
 - [x] `releases/latest/download/latest.yml` shows `version: 0.3.26`.
 - [x] Website "What's new".
 
-### Next release (0.3.27): same checklist, one patch up, never skip.
+## 19. Release 0.3.27 — 2026-11-27 (BDCoder rebrand)
+
+- Display name BDCoder AI everywhere (app, CLI, installer, docs); solid "B" icon set.
+- Repo `BDCoder-AI`, website `bdcoderai.onrender.com`; `DEFAULT_ACCOUNT_URL` points there.
+- `userData` pinned to `%APPDATA%ibe-core` so settings and sign-in survive the rename.
+- Kept: appId, package name, provider id, `VibeCoderAI/` User-Agent.
+
+### 0.3.27 release checklist
+- [x] Owner approved the release (2026-11-27).
+- [x] `package.json` and both root entries of `package-lock.json` → **0.3.27**.
+- [x] `npm test` green (405 PASS).
+- [ ] Commit, push `master`, tag `v0.3.27`, push the tag.
+- [ ] One release with `BDCoderAI-0.3.27.exe`, `.exe.blockmap`, `latest.yml`, `BDCoder-CLI-0.3.27.tgz`.
+- [ ] `releases/latest/download/latest.yml` shows `version: 0.3.27`.
+
+### Next release (0.3.28): same checklist, one patch up, never skip.

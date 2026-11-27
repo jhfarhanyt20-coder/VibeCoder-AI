@@ -1,5 +1,5 @@
 "use strict"
-// VibeCoder built-in plugin: which local dev-server ports are answering right
+// BDCoder built-in plugin: which local dev-server ports are answering right
 // now (3000, 5173, 8080...). Useful before opening the in-app browser. Read-only.
 const net = require("net")
 

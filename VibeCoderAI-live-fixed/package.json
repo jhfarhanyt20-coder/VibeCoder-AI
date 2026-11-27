@@ -1,7 +1,7 @@
 {
   "name": "vibe-core",
-  "version": "0.3.26",
-  "description": "VibeCoder AI engine and desktop app: own CLI, own SDK, 3 LLM formats, auto-compaction, provider fallback and a secure updater.",
+  "version": "0.3.27",
+  "description": "BDCoder AI engine and desktop app: own CLI, own SDK, 3 LLM formats, auto-compaction, provider fallback and a secure updater.",
   "license": "UNLICENSED",
   "author": {
     "name": "Jamil Hussain"
@@ -27,9 +27,9 @@
     "electron-builder": "^26.18.0"
   },
   "build": {
-    "copyright": "Copyright (c) 2026 Jamil Hussain (JH Farhan), trading as VibeCoder AI. All rights reserved.",
+    "copyright": "Copyright (c) 2026 Jamil Hussain (JH Farhan), trading as BDCoder AI. All rights reserved.",
     "appId": "ai.vibecoder.app",
-    "productName": "VibeCoder AI",
+    "productName": "BDCoder AI",
     "directories": {
       "output": "release"
     },
@@ -75,13 +75,13 @@
       "oneClick": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "VibeCoder AI",
-      "artifactName": "VibeCoderAI-v2-${version}.${ext}"
+      "shortcutName": "BDCoder AI",
+      "artifactName": "BDCoderAI-${version}.${ext}"
     },
     "publish": {
       "provider": "github",
       "owner": "jhfarhanyt20-coder",
-      "repo": "VibeCoder-AI",
+      "repo": "BDCoder-AI",
       "releaseType": "release",
       "publishAutoUpdate": true
     }

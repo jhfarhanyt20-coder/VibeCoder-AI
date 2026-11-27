@@ -1,6 +1,6 @@
 # Security policy
 
-VibeCoder AI is a local-first desktop application. The most sensitive data it
+BDCoder AI is a local-first desktop application. The most sensitive data it
 handles is your provider API keys and the project content you send to a model.
 
 ## Supported versions
@@ -8,7 +8,7 @@ handles is your provider API keys and the project content you send to a model.
 Security fixes are shipped in the latest desktop release. Users receive them
 through the in-app updater or the public GitHub Release feed:
 
-https://github.com/jhfarhanyt20-coder/VibeCoder-AI/releases/latest
+https://github.com/jhfarhanyt20-coder/BDCoder-AI/releases/latest
 
 ## Reporting a vulnerability
 
@@ -16,11 +16,11 @@ Please **do not open a public issue** for a vulnerability.
 
 Use GitHub's private vulnerability reporting:
 
-https://github.com/jhfarhanyt20-coder/VibeCoder-AI/security/advisories/new
+https://github.com/jhfarhanyt20-coder/BDCoder-AI/security/advisories/new
 
 Include:
 
-- the VibeCoder AI version (desktop or CLI),
+- the BDCoder AI version (desktop or CLI),
 - your Windows version,
 - a short description and reproduction steps,
 - the impact you believe is possible,
@@ -53,7 +53,7 @@ before. Project-scoped executable content is different: `<workspace>/.vibe/exten
 `<workspace>/.vibe/plugins/*.js` and `<workspace>/.vibe/mcp.json` can run code
 or spawn commands.
 
-VibeCoder AI therefore asks once per workspace before loading them. The desktop
+BDCoder AI therefore asks once per workspace before loading them. The desktop
 shows a **Trust and load project tools** dialog; the CLI exposes:
 
 ```bash

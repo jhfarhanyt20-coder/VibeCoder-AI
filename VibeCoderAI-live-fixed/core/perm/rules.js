@@ -42,7 +42,7 @@ const DEFAULT_RULES = [
   // hard-to-undo actions always ask through a critical prompt in the tool.
   { tool: "github", pattern: "read**", action: "allow" },
   { tool: "facebook", pattern: "read**", action: "allow" },
-  // Reading VibeCoder's own product guide is always free.
+  // Reading BDCoder's own product guide is always free.
   { tool: "vibecoder_help", pattern: "*", action: "allow" },
   // the agent's own scratch folder (./.vibe-scratch): creating, editing and
   // reading files inside it never asks - it is the agent's private workspace.

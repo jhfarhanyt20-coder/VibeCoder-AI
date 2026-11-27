@@ -1,10 +1,10 @@
 "use strict"
 /**
- * VibeCoder's own title bar for the console window (Windows only), like the
+ * BDCoder's own title bar for the console window (Windows only), like the
  * desktop app: the native caption (the blue Windows bar) is hidden and the
  * CLI's first row becomes the title bar, with minimize / maximize / close
  * buttons, drag to move and double-click to maximize. The window also gets
- * the VibeCoder icon and a dark frame.
+ * the BDCoder icon and a dark frame.
  *
  * A small helper (PowerShell, no new dependencies) shares this console and
  * stays alive while the CLI runs, so button clicks are instant. When the CLI
@@ -39,7 +39,7 @@ $sig = @'
 [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
 [DllImport("user32.dll")] public static extern bool ReleaseCapture();
 '@
-$w = Add-Type -MemberDefinition $sig -Name ConsoleChrome -Namespace VibeCoder -PassThru
+$w = Add-Type -MemberDefinition $sig -Name ConsoleChrome -Namespace BDCoder -PassThru
 $h = $w::GetConsoleWindow()
 if ($h -eq [IntPtr]::Zero) { 'none'; exit }
 $big = $w::SendMessage($h, 0x7F, [IntPtr]1, [IntPtr]::Zero)

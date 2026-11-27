@@ -294,7 +294,7 @@ async function main() {
     baseURL: "http://127.0.0.1:9/v1",
     apiFormat: "chat",
     headers: { "X-Tenant-ID": "team-a" },
-    body: { metadata: { application: "VibeCoderAI" } },
+    body: { metadata: { application: "BDCoder AI" } },
     models: [{ id: "kilo-auto/free", name: "Kilo Auto Free", context: 32768, output: 2048 }],
     scope: "global",
   })
@@ -309,7 +309,7 @@ async function main() {
   const kiloCatalog = await invoke("providerCatalog")
   const kiloSaved = kiloCatalog.custom.find((item) => item.id === "kilo2")
   assert.deepEqual(kiloSaved.headers, { "X-Tenant-ID": "team-a" })
-  assert.deepEqual(kiloSaved.body, { metadata: { application: "VibeCoderAI" } })
+  assert.deepEqual(kiloSaved.body, { metadata: { application: "BDCoder AI" } })
   const protectedSave = await handlers.get("vibe:providerSave")({ sender: win.webContents }, {
     id: "unsafe-headers",
     name: "Unsafe headers",

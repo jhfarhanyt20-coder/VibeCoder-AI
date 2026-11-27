@@ -155,7 +155,7 @@ async function doctor({ dir, home, vibe }) {
 function printDoctor(info, asJson) {
   if (asJson) return jsonOut(info)
   const ok = (v) => (v ? c.green("ok") : c.yellow("none"))
-  console.log(c.bold("VibeCoder CLI doctor"))
+  console.log(c.bold("BDCoder CLI doctor"))
   console.log(`  node       ${info.node} (${info.platform})`)
   console.log(`  folder     ${info.dir}`)
   console.log(`  home       ${info.home}`)

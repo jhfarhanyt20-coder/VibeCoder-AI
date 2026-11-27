@@ -1,9 +1,13 @@
 # VibeCoder AI — Project Rules (read this first)
 
-Last updated: 2026-11-25
-Current release: **0.3.26** (tag `v0.3.26`, commit `9204481`, run `45611178814`, published 2026-11-25; all four assets by `github-actions[bot]`, `latest.yml` = 0.3.26) — the model picker lists
-the signed-in VibeCoder account right under Fallback (app and CLI); the owner, Jamil Hussain
-(JH Farhan), is named in the LICENSE and the installer's copyright.
+Last updated: 2026-11-27
+Current release: **0.3.27** (tag `v0.3.27`, published 2026-11-27) — rebrand to **BDCoder AI**
+(display names, icons, installer, CLI wordmark); repo renamed to `jhfarhanyt20-coder/BDCoder-AI`
+(old URLs redirect); website `https://bdcoderai.onrender.com`. Technical IDs are kept on purpose:
+appId `ai.vibecoder.app`, package `vibe-core`, data folder `%APPDATA%ibe-core` (now pinned in
+`electron/main.cjs`), provider id `vibecoder`, User-Agent `VibeCoderAI/<ver>`. Assets are now
+`BDCoderAI-<ver>.exe` and `BDCoder-CLI-<ver>.tgz`. Icons: solid colours only, no gradients.
+Previous: 0.3.26 (`9204481`, run `45611178814`, complete and bot-uploaded).
 Previous: 0.3.25 (`56f7843`, run `45433400354`, complete and bot-uploaded).
 Before that: 0.3.24 (`9229f7e`, run `45167261565`, complete and bot-uploaded).
 Previous: 0.3.23 (`a89caf9`, run `45154487271`, also complete and bot-uploaded).

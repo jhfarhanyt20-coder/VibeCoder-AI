@@ -1,5 +1,5 @@
 "use strict"
-// VibeCoder built-in plugin: list TODO / FIXME / HACK / BUG notes left in the
+// BDCoder built-in plugin: list TODO / FIXME / HACK / BUG notes left in the
 // project's code, with file and line. Read-only.
 const fs = require("fs")
 const path = require("path")

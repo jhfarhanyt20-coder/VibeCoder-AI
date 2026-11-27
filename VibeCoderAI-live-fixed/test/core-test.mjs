@@ -939,15 +939,15 @@ test("an unauthorized-client Responses route may fall back to Chat, but restrict
   const { ApiError } = require("../core/llm/http")
   const restricted = new ApiError(401, '{"error":{"message":"unauthorized client detected"}}')
   assert.equal(restricted.code, "PROVIDER_CLIENT_RESTRICTED")
-  assert.match(restricted.message, /ask the provider to authorize VibeCoder AI/i)
+  assert.match(restricted.message, /ask the provider to authorize BDCoder AI/i)
   const blocked = new ApiError(400, '{"error":{"code":"content-blocked","message":"content-blocked"}}')
   assert.equal(blocked.code, "PROVIDER_CONTENT_BLOCKED")
   assert.match(blocked.message, /content filter/i)
 })
 
-test("custom providers forward safe headers, extra body fields, and a transparent VibeCoder user-agent", async () => {
+test("custom providers forward safe headers, extra body fields, and a transparent BDCoder user-agent", async () => {
   const m = await mock(({ body }) => {
-    assert.deepEqual(body.metadata, { application: "VibeCoderAI", tenant: "team-a" })
+    assert.deepEqual(body.metadata, { application: "BDCoder AI", tenant: "team-a" })
     return { chunks: [...chat.text("custom provider ok"), ...chat.end()] }
   })
   const profile = {
@@ -957,7 +957,7 @@ test("custom providers forward safe headers, extra body fields, and a transparen
     model: "m",
     noAuth: true,
     headers: { "X-Tenant-ID": "team-a" },
-    quirks: { extraBody: { metadata: { application: "VibeCoderAI", tenant: "team-a" } } },
+    quirks: { extraBody: { metadata: { application: "BDCoder AI", tenant: "team-a" } } },
   }
   const events = await collect(llm.stream(profile, { system: "s", messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }], tools: [] }))
   m.close()

@@ -2,9 +2,9 @@
 
 ## Get the app
 
-- Website: https://vibecoderai.onrender.com
-- Download: https://vibecoderai.onrender.com/download-page
-- Latest release: https://github.com/jhfarhanyt20-coder/VibeCoder-AI/releases/latest
+- Website: https://bdcoderai.onrender.com
+- Download: https://bdcoderai.onrender.com/download-page
+- Latest release: https://github.com/jhfarhanyt20-coder/BDCoder-AI/releases/latest
 
 ## Update the desktop app
 
@@ -31,11 +31,11 @@ feed. This repository must stay public for that to work.
 
 ## Open an issue
 
-https://github.com/jhfarhanyt20-coder/VibeCoder-AI/issues/new/choose
+https://github.com/jhfarhanyt20-coder/BDCoder-AI/issues/new/choose
 
 Include:
 
-- VibeCoder AI version and Windows version,
+- BDCoder AI version and Windows version,
 - provider format (Chat Completions, Responses, or Anthropic) and model ID,
 - steps to reproduce, expected result, and actual result,
 - sanitized error text.

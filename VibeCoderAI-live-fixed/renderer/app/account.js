@@ -229,7 +229,7 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && fallbackState.open) closeFallback()
 })
 
-/* ---------- VibeCoderAI account (device login, coming soon) ---------- */
+/* ---------- BDCoder AI account (device login, coming soon) ---------- */
 const ocSub = document.getElementById("opencode-sub")
 const ocStDot = document.getElementById("opencode-st-dot")
 const ocStText = document.getElementById("opencode-st-text")
@@ -241,13 +241,13 @@ const connState = document.getElementById("conn-state")
 const connLabel = document.getElementById("connect-label")
 let authPoll = null
 
-/* The VibeCoderAI account is live: "Sign in with VibeCoder" opens the website,
-   the user presses Allow, and the free VibeCoder models appear as a provider.
+/* The BDCoder AI account is live: "Sign in with BDCoder" opens the website,
+   the user presses Allow, and the free BDCoder models appear as a provider.
    Setting this back to true restores the old "coming soon" state. */
 const VIBECODER_ACCOUNT_COMING_SOON = false
 
 function applyComingSoonAccount() {
-  if (ocSub) ocSub.textContent = "Your own VibeCoderAI API host — coming soon"
+  if (ocSub) ocSub.textContent = "Your own BDCoder AI API host — coming soon"
   if (ocStDot) ocStDot.className = "st-dot soon"
   if (ocStText) ocStText.textContent = "Coming soon"
   if (ocConnect) {
@@ -258,14 +258,14 @@ function applyComingSoonAccount() {
   if (ocDisconnect) ocDisconnect.hidden = true
   if (ocDevice) ocDevice.hidden = true
   if (ocDot) ocDot.classList.remove("on")
-  if (connState) connState.textContent = "Coming soon — your own VibeCoderAI API host"
+  if (connState) connState.textContent = "Coming soon — your own BDCoder AI API host"
   if (connLabel) {
-    connLabel.textContent = "VibeCoderAI"
-    connLabel.title = "VibeCoderAI account — coming soon"
+    connLabel.textContent = "BDCoder AI"
+    connLabel.title = "BDCoder AI account — coming soon"
   }
 }
 
-/* Sidebar account button. Signed out: one click opens the VibeCoder website in
+/* Sidebar account button. Signed out: one click opens the BDCoder website in
    the browser to sign in (the menu shows the code to match). Signed in: the menu
    shows the account, today's usage and Logout. */
 let authSignedIn = false
@@ -274,8 +274,8 @@ let authStarting = false
 async function startVibecoderSignIn() {
   if (VIBECODER_ACCOUNT_COMING_SOON || authStarting) return
   authStarting = true
-  connState.textContent = "Opening VibeCoder in your browser…"
-  if (ocStText) ocStText.textContent = "Opening VibeCoder in your browser…"
+  connState.textContent = "Opening BDCoder in your browser…"
+  if (ocStText) ocStText.textContent = "Opening BDCoder in your browser…"
   if (ocStDot) ocStDot.className = "st-dot checking"
   try {
     const res = await vibe.authConnect()
@@ -331,7 +331,7 @@ $("conn-logout").onclick = async () => {
   if (failed) {
     // Never claim a logout that did not happen: the saved account is still there.
     const why = (res && res.error) || out.error || "The saved account could not be removed"
-    showError("VibeCoderAI logout failed", why, { key: "auth" })
+    showError("BDCoder AI logout failed", why, { key: "auth" })
     await refreshAuthUI()
     connState.textContent = `Logout failed — ${why}`
     return
@@ -387,7 +387,7 @@ async function refreshAuthUI() {
     const usage = res.data.usage && res.data.dailyLimit != null
       ? ` · ${Number(res.data.usage.requests) || 0}/${Number(res.data.dailyLimit) || 0} requests today${resets}`
       : ""
-    ocSub.textContent = "Logged in — your VibeCoder models are listed below"
+    ocSub.textContent = "Logged in — your BDCoder models are listed below"
     ocStDot.className = "st-dot on"
     ocStText.textContent = `Connected — ${who}${usage}`
     ocConnect.hidden = true
@@ -417,7 +417,7 @@ async function refreshAuthUI() {
     connLabel.textContent = "Signing in…"
     connLabel.title = `Code ${pending.code}`
   } else {
-    ocSub.textContent = "Sign in with VibeCoder to use free models — no API key needed"
+    ocSub.textContent = "Sign in with BDCoder to use free models — no API key needed"
     ocStDot.className = "st-dot off"
     ocStText.textContent = res.data?.error || "Not connected"
     ocConnect.hidden = false
@@ -430,11 +430,11 @@ async function refreshAuthUI() {
     // Clearing the OpenCode model cache also drops a stale opencode selection,
     // so nothing tries to use the logged-out account's models.
     resetOpenCodeModelCache()
-    connState.textContent = res.data?.error || "Not signed in — sign in with VibeCoder to use free models"
+    connState.textContent = res.data?.error || "Not signed in — sign in with BDCoder to use free models"
     connLabel.textContent = "Sign in"
-    connLabel.title = "Sign in with VibeCoder"
+    connLabel.title = "Sign in with BDCoder"
     const login = document.getElementById("conn-connect")
-    if (login) { login.hidden = false; login.disabled = false; login.textContent = "Sign in with VibeCoder" }
+    if (login) { login.hidden = false; login.disabled = false; login.textContent = "Sign in with BDCoder" }
     const logout = document.getElementById("conn-logout")
     if (logout) logout.disabled = true
   }
@@ -448,7 +448,7 @@ async function refreshAuthUI() {
 
 state.selectedProvider = null
 
-/* The models of the signed-in VibeCoder account, shown in its own panel. */
+/* The models of the signed-in BDCoder account, shown in its own panel. */
 function renderVibecoderModels(signedIn) {
   const box = document.getElementById("vc-models")
   const list = document.getElementById("vc-models-list")
@@ -517,7 +517,7 @@ ocDisconnect.onclick = async () => {
   const failed = (res && res.ok === false) || (out && out.ok === false)
   if (failed) {
     const why = (res && res.error) || out.error || "The saved account could not be removed"
-    showError("VibeCoderAI logout failed", why, { key: "auth" })
+    showError("BDCoder AI logout failed", why, { key: "auth" })
     await refreshAuthUI()
     ocStText.textContent = `Logout failed — ${why}`
     return
@@ -606,7 +606,7 @@ if (autoToggle) {
 }
 $("btn-test-notify")?.addEventListener("click", async () => {
   try {
-    const r = await vibe.notify({ title: "VibeCoder AI", body: "Notifications are working.", silent: true })
+    const r = await vibe.notify({ title: "BDCoder AI", body: "Notifications are working.", silent: true })
     playChime()
     if (r && r.ok === false) showError("Could not send the notification", r.error || "Unknown error")
   } catch (e) {

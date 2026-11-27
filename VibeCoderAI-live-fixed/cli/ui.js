@@ -21,7 +21,7 @@ function computerBrief(name, a) {
   }
 }
 /**
- * Terminal output for the VibeCoder CLI.
+ * Terminal output for the BDCoder CLI.
  *
  * One renderer handles every engine event, so the terminal never silently
  * drops a feature the desktop app shows: permissions, questions/forms,
@@ -73,7 +73,7 @@ async function askPermission(rl, ev, state, log = console.log, signal) {
     // Never wait for ever: when no app answers in time, refuse it, so the
     // agent stops this action and tells the user instead of hanging the run.
     const waitMs = Number(process.env.VIBE_CRITICAL_WAIT_MS) > 0 ? Number(process.env.VIBE_CRITICAL_WAIT_MS) : 90000
-    log(c.dim(`(waiting up to ${Math.round(waitMs / 1000)}s for approval in the VibeCoder app: ${subject})`))
+    log(c.dim(`(waiting up to ${Math.round(waitMs / 1000)}s for approval in the BDCoder app: ${subject})`))
     return await new Promise((resolve) => {
       const timer = setTimeout(() => {
         log(c.dim(`(nobody approved within ${Math.round(waitMs / 1000)}s: denied)`))

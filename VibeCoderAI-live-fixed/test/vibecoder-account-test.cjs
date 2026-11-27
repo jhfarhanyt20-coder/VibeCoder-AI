@@ -1,9 +1,9 @@
 "use strict"
-// "Sign in with VibeCoder": device-code sign-in, token storage, model sync and sign-out.
+// "Sign in with BDCoder": device-code sign-in, token storage, model sync and sign-out.
 const assert = require("node:assert/strict")
 const { createVibecoderAccount, profileFromModels, accountBaseUrl } = require("../electron/vibecoder-account.cjs")
 
-const BASE = "https://vibecoderai.onrender.com"
+const BASE = "https://bdcoderai.onrender.com"
 const GW = "https://gateway.example.test"
 const tests = []
 const test = (name, fn) => tests.push({ name, fn })
@@ -46,7 +46,7 @@ function harness({ deny = false, revoked = false } = {}) {
     setTimeout: (fn, ms) => { const t = { fn, at: clock + ms, unref() {} }; timers.push(t); return t },
     openExternal: async (url) => { opened.push(url) },
     emit: (type, data) => events.push({ type, data }),
-    deviceName: "VibeCoder on TEST-PC",
+    deviceName: "BDCoder on TEST-PC",
     keys: { get: () => stored, set: (v) => { stored = v }, clear: () => { stored = "" } },
     profiles: { exists: () => !!profile, upsert: (p) => { profile = p }, remove: () => { profile = null } },
   })
@@ -63,7 +63,7 @@ test("sign-in opens the browser with the code and finishes after Allow", async (
   const start = await h.account.connect()
   assert.equal(start.code, "BCDF-GHJK")
   assert.deepEqual(h.opened, [`${BASE}/connect?code=BCDF-GHJK`], "the browser opens the connect page directly")
-  assert.equal(h.calls[0].body.device_name, "VibeCoder on TEST-PC")
+  assert.equal(h.calls[0].body.device_name, "BDCoder on TEST-PC")
   const waiting = await h.account.status()
   assert.equal(waiting.connected, false)
   assert.equal(waiting.pending.code, "BCDF-GHJK", "the app can show the code while waiting")
@@ -73,7 +73,7 @@ test("sign-in opens the browser with the code and finishes after Allow", async (
   assert.match(h.stored(), /^vc_t{43}$/, "the token is stored with the provider keys")
   const p = h.profile()
   assert.equal(p.id, "vibecoder")
-  assert.equal(p.name, "VibeCoder AI")
+  assert.equal(p.name, "BDCoder AI")
   assert.equal(p.baseURL, `${GW}/v1`, "chat goes to the gateway host")
   assert.ok(h.calls.filter((c) => c.path === "/v1/models").every((c) => c.host === "gw"), "model list from the gateway")
   assert.ok(h.calls.filter((c) => c.path.startsWith("/api/device") || c.path.startsWith("/v1/account")).every((c) => c.host === "site"), "sign-in and account stay on the website")

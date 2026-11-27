@@ -30,7 +30,7 @@ function executor(ctx) {
 
 /**
  * Hooks for hosts without the desktop app (CLI, SDK): the helper itself shows
- * the "VibeCoder is using your computer" badge (hidden from screenshots) and
+ * the "BDCoder is using your computer" badge (hidden from screenshots) and
  * owns the Ctrl+Alt+Esc kill switch. The desktop app sets its own hooks.
  */
 function standaloneHooks(engine, ex) {
@@ -65,7 +65,7 @@ function standaloneHooks(engine, ex) {
 }
 
 /**
- * Take a picture without VibeCoder's own on-screen label in it: the host hides
+ * Take a picture without BDCoder's own on-screen label in it: the host hides
  * its "using your computer" overlay for the moment of the capture, so the label
  * never covers the app the agent is looking at.
  */
@@ -108,7 +108,7 @@ const elementLines = (els) => (els || []).map((e) => `[${e.id}] ${e.type === "Te
 async function resolvePoint(ex, a) {
   const p = await resolvePointRaw(ex, a)
   if (typeof ex.isOwnWindow === "function" && ex.isOwnWindow(p.window)) {
-    throw new Error("That point is on the VibeCoder chat panel, not on the app you are working in. Nothing was clicked. Bring your app to the front (computer_focus), take computer_screenshot, and click inside the app.")
+    throw new Error("That point is on the BDCoder chat panel, not on the app you are working in. Nothing was clicked. Bring your app to the front (computer_focus), take computer_screenshot, and click inside the app.")
   }
   return p
 }
@@ -156,7 +156,7 @@ async function requireTargetInFront(ex, ctx) {
   if (!fg) throw new Error("No window is in front. Call computer_focus on the window you want, then try again. Nothing was typed.")
   const hooks = ctx.engine.computerHooks
   if (hooks && typeof hooks.isOwnWindow === "function" && hooks.isOwnWindow(fg)) {
-    throw new Error("The VibeCoder app itself is in front, so this would go into the chat. Call computer_focus on the target window first. Nothing was typed.")
+    throw new Error("The BDCoder app itself is in front, so this would go into the chat. Call computer_focus on the target window first. Nothing was typed.")
   }
   if (!ex.target) throw new Error(`Choose the window first: call computer_focus (or computer_launch / click inside it). The window in front now is "${fg.title}". Nothing was typed.`)
   if (String(fg.hwnd) !== String(ex.target.hwnd)) {
@@ -294,7 +294,7 @@ const screenshot = tool(
   async (ex, a, ctx) => {
     // The chat panel can end up in front (it stays on top beside the app). Like a
     // person would, bring the app being worked on back to the front first, so the
-    // numbered list belongs to that app and not to VibeCoder itself.
+    // numbered list belongs to that app and not to BDCoder itself.
     if (!a.window && ex.target && typeof ex.isOwnWindow === "function") {
       try {
         const fg = await ex.call("foreground", {}, 5000)
@@ -607,7 +607,7 @@ const steps = tool(
 // back). Not an action on the computer itself, so it needs no helper.
 const done = {
   name: "computer_done",
-  description: "Call this as soon as you have finished using the computer (before you write your answer): it turns Computer Use off right away — the badge goes and the VibeCoder window comes back. Any later computer action turns it on again by itself.",
+  description: "Call this as soon as you have finished using the computer (before you write your answer): it turns Computer Use off right away — the badge goes and the BDCoder window comes back. Any later computer action turns it on again by itself.",
   parameters: { type: "object", properties: {}, required: [] },
   perm: () => ({ tool: "computer", subject: "done" }),
   paths: () => [],

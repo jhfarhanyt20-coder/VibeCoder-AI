@@ -41,7 +41,7 @@ class Engine {
   constructor(opts = {}) {
     this.home = opts.home || homeDir()
     this.store = new SessionStore(this.home)
-    this.agentName = opts.agentName || "VibeCoder AI"
+    this.agentName = opts.agentName || "BDCoder AI"
     this.permissionMode = opts.permission || "ask"
     this.extraSystem = opts.extraSystem || ""
     let user = []
@@ -197,7 +197,7 @@ class Engine {
     if (this.computerUse && this.computerUse.enabled === true && process.platform === "win32") {
       try { ex.push(...require("./tools/computer").ALL) } catch {}
     }
-    // The agent's own product guide (answers questions about VibeCoder itself).
+    // The agent's own product guide (answers questions about BDCoder itself).
     try { ex.push(...require("./tools/vibehelp").ALL) } catch {}
     // Connector tools appear only while that account is signed in.
     try { if (this.connectors && this.connectors.github && this.connectors.github.connected()) ex.push(...require("./tools/github").ALL) } catch {}

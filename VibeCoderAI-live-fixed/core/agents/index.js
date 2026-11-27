@@ -38,7 +38,7 @@ const BUILTIN = [
   {
     id: "build",
     name: "Pilot",
-    description: "Default VibeCoder agent with every tool.",
+    description: "Default BDCoder agent with every tool.",
     mode: "primary",
     system: "",
     permissions: [],

@@ -1,6 +1,6 @@
 "use strict"
 /**
- * Facebook connector: one-click "Sign in with Facebook" through the VibeCoder
+ * Facebook connector: one-click "Sign in with Facebook" through the BDCoder
  * website (it holds the app secret), then Graph API access for the agent with
  * the user's OWN account: Pages, posts, comments, Messenger, insights,
  * Business and ads. The long-lived user token (about 60 days) is saved
@@ -15,11 +15,11 @@ const ID = "facebook"
 // "Coming soon": sign-in stays off for users until Meta approves the app
 // (App Review + Business Verification). VIBECODER_FACEBOOK=1 turns it on for testing.
 const AVAILABLE = process.env.VIBECODER_FACEBOOK === "1"
-const COMING_SOON = "Facebook is coming soon to VibeCoder. It will open for everyone after Meta approves the app."
+const COMING_SOON = "Facebook is coming soon to BDCoder. It will open for everyone after Meta approves the app."
 const GRAPH = "https://graph.facebook.com/v21.0"
 const ACCOUNT_URL = (() => {
-  const raw = String(process.env.VIBECODER_ACCOUNT_URL || "https://vibecoderai.onrender.com").replace(/\/+$/, "")
-  try { const u = new URL(raw); return u.protocol === "https:" || ["localhost", "127.0.0.1"].includes(u.hostname) ? u.origin : "https://vibecoderai.onrender.com" } catch { return "https://vibecoderai.onrender.com" }
+  const raw = String(process.env.VIBECODER_ACCOUNT_URL || "https://bdcoderai.onrender.com").replace(/\/+$/, "")
+  try { const u = new URL(raw); return u.protocol === "https:" || ["localhost", "127.0.0.1"].includes(u.hostname) ? u.origin : "https://bdcoderai.onrender.com" } catch { return "https://bdcoderai.onrender.com" }
 })()
 const b64url = (buf) => Buffer.from(buf).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "")
 
@@ -87,7 +87,7 @@ function createFacebook({ home, fetch: fetcher = globalThis.fetch, now = Date.no
       web = !!(r.ok && (await r.json())?.facebook?.web)
     } catch {}
     if (!web) {
-      lastError = "Facebook sign-in is not available right now (the VibeCoder website has not finished its Facebook setup). Try again later."
+      lastError = "Facebook sign-in is not available right now (the BDCoder website has not finished its Facebook setup). Try again later."
       onChange(status())
       throw new Error(lastError)
     }

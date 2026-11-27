@@ -237,7 +237,7 @@ const TOOL_META = {
   computer_scroll: { icon: "🖱", label: "Scroll" },
   computer_drag: { icon: "🖱", label: "Drag" },
   computer_wait: { icon: "⏳", label: "Wait" },
-  vibecoder_help: { icon: "?", label: "VibeCoder guide" },
+  vibecoder_help: { icon: "?", label: "BDCoder guide" },
   crewChanges: { icon: "🤖", label: "Review helper's work" },
   crewMerge: { icon: "🤖", label: "Merge helper's work" },
   crewDiscard: { icon: "🤖", label: "Discard helper's work" },
@@ -910,7 +910,7 @@ async function refreshForms() {
     qCards.set(f.id, el)
     // The agent is waiting for an answer -> tell the user, even in background.
     const question = (f.questions && f.questions[0] && (f.questions[0].question || f.questions[0].text)) || ""
-    notifyAgent("VibeCoder has a question", question || "The agent needs your answer to continue.", "question", formSid)
+    notifyAgent("BDCoder has a question", question || "The agent needs your answer to continue.", "question", formSid)
   }
   // a form that vanished without us answering was answered/cancelled elsewhere
   // (only this chat's forms were listed, so other chats' cards are left alone)

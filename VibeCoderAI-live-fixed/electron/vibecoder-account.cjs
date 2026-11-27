@@ -1,8 +1,8 @@
 "use strict"
 /**
- * VibeCoder account in the desktop app ("Sign in with VibeCoder").
+ * BDCoder account in the desktop app ("Sign in with BDCoder").
  *
- * Device-code sign-in against the VibeCoder website: the app asks for a code,
+ * Device-code sign-in against the BDCoder website: the app asks for a code,
  * opens /connect?code=XXXX-XXXX in the browser, and polls until the signed-in
  * user presses Allow. The app token is stored with the other provider keys
  * (encrypted), and the free models are kept as one custom provider profile
@@ -11,12 +11,12 @@
  * Everything external is injected so this file can be tested without Electron.
  */
 
-const DEFAULT_ACCOUNT_URL = "https://vibecoderai.onrender.com"
+const DEFAULT_ACCOUNT_URL = "https://bdcoderai.onrender.com"
 // AI requests (model list, chat) go to the gateway host. Sign-in and the account
 // stay on the website. The website can name another gateway with `gateway_url`.
 const DEFAULT_GATEWAY_URL = "https://vibecoder-website-production.up.railway.app"
 const PROFILE_ID = "vibecoder"
-const PROVIDER_NAME = "VibeCoder AI"
+const PROVIDER_NAME = "BDCoder AI"
 const SYNC_EVERY = 30 * 60 * 1000
 const STATUS_TTL = 60 * 1000
 
@@ -108,14 +108,14 @@ function createVibecoderAccount(deps) {
     emit("auth.changed", { connected: false, reason: reason || "" })
   }
 
-  /** Fetch the free model list and save it as the "VibeCoder AI" provider. */
+  /** Fetch the free model list and save it as the "BDCoder AI" provider. */
   async function syncModels() {
     const t = token()
     if (!t) return { synced: false }
     // The website may name the gateway host; otherwise the built-in default is used.
     try {
       const acct = await request("/v1/account", { token: t })
-      if (acct.status === 401) { forget("Your VibeCoder sign-in was disconnected. Sign in again."); return { synced: false, signedOut: true } }
+      if (acct.status === 401) { forget("Your BDCoder sign-in was disconnected. Sign in again."); return { synced: false, signedOut: true } }
       if (acct.ok) {
         info = acct.data; infoAt = now()
         // A website that names only itself has no separate gateway configured:
@@ -125,10 +125,10 @@ function createVibecoderAccount(deps) {
       }
     } catch {}
     const res = await request("/v1/models", { token: t, base: gateway })
-    if (res.status === 401) { forget("Your VibeCoder sign-in was disconnected. Sign in again."); return { synced: false, signedOut: true } }
-    if (!res.ok) throw new Error(res.data?.error?.message || `Could not load VibeCoder models (HTTP ${res.status}).`)
+    if (res.status === 401) { forget("Your BDCoder sign-in was disconnected. Sign in again."); return { synced: false, signedOut: true } }
+    if (!res.ok) throw new Error(res.data?.error?.message || `Could not load BDCoder models (HTTP ${res.status}).`)
     const profile = profileFromModels(gateway, res.data.data)
-    if (!profile) throw new Error("VibeCoder returned no models.")
+    if (!profile) throw new Error("BDCoder returned no models.")
     profiles.upsert(profile)
     emit("auth.models", { count: profile.models.length })
     return { synced: true, count: profile.models.length }
@@ -173,13 +173,13 @@ function createVibecoderAccount(deps) {
         return { code: pending.code, url: pending.url, expiresIn: Math.round((pending.expiresAt - now()) / 1000) }
       }
       lastError = ""
-      const res = await request("/api/device/code", { method: "POST", body: { device_name: String(deps.deviceName || "VibeCoder app").slice(0, 60) } })
+      const res = await request("/api/device/code", { method: "POST", body: { device_name: String(deps.deviceName || "BDCoder app").slice(0, 60) } })
       if (!res.ok || !res.data.device_code || !res.data.user_code) {
-        const message = res.status === 503 ? "VibeCoder sign-in is not available right now. Try again later." : res.status === 429 ? "Too many sign-in attempts. Try again in a few minutes." : `Could not start sign-in (HTTP ${res.status}).`
+        const message = res.status === 503 ? "BDCoder sign-in is not available right now. Try again later." : res.status === 429 ? "Too many sign-in attempts. Try again in a few minutes." : `Could not start sign-in (HTTP ${res.status}).`
         throw new Error(message)
       }
       const url = String(res.data.verification_uri_complete || `${baseUrl}/connect?code=${res.data.user_code}`)
-      if (!url.startsWith(`${baseUrl}/`)) throw new Error("The sign-in page address was not from VibeCoder.")
+      if (!url.startsWith(`${baseUrl}/`)) throw new Error("The sign-in page address was not from BDCoder.")
       pending = { code: res.data.user_code, url, deviceCode: res.data.device_code, interval: Math.max(2, Number(res.data.interval) || 5), expiresAt: now() + (Number(res.data.expires_in) || 600) * 1000 }
       if (pollTimer) clearTimeout(pollTimer)
       schedule()
@@ -196,7 +196,7 @@ function createVibecoderAccount(deps) {
       if (fresh || !info || now() - infoAt > STATUS_TTL) {
         try {
           const res = await request("/v1/account", { token: t })
-          if (res.status === 401) { forget("Your VibeCoder sign-in was disconnected. Sign in again."); return { connected: false, email: null, provider: PROVIDER_NAME, pending: null, error: lastError } }
+          if (res.status === 401) { forget("Your BDCoder sign-in was disconnected. Sign in again."); return { connected: false, email: null, provider: PROVIDER_NAME, pending: null, error: lastError } }
           if (res.ok) { info = res.data; infoAt = now() }
         } catch {}
         if (!profiles.exists()) syncModels().catch(() => {})

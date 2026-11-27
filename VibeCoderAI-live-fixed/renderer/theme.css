@@ -1,4 +1,4 @@
-/* VibeCoder AI — dark IDE-style theme */
+/* BDCoder AI — dark IDE-style theme */
 
 :root {
   color-scheme: dark;
@@ -195,7 +195,7 @@ html[data-theme="amoled"] {
   --logo-2: #c8701f;
 }
 
-/* Ember: a warm, calm dark theme (VibeCoder's own palette). */
+/* Ember: a warm, calm dark theme (BDCoder's own palette). */
 html[data-theme="ember"] {
   color-scheme: dark;
   /* the interface text scale (Settings > Interface Setting > UI font size) */

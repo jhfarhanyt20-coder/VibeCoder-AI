@@ -1,6 +1,6 @@
-# Contributing to VibeCoder AI
+# Contributing to BDCoder AI
 
-Thanks for helping improve VibeCoder AI. The project is proprietary software;
+Thanks for helping improve BDCoder AI. The project is proprietary software;
 the source is public so users can inspect the engine, report issues, and verify
 releases. Please read this before opening a pull request.
 

@@ -1,4 +1,4 @@
-# vibe-core: VibeCoder AI engine
+# vibe-core: BDCoder AI engine
 
 Own CLI + own SDK + own agent loop. Node >= 20. The desktop app adds `electron-updater` for in-app updates; the core engine has no runtime dependencies.
 
@@ -58,7 +58,7 @@ Custom provider profiles are stored in `~/.vibe/profiles.json`; API keys are sto
 ## SDK
 ```js
 const { createVibe } = require("./sdk")
-const vibe = createVibe({ agentName: "VibeCoder AI", permission: "ask" })
+const vibe = createVibe({ agentName: "BDCoder AI", permission: "ask" })
 const s = await vibe.session.create({ dir: "D:\\proj", profile: "groq-gpt-oss-120b" })
 for await (const ev of vibe.session.prompt(s.id, "fix the failing test")) {
   if (ev.type === "permission.ask") await vibe.permission.reply(ev.permissionId, "once") // | "always" | "deny"
@@ -77,7 +77,7 @@ compaction.start, compaction.end, error, done.
   any HTTPS URL serving `{ mcp:[], plugins:[], skills:[] }` JSON (cached, works offline from cache).
 
 ## Not done yet (honest list)
-Hosted VibeCoderAI API device login, provider-specific thinking-block replay for Anthropic extended thinking. Connector OAuth (Authorization Code + PKCE) is implemented; only the hosted account flow is not shipped.
+Hosted BDCoder AI API device login, provider-specific thinking-block replay for Anthropic extended thinking. Connector OAuth (Authorization Code + PKCE) is implemented; only the hosted account flow is not shipped.
 (bash is exercised on Windows PowerShell daily; MCP client + plugins + skills + per-tool diff previews are done.)
 
 ## In-app browser agent control
@@ -96,7 +96,7 @@ Provider selection is resolved against a fresh disk-backed `providerCatalog` bef
 - Regression coverage includes a real engine test proving an unsafe compaction does not send an LLM request, plus source wiring checks for the UI/event path.
 
 
-## VibeCoder engine changes (this build)
+## BDCoder engine changes (this build)
 
 1. **Prompt bug fixed**: `${agentName}` was printed literally; the leaked example model name is gone.
 2. **Per-model prompt notes** (`modelHints` in `core/agent/prompt.js`: gpt/o-series, gemini, deepseek/grok/qwen/kimi/llama/glm) + a short *Code conduct* block (no commit/push unless asked, follow conventions, `file:line` references, secrets, todo usage, prefer dedicated tools) + git repo/branch in the environment block.
@@ -115,10 +115,10 @@ Provider selection is resolved against a fresh disk-backed `providerCatalog` bef
 15. **Prompt caching for every provider (0.3.24)** (`core/llm/cache.js`): decided by API format only, never by provider or model name, so any custom provider gets it. The agent keeps the request prefix byte-for-byte stable from step to step (system prompt, tool list, history; the final step adds its closing-summary note at the very end and sends no `tool_choice`). Anthropic Messages and OpenAI Chat requests also carry `cache_control` marks; an endpoint that answers 400 to them is retried once without and then remembered, while context/rate/key/model errors keep their own handling. OpenAI Responses relies on the provider's automatic prefix cache. Measured on real endpoints: 98-100% of the final step's input read from cache. `quirks.promptCache: false` turns the marks off for a profile.
 16. **Always allow remembers command families**: approving `git commit -m "x"` also allows later `git commit …` (also `npm run <script>`, `ls`, `pytest`, `cargo/go/dotnet build|test`), matched on clean tokens only; risky commands are still remembered exactly. The prompt shows what will be remembered. `edit` also matches typographic look-alikes (curly quotes, en/em dashes, non-breaking spaces).
 17. **Renderer split**: `renderer/app.js` is split into ordered parts in `renderer/app/` (chat, live events, settings, extensions, models, features, activity, account, startup); together they are the same code.
-18. **Computer Use like a person at the desk (0.3.25)**: the window becomes a narrow always-on-top side panel during computer use and gets its exact size back afterwards; a full-screen glow and a label say the agent is in control (hidden from the agent's own screenshots). Screenshots are clean pictures with a numbered list (`at (x, y)`), clicks on VibeCoder's own panel are refused, and the agent follows plan → open → look → batch → verify → handle dialogs → final screenshot → computer_done. Also: one permission prompt for parallel calls on the same file, background shells scoped to their own chat, quiet notifications (only done / approval / question / error, silent toast + VibeCoder's own soft chime, gone after a few seconds), the warm Ember theme (default for new users), one provider icon style, AMD and a fixed Agnes AI address in the built-in providers, the VibeCoderAI account panel with Log in / Log out and its models, and rebuilt Keyboard Shortcuts / Commands / Hooks settings pages.
+18. **Computer Use like a person at the desk (0.3.25)**: the window becomes a narrow always-on-top side panel during computer use and gets its exact size back afterwards; a full-screen glow and a label say the agent is in control (hidden from the agent's own screenshots). Screenshots are clean pictures with a numbered list (`at (x, y)`), clicks on BDCoder's own panel are refused, and the agent follows plan → open → look → batch → verify → handle dialogs → final screenshot → computer_done. Also: one permission prompt for parallel calls on the same file, background shells scoped to their own chat, quiet notifications (only done / approval / question / error, silent toast + BDCoder's own soft chime, gone after a few seconds), the warm Ember theme (default for new users), one provider icon style, AMD and a fixed Agnes AI address in the built-in providers, the BDCoder AI account panel with Log in / Log out and its models, and rebuilt Keyboard Shortcuts / Commands / Hooks settings pages.
 
 Optional future work: a native PTY terminal and persistent multi-language LSP servers. The current pipe-based shell and project TypeScript diagnostics deliberately avoid adding native/runtime dependencies.
 
 ## License
 
-Copyright (c) 2026 VibeCoder AI. All rights reserved. This repository is proprietary; viewing or cloning the source does not grant permission to use, copy, modify, or redistribute it. See the [LICENSE](../LICENSE) file at the repository root for the full terms. Third-party dependencies remain under their own licenses.
+Copyright (c) 2026 BDCoder AI. All rights reserved. This repository is proprietary; viewing or cloning the source does not grant permission to use, copy, modify, or redistribute it. See the [LICENSE](../LICENSE) file at the repository root for the full terms. Third-party dependencies remain under their own licenses.

@@ -12,7 +12,7 @@ const { homeDir } = require("../core/util")
 const { redactText } = require("../core/harness/guard")
 
 const LOCAL_COMMANDS = ["help", "model", "models", "fallback", "agent", "new", "sessions", "use", "rename", "delete", "compact", "undo", "redo", "steps", "step", "diff", "history", "export", "usage", "skills", "skill", "playbooks", "agents", "recipes", "recipe", "memory", "mcp", "plugins", "extensions", "tools", "doctor", "config", "theme", "access", "computer", "connectors", "provider", "permissions", "locks", "forms", "crew", "shells", "shell", "trail", "todos", "browser", "marketplace", "registry", "auth", "profile", "reasoning", "thinking", "verbose", "yes", "dir", "clear", "exit", "quit"]
-const HELP = `VibeCoder chat
+const HELP = `BDCoder chat
 
   /model [id]       pick/switch model    /agent [id]     pick/switch persona
   /models           provider catalog    /new [title]    new session
@@ -77,7 +77,7 @@ function printHistory(session, log, limit = 12) {
   const messages = (session.messages || []).filter((m) => (m.parts || []).some((p) => !p.agentOnly && ["text", "tool_use", "image"].includes(p.type))).slice(-Math.min(100, Math.max(1, limit)))
   if (!messages.length) { log(c.dim("No saved messages yet.")); return }
   for (const message of messages) {
-    log(c.bold(message.role === "assistant" ? "VibeCoder" : "You"))
+    log(c.bold(message.role === "assistant" ? "BDCoder" : "You"))
     for (const part of message.parts || []) {
       if (part.agentOnly) continue
       if (part.type === "text") log(redactText(safeText(part.text)))
@@ -448,7 +448,7 @@ async function runChat({ vibe, dir, profile, flags = {}, agent, session: initial
     await refresh()
     if (screen) { screen.setHistory(session); screen.open() }
     else {
-      log(c.accent("◆ ") + c.bold("VibeCoder") + c.dim("  " + require("../package.json").version))
+      log(c.accent("◆ ") + c.bold("BDCoder") + c.dim("  " + require("../package.json").version))
       log(c.dim(`${path.basename(dir)}  ${connection ? "attached to " + connection.url : "standalone engine"}\n${dir}`))
       log(c.dim("Ctrl+P commands   /model provider picker   /help all controls"))
     }
@@ -464,7 +464,7 @@ async function runChat({ vibe, dir, profile, flags = {}, agent, session: initial
       draft = ""
       if (answer === null) { if (input.closed || exiting) break; continue }
       if (answer?.action === "palette") {
-        const choice = await input.pick(LOCAL_COMMANDS.map((s) => ({ label: "/" + s, value: "/" + s })), "VibeCoder commands")
+        const choice = await input.pick(LOCAL_COMMANDS.map((s) => ({ label: "/" + s, value: "/" + s })), "BDCoder commands")
         draft = choice?.value || answer.draft
         continue
       }

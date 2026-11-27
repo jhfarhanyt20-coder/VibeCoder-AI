@@ -1,4 +1,4 @@
-# VibeCoder full-screen terminal — design and resume plan
+# BDCoder full-screen terminal — design and resume plan
 
 > **Historical review record.** The version strings and screenshots below are
 > from the v0.3.10–0.3.11 review window. For the current version and test
@@ -19,7 +19,7 @@ native Electron font/provider/sidebar QA, and archive tests passed.
 
 ## Direction
 
-Keep VibeCoder's own name, copy, typography and palette. Rebuild common terminal
+Keep BDCoder's own name, copy, typography and palette. Rebuild common terminal
 patterns, not another product's assets, prompts, source or signature logo.
 The official terminal guide used only for behaviour reference describes
 full-screen interactive chat, plain automation, and palette fallbacks:
@@ -28,20 +28,20 @@ https://opencode.ai/docs/cli
 The design is a **terminal workspace**, not a log viewer:
 
 ```text
- Desktop / session title                                  VibeCoder 0.3.10
+ Desktop / session title                                  BDCoder 0.3.10
 
-                           VibeCoder
+                           BDCoder
                  Work on your next change.
           [ fresh-session home; transcript replaces this after a prompt ]
 
   You                                                        Context (wide)
   user message                                               tokens / limit
 
-  VibeCoder                                                  Todo
+  BDCoder                                                  Todo
   readable response / code / concise tool activities          Crew
                                                              modified files
 
-  > Ask VibeCoder to work in this project...
+  > Ask BDCoder to work in this project...
     Pilot   provider name once                 ask before changes   context
   Enter send   Ctrl+J newline   Ctrl+P commands                Desktop
 ```

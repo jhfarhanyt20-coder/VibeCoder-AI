@@ -1,5 +1,5 @@
 "use strict"
-// VibeCoder built-in plugin: what a video project needs on this computer, and
+// BDCoder built-in plugin: what a video project needs on this computer, and
 // a free offline voice-over from the voices installed in Windows (no key, no
 // internet). The audio file is written inside the project.
 const fs = require("fs")
@@ -60,7 +60,7 @@ module.exports = {
         ])
         const voices = await windowsVoices()
         const tips = []
-        if (/FFmpeg: not found/.test(lines[0])) tips.push("Install FFmpeg (free): winget install --id Gyan.FFmpeg -e  — then restart VibeCoder.")
+        if (/FFmpeg: not found/.test(lines[0])) tips.push("Install FFmpeg (free): winget install --id Gyan.FFmpeg -e  — then restart BDCoder.")
         if (/Node\.js: not found/.test(lines[2])) tips.push("Install Node.js LTS (free) for Remotion animation videos: winget install OpenJS.NodeJS.LTS")
         return [
           ...lines,

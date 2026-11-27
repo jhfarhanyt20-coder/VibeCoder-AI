@@ -18,12 +18,12 @@ const readJson = (f, fb) => {
   }
 }
 
-// Built-in skill texts and plugin sources live in ./builtin (VibeCoder's own).
+// Built-in skill texts and plugin sources live in ./builtin (BDCoder's own).
 const builtinFile = (...p) => { try { return fs.readFileSync(path.join(__dirname, "builtin", ...p), "utf8") } catch { return "" } }
 const skill = (id, title, description, tags) => ({ id, title, description, tags, content: builtinFile("skills", id + ".md") })
 const plugin = (id, title, description, tags) => ({ id, name: id, title, description, tags, spec: id, content: builtinFile("plugins", id + ".js") })
 
-/** The shipped catalog: well-known, no-key MCP servers + VibeCoder skills and plugins. */
+/** The shipped catalog: well-known, no-key MCP servers + BDCoder skills and plugins. */
 const BUILTIN = {
   mcp: [
     { name: "everything", title: "Everything (MCP test server)", description: "Reference MCP server exercising tools, resources and prompts. Needs Node.js (npx).", type: "local", command: ["npx", "-y", "@modelcontextprotocol/server-everything"], tags: ["demo", "official"] },

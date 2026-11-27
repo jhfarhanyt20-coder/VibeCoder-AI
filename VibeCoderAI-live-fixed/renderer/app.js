@@ -178,10 +178,10 @@ function showError(title, detail, opts = {}) {
   $("error-open-log").hidden = tone !== "error"
   banner.hidden = false
   if (tone === "error") {
-    console.error(`[VibeCoder] ${heading}`, full)
+    console.error(`[BDCoder] ${heading}`, full)
     try { window.vibe?.logError?.({ title: heading, detail: full }) } catch {}
   } else {
-    console.warn(`[VibeCoder] ${heading}`, full)
+    console.warn(`[BDCoder] ${heading}`, full)
   }
 }
 function hideError(key) {
@@ -277,7 +277,7 @@ function notifySoundEnabled() {
 }
 
 /**
- * VibeCoder's own notification sound: two soft, short sine notes (a rising
+ * BDCoder's own notification sound: two soft, short sine notes (a rising
  * fifth) with a gentle fade, quiet enough never to startle. Made on the fly
  * with Web Audio, so there is no sound file and no system "ding".
  */
@@ -315,7 +315,7 @@ function playChime() {
 }
 
 /**
- * When VibeCoder tells you something, like a professional tool: only when you
+ * When BDCoder tells you something, like a professional tool: only when you
  * are away from the app (another window, minimized) and only when it matters:
  *   done       the task is finished
  *   permission the agent waits for your approval
@@ -941,7 +941,7 @@ async function autoContinueNow() {
       { key: "autocontinue" },
     )
     notifyAgent(
-      "VibeCoder paused",
+      "BDCoder paused",
       `It stopped after ${AUTO_CONTINUE_MAX} automatic continuations. Open the app to continue.`,
       "attention",
     )

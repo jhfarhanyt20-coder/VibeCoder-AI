@@ -38,7 +38,7 @@ function git(cwd, args, { input, buffer = false, allowFail = false } = {}) {
     throw new Error(`git ${args[0]} failed: ${msg}`)
   }
 }
-const IDENT = ["-c", "user.name=VibeCoder Crew", "-c", "user.email=crew@vibecoder.local", "-c", "commit.gpgsign=false", "-c", `core.hooksPath=${process.platform === "win32" ? "NUL" : "/dev/null"}`]
+const IDENT = ["-c", "user.name=BDCoder Crew", "-c", "user.email=crew@vibecoder.local", "-c", "commit.gpgsign=false", "-c", `core.hooksPath=${process.platform === "win32" ? "NUL" : "/dev/null"}`]
 
 function gitTop(dir) {
   if (!hasGit()) return null
@@ -120,7 +120,7 @@ function create({ dir, id, home }) {
         } catch {}
       }
       git(root, ["add", "-A"])
-      git(root, [...IDENT, "commit", "-q", "--no-verify", "--allow-empty", "-m", "VibeCoder Crew: starting point"])
+      git(root, [...IDENT, "commit", "-q", "--no-verify", "--allow-empty", "-m", "BDCoder Crew: starting point"])
       const base = git(root, ["rev-parse", "HEAD"]).trim()
       return { mode: "git", root, cwd: rel ? path.join(root, rel) : root, base, branch, top, rel, source: path.resolve(dir), createdAt: Date.now() }
     } catch (e) {

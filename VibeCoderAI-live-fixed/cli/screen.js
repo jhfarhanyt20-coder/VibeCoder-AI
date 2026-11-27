@@ -1,6 +1,6 @@
 "use strict"
 /**
- * VibeCoder's cell-based terminal workspace. No terminal/UI dependencies:
+ * BDCoder's cell-based terminal workspace. No terminal/UI dependencies:
  * structured transcript, fixed composer, contextual panel and keyboard modals.
  * Only presentation lives here; the SDK still owns every action and answer.
  */
@@ -23,7 +23,7 @@ const number = (value) => {
   const n = Number(value) || 0
   return n >= 1000000 ? (n / 1000000).toFixed(1) + "M" : n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n)
 }
-// VibeCoder's own block wordmark (5 rows): "VIBE" in the accent colour,
+// BDCoder's own block wordmark (5 rows): "BD" in the accent colour,
 // "CODER" in the text colour. Plain block characters, width 1 in every console.
 const LETTERS = {
   V: ["█   █", "█   █", "█   █", " █ █ ", "  █  "],
@@ -36,7 +36,7 @@ const LETTERS = {
   R: ["████ ", "█   █", "████ ", "█  █ ", "█   █"],
 }
 const wordRows = (word) => LETTERS.V.map((_, row) => [...word].map((ch) => LETTERS[ch][row]).join(" "))
-const WORDMARK = { vibe: wordRows("VIBE"), coder: wordRows("CODER") }
+const WORDMARK = { vibe: wordRows("BD"), coder: wordRows("CODER") }
 const WORDMARK_WIDTH = WORDMARK.vibe[0].length + 2 + WORDMARK.coder[0].length
 // Friendly names for tool rows; unknown tools keep their own name.
 const TOOL_LABELS = {
@@ -61,7 +61,7 @@ const COMMAND_INFO = {
   yes: "toggle Full Access", dir: "working folder", clear: "clear the screen", exit: "leave", quit: "leave", fallback: "failover chain for outages",
 }
 const seconds = (ms) => (ms >= 10000 ? Math.round(ms / 1000) + "s" : (ms / 1000).toFixed(1) + "s")
-// The terminal window's own title bar ("VibeCoder · project"); controls removed.
+// The terminal window's own title bar ("BDCoder · project"); controls removed.
 const windowTitle = (text) => "\x1b]0;" + String(text).replace(/[\x00-\x1f\x7f-\x9f]/g, "").slice(0, 120) + "\x07"
 
 class Canvas {
@@ -152,18 +152,18 @@ class TerminalScreen {
     this.opened = true
     // Alternate buffer and explicit background replace, not persist, PS blue.
     this.output.write("\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1006h" + screenStyle() + "\x1b[2J\x1b[H")
-    // The real console window: dark title bar + VibeCoder icon (Windows; undone on close).
+    // The real console window: dark title bar + BDCoder icon (Windows; undone on close).
     if (this.output === process.stdout) { try { this.restoreChrome = require("./window-chrome").applyWindowChrome({ output: this.output, onReady: () => { this.windowControls = true; this.lastTitle = null; this.updateTitle(); this.previous = []; this.schedule() } }) } catch {} }
     this.updateTitle()
     this.render()
   }
   /** Title bar buttons: min / max / drag go to the window helper. */
   windowAction(action) { return !!this.restoreChrome?.send?.(action) }
-  /** The window's title bar shows VibeCoder and the project, not a file path. */
+  /** The window's title bar shows BDCoder and the project, not a file path. */
   updateTitle() {
     if (!this.opened || this.closed) return
     const name = this.context.workspace || path.basename(this.context.directory || "") || ""
-    const title = `VibeCoder${name ? " · " + name : ""}${this.busy ? " · working" : ""}`
+    const title = `BDCoder${name ? " · " + name : ""}${this.busy ? " · working" : ""}`
     if (title === this.lastTitle) return
     this.lastTitle = title
     this.output.write(windowTitle(title))
@@ -183,7 +183,7 @@ class TerminalScreen {
     this.output.off?.("resize", this.onResize)
     this.tick(false)
     try { this.restoreChrome?.() } catch {}
-    if (this.opened) this.output.write("\x1b[?1000l\x1b[?1006l\x1b[0m\x1b[?25h\x1b[?1049l" + windowTitle("VibeCoder"))
+    if (this.opened) this.output.write("\x1b[?1000l\x1b[?1006l\x1b[0m\x1b[?25h\x1b[?1049l" + windowTitle("BDCoder"))
     this.opened = false
   }
   schedule() {
@@ -201,7 +201,7 @@ class TerminalScreen {
     for (const message of session.messages || []) {
       for (const part of message.parts || []) {
         if (part.agentOnly) continue
-        if (part.type === "text" && part.text) this.addBlock({ kind: message.role === "assistant" ? "assistant" : "user", text: clean(part.text), speaker: message.role === "assistant" ? "VibeCoder" : "You" })
+        if (part.type === "text" && part.text) this.addBlock({ kind: message.role === "assistant" ? "assistant" : "user", text: clean(part.text), speaker: message.role === "assistant" ? "BDCoder" : "You" })
         else if (part.type === "image") this.addBlock({ kind: "activity", text: "Image attachment", status: "done" })
         else if (part.type === "tool_use") {
           const block = { kind: "tool", id: part.id, name: part.name, brief: this.brief(part.args), args: part.args, status: "done", output: "" }
@@ -237,7 +237,7 @@ class TerminalScreen {
       if (ev.type === "reasoning.delta" && !state.showReasoning || state.quiet && ev.subagentId) return
       let block = this.streams.get(key)
       if (!block) {
-        block = this.addBlock({ kind: ev.type === "reasoning.delta" ? "thinking" : "assistant", speaker: ev.subagentId ? `Crew / ${ev.subagentName || "helper"}` : "VibeCoder", text: "" })
+        block = this.addBlock({ kind: ev.type === "reasoning.delta" ? "thinking" : "assistant", speaker: ev.subagentId ? `Crew / ${ev.subagentName || "helper"}` : "BDCoder", text: "" })
         this.streams.set(key, block)
       }
       block.text = (block.text + clean(ev.delta || "")).slice(-200000)
@@ -434,7 +434,7 @@ class TerminalScreen {
     let cursor = null
     const small = cols < 35 || rows < 12
     if (small) {
-      canvas.put(0, 0, short("VibeCoder / widen terminal", cols), { fg: "accent", bold: true })
+      canvas.put(0, 0, short("BDCoder / widen terminal", cols), { fg: "accent", bold: true })
       const value = this.input?.secret ? "*".repeat(segments(this.input.text).length) : this.input?.text || ""
       if (rows > 1) canvas.put(0, rows - 2, short("> " + value, cols))
       if (rows > 2) canvas.put(0, rows - 1, short("Enter send / Ctrl+C exit", cols), { fg: "muted" })
@@ -449,7 +449,7 @@ class TerminalScreen {
     const mainWidth = cols - sideWidth - left
     const X = left
     const title = this.context.title && this.context.title !== "New session" ? this.context.title : "New task"
-    // VibeCoder's own title bar: brand, project and task on the left; the
+    // BDCoder's own title bar: brand, project and task on the left; the
     // model and version on the right; window buttons when the native bar is hidden.
     const project = this.context.workspace || path.basename(this.context.directory || "") || "Workspace"
     canvas.fill(0, 0, cols, 1, { bg: "surface" })
@@ -492,7 +492,7 @@ class TerminalScreen {
     regions.content = { x: X + 2, y: 3, width: mainWidth - 4, height: Math.max(1, inputY - 4) }
     let contentStart = 0, maxStart = 0
     if (home) {
-      const logo = "VibeCoder"
+      const logo = "BDCoder"
       const y = Math.max(3, inputY - 5)
       if (rows >= 24 && mainWidth >= WORDMARK_WIDTH + 6) {
         const wordmarkX = X + Math.floor((mainWidth - WORDMARK_WIDTH) / 2)
@@ -522,7 +522,7 @@ class TerminalScreen {
     const start = Math.max(0, before.length - visibleCount)
     if (text) {
       for (let i = 0; i < visibleCount; i++) canvas.put(inputX + 3, inputY + 1 + i, inputLines[start + i] || "", { bg: "surface" })
-    } else canvas.put(inputX + 3, inputY + 1, short(this.busy ? "VibeCoder is working… (Ctrl+C stops)" : "Ask VibeCoder to work in this project...", inputWidth - 5), { fg: "muted", bg: "surface" })
+    } else canvas.put(inputX + 3, inputY + 1, short(this.busy ? "BDCoder is working… (Ctrl+C stops)" : "Ask BDCoder to work in this project...", inputWidth - 5), { fg: "muted", bg: "surface" })
     const identity = `${this.context.agent || "Pilot"} · ${this.context.provider || "Select provider"}${this.context.model ? " · " + this.context.model : ""}`
     const mode = inputWidth < 58 ? this.context.yes ? "Full" : "Ask" : this.context.yes ? "Full Access" : "Ask before changes"
     const percent = this.context.percent == null ? "" : inputWidth < 58 ? `  ${this.context.percent}%` : `  ${this.context.percent}% context`
@@ -646,7 +646,7 @@ class TerminalScreen {
     for (const row of canvas.rows) for (const cell of row) { cell.fg = "muted"; cell.bold = false }
     canvas.fill(x - 1, y - 1, width + 2, height + 2, { bg: "subtle" })
     canvas.fill(x, y, width, height, { bg: "surface" })
-    const title = inspector?.title || (picker ? active.label : dialog?.title || (active?.secret ? "Secure input" : "VibeCoder"))
+    const title = inspector?.title || (picker ? active.label : dialog?.title || (active?.secret ? "Secure input" : "BDCoder"))
     canvas.put(x + 2, y + 1, short(title, width - 4), { fg: dialog?.kind === "permission" ? "warning" : "text", bg: "surface", bold: true })
     if (inspector) {
       const body = styledLines(inspector.text, width - 4)

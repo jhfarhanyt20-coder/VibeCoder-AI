@@ -1,8 +1,8 @@
 "use strict"
 /**
- * VibeCoder line icons: one consistent, monochrome set (24x24, 1.7 stroke,
+ * BDCoder line icons: one consistent, monochrome set (24x24, 1.7 stroke,
  * currentColor) used in place of colored emoji in navigation, tool steps and
- * small buttons. Drawn for VibeCoder; no third-party icon assets.
+ * small buttons. Drawn for BDCoder; no third-party icon assets.
  * Exposes window.VcIcons = { svg(name), set(el, name, fallback), toolIcon(toolName) }.
  */
 ;(function () {

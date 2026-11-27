@@ -13,7 +13,7 @@ const tools = require("../core/tools")
   // Standard OpenAI-compatible: Bearer.
   assert.deepEqual(authHeaders("https://api.groq.com/openai/v1", "k1"), { authorization: "Bearer k1" })
   // OpenRouter: Bearer + its documented attribution headers.
-  assert.deepEqual(authHeaders("https://openrouter.ai/api/v1", "k2"), { authorization: "Bearer k2", "http-referer": "https://vibecoderai.onrender.com", "x-title": "VibeCoder AI" })
+  assert.deepEqual(authHeaders("https://openrouter.ai/api/v1", "k2"), { authorization: "Bearer k2", "http-referer": "https://bdcoderai.onrender.com", "x-title": "BDCoder AI" })
   // Azure: api-key, never Bearer.
   for (const u of ["https://me.openai.azure.com/openai/v1", "https://me.cognitiveservices.azure.com/openai/v1", "https://me.services.ai.azure.com/models"]) {
     assert.deepEqual(authHeaders(u, "k3"), { "api-key": "k3" }, u)

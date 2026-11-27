@@ -24,7 +24,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: VibeCoder AI version
+      label: BDCoder AI version
       description: Settings → App Updates → Installed version, or `vibe --version`.
       placeholder: 0.3.12
     validations:

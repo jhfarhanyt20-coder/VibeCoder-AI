@@ -194,7 +194,7 @@ const api = {
   restartEvents: call("restartEvents"),
   logError: call("logError"),
   openErrorLog: call("openErrorLog"),
-  toast: (m) => ipcRenderer.invoke("vibe:notify", { title: "VibeCoder AI", body: String(m || "") }).catch(() => {}),
+  toast: (m) => ipcRenderer.invoke("vibe:notify", { title: "BDCoder AI", body: String(m || "") }).catch(() => {}),
 
   // ---- desktop app auto-update (stable channel, production only) ----
   appUpdateStatus: call("appUpdateStatus"),

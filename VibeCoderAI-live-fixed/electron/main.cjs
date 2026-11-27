@@ -1,12 +1,16 @@
 "use strict"
 /**
- * VibeCoder AI - Electron entry (dev mode).
+ * BDCoder AI - Electron entry (dev mode).
  * Loads renderer/index.html and wires window.vibe to the vibe-core SDK
  * (in-process engine) + the `vibe serve` HTTP/SSE API started in backend.cjs.
  */
 const path = require("path")
 const { pathToFileURL } = require("node:url")
 const { app, BrowserWindow, Menu, Tray, clipboard, shell, nativeImage, session, dialog } = require("electron")
+// Keep settings, sign-in and chats in the same folder after the BDCoder rename.
+if (typeof app.setPath === "function" && typeof app.getPath === "function") {
+  app.setPath("userData", path.join(app.getPath("appData"), "vibe-core"))
+}
 const { initBackend, shutdownBackend } = require("./backend.cjs")
 const updater = require("./updater.cjs")
 const { setWindowTheme } = require("./window-theme.cjs")
@@ -75,10 +79,10 @@ function transparentTitleBarIcon() {
 }
 
 /* ---------- close to the tray ----------
-   The window's close button hides VibeCoder AI in the Windows tray (notification
+   The window's close button hides BDCoder AI in the Windows tray (notification
    area) instead of quitting, so a stray click never ends the app or a running
    agent. Click the tray icon to bring the window back; right-click it and choose
-   "Quit VibeCoder AI" to exit for real. Installing an update and shutting
+   "Quit BDCoder AI" to exit for real. Installing an update and shutting
    Windows down still quit normally (both go through before-quit). */
 let quitting = false
 let tray = null
@@ -107,11 +111,11 @@ function createTray() {
     if (!img || img.isEmpty()) return null
     if (process.platform === "win32") img = img.resize({ width: 16, height: 16 })
     tray = new Tray(img)
-    tray.setToolTip("VibeCoder AI")
+    tray.setToolTip("BDCoder AI")
     tray.setContextMenu(Menu.buildFromTemplate([
-      { label: "Open VibeCoder AI", click: showMainWindow },
+      { label: "Open BDCoder AI", click: showMainWindow },
       { type: "separator" },
-      { label: "Quit VibeCoder AI", click: quitFromTray },
+      { label: "Quit BDCoder AI", click: quitFromTray },
     ]))
     tray.on("click", showMainWindow)
     tray.on("double-click", showMainWindow)
@@ -130,18 +134,18 @@ function closeToTray(win) {
     win.hide()
     if (!trayHintShown && process.platform === "win32") {
       trayHintShown = true
-      // A quiet note like every other VibeCoder notification: no Windows sound
+      // A quiet note like every other BDCoder notification: no Windows sound
       // (the app plays its own soft chime), and it slides away after a few seconds.
       try {
         const { Notification } = require("electron")
         if (Notification && typeof Notification.isSupported === "function" && Notification.isSupported()) {
-          const n = new Notification({ title: "VibeCoder AI is still running", body: "It keeps working in the tray. Right-click the tray icon and choose Quit to exit.", silent: true, timeoutType: "default" })
+          const n = new Notification({ title: "BDCoder AI is still running", body: "It keeps working in the tray. Right-click the tray icon and choose Quit to exit.", silent: true, timeoutType: "default" })
           n.on("click", () => { try { win.show(); win.focus() } catch {} })
           n.show()
           setTimeout(() => { try { n.close() } catch {} }, 2500)
           try { win.webContents.send("vibe:event", { type: "notification.chime", data: {} }) } catch {}
         } else {
-          tray.displayBalloon({ title: "VibeCoder AI is still running", content: "It is in the tray. Right-click the icon and choose Quit to exit.", iconType: "info" })
+          tray.displayBalloon({ title: "BDCoder AI is still running", content: "It is in the tray. Right-click the icon and choose Quit to exit.", iconType: "info" })
         }
       } catch {}
     }
@@ -154,7 +158,7 @@ function createWindow() {
     height: 860,
     minWidth: 980,
     minHeight: 640,
-    title: "VibeCoder AI",
+    title: "BDCoder AI",
     // Keep the packaged/taskbar application identity, but do not paint the
     // tiny icon in the Windows native title bar. Other platforms keep the
     // normal app icon.
@@ -254,11 +258,11 @@ if (!gotLock) {
     try {
       dialog.showMessageBoxSync({
         type: "info",
-        title: "VibeCoder AI is already open",
-        message: "VibeCoder AI is already open",
+        title: "BDCoder AI is already open",
+        message: "BDCoder AI is already open",
         detail: app.isPackaged
-          ? "Another VibeCoder AI window is running (maybe the dev version started with npm run app). Both use the same chats, so only one can run at a time. Close the other one first, then open this again."
-          : "The installed VibeCoder AI app is running. The dev version (npm run app) uses the same chats, so only one can run at a time. Close the installed app first, then start the dev version again.",
+          ? "Another BDCoder AI window is running (maybe the dev version started with npm run app). Both use the same chats, so only one can run at a time. Close the other one first, then open this again."
+          : "The installed BDCoder AI app is running. The dev version (npm run app) uses the same chats, so only one can run at a time. Close the installed app first, then start the dev version again.",
         buttons: ["OK"],
       })
     } catch {}

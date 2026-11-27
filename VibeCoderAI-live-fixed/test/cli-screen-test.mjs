@@ -50,7 +50,7 @@ test("fresh home is centered, provider identity occurs once in the composer and 
     const identity = frame.canvas.line(frame.regions.composer.y + frame.regions.composer.height - 1)
     assert.equal(identity.match(/cloudfire/g)?.length, 1)
     assert.ok(lines(t.screen).some((s) => s.includes("What should we build or fix today?")))
-    assert.ok(lines(t.screen)[0].includes("VibeCoder") || lines(t.screen)[0].includes("Vibe"), "own title bar on the first row")
+    assert.ok(lines(t.screen)[0].includes("BDCoder") || lines(t.screen)[0].includes("Vibe"), "own title bar on the first row")
     assert.equal(t.text().includes("http://127"), false)
   } finally { t.ui.close(); await answer }
 })
@@ -66,7 +66,7 @@ test("chat transcript separates roles, activities and code while the composer/pa
     t.screen.event({ type: "usage", input: 1000, output: 50 }, { totals: { input: 1000, output: 50 }, costKnown: false })
     const frame = t.screen.frame()
     const text = frame.canvas.rows.map((_, i) => frame.canvas.line(i)).join("\n")
-    assert.ok(text.includes("You") && text.includes("VibeCoder") && text.includes("● Read") && text.includes("└ ok"))
+    assert.ok(text.includes("You") && text.includes("BDCoder") && text.includes("● Read") && text.includes("└ ok"))
     assert.ok(text.includes("Result") && text.includes("const a = 1"))
     assert.equal(frame.regions.composer.y, frame.canvas.height - frame.regions.composer.height - 2)
     assert.ok(frame.regions.panel.x >= frame.regions.content.x + frame.regions.content.width)
@@ -342,18 +342,18 @@ test("saved Full Access skips repeated permission dialogs after restarting the C
   }
 })
 
-test("own title bar: window title shows VibeCoder and the project, a header row, live working status", async () => {
+test("own title bar: window title shows BDCoder and the project, a header row, live working status", async () => {
   const t = terminal()
   const answer = t.ui.read("Compose", { multiline: true })
   try {
-    assert.ok(t.text().includes("\x1b]0;VibeCoder · Desktop\x07"), "the window title bar names VibeCoder and the project, not a file path")
+    assert.ok(t.text().includes("\x1b]0;BDCoder · Desktop\x07"), "the window title bar names BDCoder and the project, not a file path")
     t.screen.userMessage("Run something.")
     t.screen.event({ type: "run.start" })
     t.screen.event({ type: "tool.start", id: "sh-1", name: "bash", args: { command: "node -v" } })
     await new Promise((r) => setImmediate(r))
-    assert.ok(t.text().includes("\x1b]0;VibeCoder · Desktop · working\x07"), "the title says when the agent works")
+    assert.ok(t.text().includes("\x1b]0;BDCoder · Desktop · working\x07"), "the title says when the agent works")
     let all = lines(t.screen).join("\n")
-    assert.ok(lines(t.screen)[0].includes("VibeCoder") || lines(t.screen)[0].includes("Coder"), "header row")
+    assert.ok(lines(t.screen)[0].includes("BDCoder") || lines(t.screen)[0].includes("Coder"), "header row")
     assert.match(lines(t.screen)[0], /Desktop/)
     assert.match(all, /● Shell  node -v/)
     assert.match(all, /Working · \d/)
@@ -368,7 +368,7 @@ test("own title bar: window title shows VibeCoder and the project, a header row,
     t.screen.setContext({ workspace: "evil\x07\x1b]0;x" })
     assert.equal(t.text().includes("evil\x07"), false)
   } finally { t.ui.close(); await answer }
-  assert.ok(t.text().endsWith("\x1b]0;VibeCoder\x07") || t.text().includes("\x1b[?1049l\x1b]0;VibeCoder\x07"), "closing leaves a plain VibeCoder title")
+  assert.ok(t.text().endsWith("\x1b]0;BDCoder\x07") || t.text().includes("\x1b[?1049l\x1b]0;BDCoder\x07"), "closing leaves a plain BDCoder title")
 })
 
 test("typing / shows a command dropdown: filter, arrows choose, Tab completes, Enter runs the highlighted one", async () => {

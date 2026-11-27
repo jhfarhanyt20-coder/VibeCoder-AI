@@ -28,7 +28,7 @@ function tarEntry(name, content, mode = 0o644) {
 function buildArchive({ root = path.resolve(__dirname, ".."), output } = {}) {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"))
   const manifest = {
-    name: "vibecoder-cli", version: pkg.version, description: "VibeCoder terminal agent and VibeCore SDK",
+    name: "vibecoder-cli", version: pkg.version, description: "BDCoder terminal agent and VibeCore SDK",
     license: pkg.license, author: pkg.author, engines: pkg.engines,
     main: "sdk/index.js", bin: { vibe: "cli/vibe.js" },
   }
@@ -44,12 +44,12 @@ function buildArchive({ root = path.resolve(__dirname, ".."), output } = {}) {
   }
   for (const dir of ["core", "sdk", "cli"]) collect(dir)
   files.set("package.json", Buffer.from(JSON.stringify(manifest, null, 2)))
-  files.set("README.md", Buffer.from(`# VibeCoder CLI ${pkg.version}\n\nRequires Node.js 20+.\n\nInstall the reviewed release archive with \`npm install -g ./VibeCoder-CLI-${pkg.version}.tgz\`.\nThen run \`vibe\` in your project, \`vibe help\`, or \`vibe attach\` while the desktop app is running.\n\nThe CLI and desktop use the same VIBE_HOME stores (default ~/.vibe). Attach when operating a session that is already live in the desktop app. No runtime dependency is installed by this archive.\n\nTerminal controls: Ctrl+P commands; Alt+Enter multiline; Tab file/command completion; /theme; /model; /auth; /help.\n\nBrowser tools use the real Electron host through vibe attach. Native desktop window/updater features stay in the desktop app. Do not copy your profiles, credentials, hosts or session data into this package.\n`))
+  files.set("README.md", Buffer.from(`# BDCoder CLI ${pkg.version}\n\nRequires Node.js 20+.\n\nInstall the reviewed release archive with \`npm install -g ./BDCoder-CLI-${pkg.version}.tgz\`.\nThen run \`vibe\` in your project, \`vibe help\`, or \`vibe attach\` while the desktop app is running.\n\nThe CLI and desktop use the same VIBE_HOME stores (default ~/.vibe). Attach when operating a session that is already live in the desktop app. No runtime dependency is installed by this archive.\n\nTerminal controls: Ctrl+P commands; Alt+Enter multiline; Tab file/command completion; /theme; /model; /auth; /help.\n\nBrowser tools use the real Electron host through vibe attach. Native desktop window/updater features stay in the desktop app. Do not copy your profiles, credentials, hosts or session data into this package.\n`))
   const license = path.join(root, "..", "LICENSE")
   if (fs.existsSync(license)) files.set("LICENSE", fs.readFileSync(license))
   const entries = [...files].map(([name, content]) => tarEntry("package/" + name, content, name === "cli/vibe.js" ? 0o755 : 0o644))
   const archive = zlib.gzipSync(Buffer.concat([...entries, Buffer.alloc(1024)]), { level: 9 })
-  const file = output || path.join(root, "release", `VibeCoder-CLI-${pkg.version}.tgz`)
+  const file = output || path.join(root, "release", `BDCoder-CLI-${pkg.version}.tgz`)
   fs.mkdirSync(path.dirname(file), { recursive: true })
   fs.writeFileSync(file, archive, { flag: "wx" })
   return { file, version: pkg.version, files: files.size, bytes: archive.length, sha256: crypto.createHash("sha256").update(archive).digest("hex") }

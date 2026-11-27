@@ -1,5 +1,5 @@
 "use strict"
-// VibeCoder built-in plugin: which settings from .env.example are missing in
+// BDCoder built-in plugin: which settings from .env.example are missing in
 // .env. Shows only the NAMES of the settings, never their values. Read-only.
 const fs = require("fs")
 const path = require("path")

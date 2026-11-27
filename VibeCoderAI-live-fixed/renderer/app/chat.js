@@ -138,7 +138,7 @@ function addMsg(role, text, cls = "", images = []) {
   const el = document.createElement("div")
   el.className = `msg ${role}`
   el.innerHTML = `<span class="who"></span><div class="bubble ${cls}"></div>`
-  el.querySelector(".who").textContent = role === "user" ? "You" : "VibeCoder"
+  el.querySelector(".who").textContent = role === "user" ? "You" : "BDCoder"
   const bubble = el.querySelector(".bubble")
   if (role === "assistant" && cls !== "thinking") {
     // Render markdown for assistant messages (not for "Thinking..." placeholder)
@@ -885,7 +885,7 @@ function compactionHistoryEl(m) {
   return el
 }
 
-function renderHistoryMessages(msgs, { editable = true, usageRing = true, retryRow = true, assistantName = "VibeCoder" } = {}) {
+function renderHistoryMessages(msgs, { editable = true, usageRing = true, retryRow = true, assistantName = "BDCoder" } = {}) {
   if (usageRing) setUsageFromMessages(msgs)
   $("messages").innerHTML = ""
   liveCompactEl = null
@@ -915,7 +915,7 @@ function renderHistoryMessages(msgs, { editable = true, usageRing = true, retryR
       appendTimeline(el, "shell")
     }
   }
-  if (assistantName !== "VibeCoder") {
+  if (assistantName !== "BDCoder") {
     $("messages").querySelectorAll(".msg.assistant .who").forEach((node) => { node.textContent = assistantName })
   }
   scrollChat(true)
@@ -1319,7 +1319,7 @@ async function performSend(queued = null) {
     await refreshSessions()
     if (!sameSession()) return false
   }
-  // Bind the session to a "VibeCoder AI" agent (project-level agent file)
+  // Bind the session to a "BDCoder AI" agent (project-level agent file)
   let workDir = projectDir
   if (!workDir) {
     const c = await vibe.cwd()
@@ -1332,10 +1332,10 @@ async function performSend(queued = null) {
     if (ag.ok && !(ag.data && ag.data.ok === false)) {
       const sw = await vibe.switchAgent({ sessionID: targetSessionID, agent: "vibecoderai" })
       if (!sameSession()) return false
-      if (!sw.ok) console.warn("[VibeCoder] could not select the agent:", sw.error || "unknown error")
+      if (!sw.ok) console.warn("[BDCoder] could not select the agent:", sw.error || "unknown error")
       hideError("agent")
     } else {
-      console.warn("[VibeCoder] could not prepare the project agent:", ag.error || ag.data?.error || "unknown error")
+      console.warn("[BDCoder] could not prepare the project agent:", ag.error || ag.data?.error || "unknown error")
       hideError("agent")
     }
   }
@@ -1378,7 +1378,7 @@ async function performSend(queued = null) {
   state.needBubble = false
   // No "Thinking..." text: the empty bubble shows blinking dots while the agent runs.
   const thinking = addMsg("assistant", "", "thinking")
-  thinking.setAttribute("aria-label", "VibeCoder is working")
+  thinking.setAttribute("aria-label", "BDCoder is working")
   state.pendingBubble = thinking
   state.liveTextEl = thinking
   state.retryBubble = thinking // a later retry countdown belongs to this row
@@ -1752,7 +1752,7 @@ function retryRow() {
     }
     el.append(spin, text, stop)
     // Insert directly after the last assistant bubble, not at the end of the container.
-    // This keeps the retry counter inline below the VibeCoder message.
+    // This keeps the retry counter inline below the BDCoder message.
     // Always the very end of the timeline: tool rows may follow the last assistant bubble.
     box.appendChild(el)
   }
@@ -1816,7 +1816,7 @@ $("retry-inline-stop")?.addEventListener("click", cancelRetry)
 
 /**
  * The ONE bubble every retry writes into (countdown, resume notice, errors).
- * Each attempt used to addMsg a fresh VibeCoder row and leave the previous
+ * Each attempt used to addMsg a fresh BDCoder row and leave the previous
  * "⟳ Retry n/3 · 0s" frozen in the chat - three retries, three duplicate
  * half-dead bubbles. Reusing a single row keeps the whole retry story in one
  * place and it gets replaced by the real answer once the run recovers.

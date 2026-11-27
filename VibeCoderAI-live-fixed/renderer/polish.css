@@ -1,4 +1,4 @@
-/* VibeCoder AI — production polish layer.
+/* BDCoder AI — production polish layer.
  * Loaded last. Visual only: consistent line icons, one tooltip per control,
  * a welcoming empty screen, calmer typography and clear focus states.
  * Uses theme variables, so every theme (dark, light, obsidian…) stays correct.
@@ -663,7 +663,7 @@ html[data-theme] .hub-tab.active::after {
   background: var(--accent);
 }
 
-/* The "working" bubble under the VibeCoder name: no text, three dots that
+/* The "working" bubble under the BDCoder name: no text, three dots that
    light up one after another for as long as the agent runs. A left-over empty
    bubble is hidden once the run is over. */
 body.agent-running .msg.assistant .bubble.thinking:empty {
@@ -694,7 +694,7 @@ body.agent-running .msg.assistant .bubble.thinking:empty::after {
 body:not(.agent-running) .msg.assistant:has(> .bubble.thinking:empty) { display: none; }
 
 /* A running step's name: a soft band of light sweeps across it from left to
-   right while the agent works on it (VibeCoder's own design). It stops the
+   right while the agent works on it (BDCoder's own design). It stops the
    moment the step is done. */
 @keyframes vc-sweep {
   from { background-position: 100% 0; }
@@ -717,7 +717,7 @@ body.agent-running .timeline-group.is-running .used-names {
 /* ---------- Running commands panel (behind the Shell / Background chip) ----------
    Each command is a small terminal card: a soft pulsing dot, its name and time,
    round icon buttons, then the command and its live output in a dark terminal,
-   with the input line inside the terminal. VibeCoder's own design. */
+   with the input line inside the terminal. BDCoder's own design. */
 @keyframes vc-cmd-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.8); } }
 html[data-theme] .bg-job-panel {
   width: min(600px, calc(100vw - 32px));
@@ -957,7 +957,7 @@ body.computer-side .composer { width: calc(100% - 20px); max-width: none; }
 .ml-item.preset-item.configured.active .prov-ic.mono { color: var(--accent); }
 .mdp-logo.mono { font: 700 calc(16px * var(--fs-scale, 1)) / 1 var(--font-ui, "Segoe UI", sans-serif); letter-spacing: .03em; color: var(--accent); }
 
-/* VibeCoderAI account panel: Log in / Log out on the right of the header,
+/* BDCoder AI account panel: Log in / Log out on the right of the header,
    the account's models listed below. */
 .vc-head-actions { margin: 0 0 0 auto; display: flex; gap: 8px; }
 #md-opencode .mdp-head { align-items: center; }
@@ -976,3 +976,7 @@ body.computer-side .composer { width: calc(100% - 20px); max-width: none; }
 .hub-back { display: inline-flex; align-items: center; gap: 6px; margin: 0 0 14px; padding: 5px 12px 5px 9px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); font: 500 calc(12.5px * var(--fs-scale, 1)) var(--font-ui, "Segoe UI", sans-serif); cursor: pointer; }
 .hub-back:hover { background: var(--hover); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
 .hub-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* BD brand mark: one solid colour, no gradient (same as the app icons) */
+.title-logo, .brand-logo { background: #e8913a !important; color: #101115; }
+html[data-theme] #btn-connect .avatar.vc-initials { background: #e8913a !important; }
